@@ -1,0 +1,402 @@
+[
+  {
+    "dataset_index": 0,
+    "question_id": 1471,
+    "db_id": "debit_card_specializing",
+    "question": "What is the ratio of customers who pay in EUR against customers who pay in CZK?",
+    "evidence": "ratio of customers who pay in EUR against customers who pay in CZK = count(Currency = 'EUR') / count(Currency = 'CZK').",
+    "difficulty": "simple"
+  },
+  {
+    "dataset_index": 4,
+    "question_id": 1479,
+    "db_id": "debit_card_specializing",
+    "question": "Which year recorded the most consumption of gas paid in CZK?",
+    "evidence": "The first 4 strings of the Date values in the yearmonth table can represent year.",
+    "difficulty": "moderate"
+  },
+  {
+    "dataset_index": 6,
+    "question_id": 1481,
+    "db_id": "debit_card_specializing",
+    "question": "What is the difference in the annual average consumption of the customers with the least amount of consumption paid in CZK for 2013 between SME and LAM, LAM and KAM, and KAM and SME?",
+    "evidence": "annual average consumption of customer with the lowest consumption in each segment = total consumption per year / the number of customer with lowest consumption in each segment; Difference in annual average = SME's annual average - LAM's annual average; Difference in annual average = LAM's annual average - KAM's annual average; Year 2013 can be presented as Between 201301 And 201312; The first 4 strings of the Date values in the yearmonth table can represent year.",
+    "difficulty": "challenging"
+  },
+  {
+    "dataset_index": 21,
+    "question_id": 1515,
+    "db_id": "debit_card_specializing",
+    "question": "What segment did the customer have at 2012/8/23 21:20:00?",
+    "evidence": "'2012/8/23' can be represented by '2012-08-23'",
+    "difficulty": "simple"
+  },
+  {
+    "dataset_index": 25,
+    "question_id": 1526,
+    "db_id": "debit_card_specializing",
+    "question": "For the customer who paid 634.8 in 2012/8/25, what was the consumption decrease rate from Year 2012 to 2013?",
+    "evidence": "'2012/8/24' can be represented by '2012-08-24'; Consumption decrease rate = (consumption_2012 - consumption_2013) / consumption_2012",
+    "difficulty": "challenging"
+  },
+  {
+    "dataset_index": 37,
+    "question_id": 1339,
+    "db_id": "student_club",
+    "question": "Calculate the total average cost that Elijah Allen spent in the events on September and October.",
+    "evidence": "Elijah Allen is the full name; full name refers to first_name, last_name; The 5th and 6th string of the expense_date in the expense table can refer to month; events in September and October refers to month(expense_date) = 9 OR month(expense_date) = 10",
+    "difficulty": "challenging"
+  },
+  {
+    "dataset_index": 39,
+    "question_id": 1344,
+    "db_id": "student_club",
+    "question": "What was the notes of the fundraising on 2019/9/14?",
+    "evidence": "fundraising on 2019/9/14 refers to source = 'Fundraising' where date_received = '2019-09-14'",
+    "difficulty": "simple"
+  },
+  {
+    "dataset_index": 41,
+    "question_id": 1350,
+    "db_id": "student_club",
+    "question": "What is the status of the event which bought \"Post Cards, Posters\" on 2019/8/20?",
+    "evidence": "'Post Cards, Posters' is an expense description; on 2019/8/20 refers to expense_date = '2019-8-20'; status of event refers to event_status",
+    "difficulty": "moderate"
+  },
+  {
+    "dataset_index": 53,
+    "question_id": 1378,
+    "db_id": "student_club",
+    "question": "What is the highest amount of budget spend for an event?",
+    "evidence": "highest amount of budget spend refers to MAX(spent)",
+    "difficulty": "simple"
+  },
+  {
+    "dataset_index": 54,
+    "question_id": 1380,
+    "db_id": "student_club",
+    "question": "What is the total amount of money spent for food?",
+    "evidence": "total amount of money spent refers to SUM(spent); spent for food refers to category = 'Food'",
+    "difficulty": "simple"
+  },
+  {
+    "dataset_index": 55,
+    "question_id": 1381,
+    "db_id": "student_club",
+    "question": "List the name of students that have attended more than 7 events.",
+    "evidence": "name of students means the full name; full name refers to first_name, last_name; attended more than 7 events refers to COUNT(link_to_event) > 7",
+    "difficulty": "moderate"
+  },
+  {
+    "dataset_index": 64,
+    "question_id": 1403,
+    "db_id": "student_club",
+    "question": "Indicate the name of the closed event whose cost has exceeded the budget the most.",
+    "evidence": "closed events refers to event_name where status = 'Closed'; exceed the budget the most refers to MIN(remaining) where remaining < 0",
+    "difficulty": "moderate"
+  },
+  {
+    "dataset_index": 66,
+    "question_id": 1405,
+    "db_id": "student_club",
+    "question": "Calculate the amount budgeted for 'April Speaker' event. List all the budgeted categories for said event in an ascending order based on their amount budgeted.",
+    "evidence": "'April Speaker' is an event name; amount budgeted refers to SUM(amount); budget categories refers to category",
+    "difficulty": "moderate"
+  },
+  {
+    "dataset_index": 68,
+    "question_id": 1410,
+    "db_id": "student_club",
+    "question": "List out the full name and total cost that member id \"rec4BLdZHS2Blfp4v\" incurred?",
+    "evidence": "full name refers to first_name, last name",
+    "difficulty": "simple"
+  },
+  {
+    "dataset_index": 77,
+    "question_id": 1464,
+    "db_id": "student_club",
+    "question": "Write the full names of students who received funds on the date of 9/9/2019 and include the amount received.",
+    "evidence": "full name refers to first_name, last_name, amount of funds received refers to amount, received funds on date refers to date_received",
+    "difficulty": "challenging"
+  },
+  {
+    "dataset_index": 80,
+    "question_id": 1152,
+    "db_id": "thrombosis_prediction",
+    "question": "What is the ratio of outpatient to inpatient followed up treatment among all the 'SLE' diagnosed patient?",
+    "evidence": "'SLE' diagnosed patient means Diagnosis = 'SLE'; inpatient refers to Admission = '+'; outpatient refers to Admission = '-'; calculation =  DIVIDE(COUNT(ID) where Diagnosis = 'SLE' and Admission = '+', COUNT(ID) where Diagnosis = 'SLE' and Admission = '-')",
+    "difficulty": "moderate"
+  },
+  {
+    "dataset_index": 84,
+    "question_id": 1157,
+    "db_id": "thrombosis_prediction",
+    "question": "For patients with severe degree of thrombosis, list their ID, sex and disease the patient is diagnosed with.",
+    "evidence": "severe degree of thrombosis refers to thrombosis = 2; disease refers to diagnosis;",
+    "difficulty": "simple"
+  },
+  {
+    "dataset_index": 86,
+    "question_id": 1164,
+    "db_id": "thrombosis_prediction",
+    "question": "How many of the patients with the most serious thrombosis cases examined in 1997 are women?",
+    "evidence": "the most serious thrombosis refers to Thrombosis = '1' (the most severe one); women refers to sex = 'F'",
+    "difficulty": "moderate"
+  },
+  {
+    "dataset_index": 87,
+    "question_id": 1166,
+    "db_id": "thrombosis_prediction",
+    "question": "What are the symptoms observed by the youngest patient to ever did a medical examination? Identify their diagnosis.",
+    "evidence": "The larger the birthday value, the younger the person is, and vice versa; symptoms observed refers to the symptoms is not NULL",
+    "difficulty": "simple"
+  },
+  {
+    "dataset_index": 88,
+    "question_id": 1168,
+    "db_id": "thrombosis_prediction",
+    "question": "The oldest SJS patient's medical laboratory work was completed on what date, and what age was the patient when they initially arrived at the hospital?",
+    "evidence": "The larger the birthday value, the younger the person is, and vice versa; 'SJS' refers to diagnosis; (SUBTRACT(year(`First Date`)), year(Birthday)); age of the patients when they initially arrived at the hospital refers to year(Birthday)",
+    "difficulty": "challenging"
+  },
+  {
+    "dataset_index": 89,
+    "question_id": 1169,
+    "db_id": "thrombosis_prediction",
+    "question": "What is the ratio of male to female patients among all those with abnormal uric acid counts?",
+    "evidence": "male refers to SEX = 'M'; female refers to SEX = 'F'; abnormal uric acid refers to UA < = '8.0' where SEX = 'M', UA < = '6.5' where SEX = 'F'; calculation = DIVIDE(SUM(UA <= '8.0' and SEX = 'M'), SUM(UA <= '6.5 and SEX = 'F'))",
+    "difficulty": "challenging"
+  },
+  {
+    "dataset_index": 96,
+    "question_id": 1192,
+    "db_id": "thrombosis_prediction",
+    "question": "List all patients who were followed up at the outpatient clinic who underwent a laboratory test in October 1991 and had a total blood bilirubin level within the normal range.",
+    "evidence": "followed up at the outpatient clinic refers to Admission = '-'; laboratory test in April 1981 refers to Date like '1991-10%'; blood bilirubin level within the normal range refers to T-BIL < 2.0; ",
+    "difficulty": "challenging"
+  },
+  {
+    "dataset_index": 104,
+    "question_id": 1225,
+    "db_id": "thrombosis_prediction",
+    "question": "List and group all patients by sex for total bilirubin (T-BIL) level not within the normal range.",
+    "evidence": "List refers to GROUP_CONCAT(DISTINCT ID); total bilirubin (T-BIL) not within normal range refers to T-BIL > = 2.0",
+    "difficulty": "moderate"
+  },
+  {
+    "dataset_index": 113,
+    "question_id": 1242,
+    "db_id": "thrombosis_prediction",
+    "question": "For laboratory examinations take in 1984, list all patients below 50 years old with normal platelet level.",
+    "evidence": "laboratory examinations take in 1984 refers to YEAR(Date) = '1984'; below 50 years old = SUBTRACT(year(current_timestamp), year(Birthday)) < 50; normal platelet level refers to PLT between 100 and 400; ",
+    "difficulty": "challenging"
+  },
+  {
+    "dataset_index": 118,
+    "question_id": 1254,
+    "db_id": "thrombosis_prediction",
+    "question": "How many patients with a normal Ig A level came to the hospital after 1990/1/1?",
+    "evidence": "normal Ig A level refers to IGA > 80 AND IGA < 500; came to the hospital after 1990/1/1 refers to YEAR(`First Date`) > = 1990;",
+    "difficulty": "moderate"
+  },
+  {
+    "dataset_index": 130,
+    "question_id": 1029,
+    "db_id": "european_football_2",
+    "question": "What are the speed in which attacks are put together of the top 4 teams with the highest build Up Play Speed?",
+    "evidence": "speed in which attacks are put together refers to buildUpPlaySpeed;highest build up play speed refers to MAX(buildUpPlaySpeed)",
+    "difficulty": "moderate"
+  },
+  {
+    "dataset_index": 138,
+    "question_id": 1040,
+    "db_id": "european_football_2",
+    "question": "List the top 10 players' names whose heights are above 180 in descending order of average heading accuracy.",
+    "evidence": "heights are above 180 refers to Player.height > 180; average heading accuracy = DIVIDE(SUM(heading_accuracy), COUNT(player_fifa_api_id));",
+    "difficulty": "moderate"
+  },
+  {
+    "dataset_index": 141,
+    "question_id": 1048,
+    "db_id": "european_football_2",
+    "question": "What is the overall rating of the football player Gabriel Tamas in year 2011?",
+    "evidence": "in year 2011 refers to strftime('%Y', date) = '2011';",
+    "difficulty": "simple"
+  },
+  {
+    "dataset_index": 150,
+    "question_id": 1088,
+    "db_id": "european_football_2",
+    "question": "Please list the names of the players whose volley score and dribbling score are over 70.",
+    "evidence": "volley score are over 70 refers to volleys > 70; dribbling score refers to dribbling are over 70 refers to dribbling > 70;",
+    "difficulty": "moderate"
+  },
+  {
+    "dataset_index": 156,
+    "question_id": 1102,
+    "db_id": "european_football_2",
+    "question": "For the players who had a 77 points overall rating on 2016/6/23, who was the oldest? Give the name of the player.",
+    "evidence": "77 points overall rating refers to overall_rating = 77; on 2016/6/23 refers to date LIKE '2016-06-23%'; The larger the birthday value, the younger the person is, and vice versa;",
+    "difficulty": "moderate"
+  },
+  {
+    "dataset_index": 164,
+    "question_id": 1116,
+    "db_id": "european_football_2",
+    "question": "List down most tallest players' name.",
+    "evidence": "tallest refers to rank based on the height in descending order; Most tallest players refers to rank = 1 ",
+    "difficulty": "simple"
+  },
+  {
+    "dataset_index": 165,
+    "question_id": 1122,
+    "db_id": "european_football_2",
+    "question": "State the name of the most strongest player.",
+    "evidence": "strongest players refers to player has MAX(overall_rating)",
+    "difficulty": "simple"
+  },
+  {
+    "dataset_index": 168,
+    "question_id": 1133,
+    "db_id": "european_football_2",
+    "question": "How many football players born after the 1990s have the first name \"Aaron\"?",
+    "evidence": "first name \"Aaron\" refers to player_name LIKE 'Aaron%'; born after the 1990s refers to birthday > '1990'",
+    "difficulty": "simple"
+  },
+  {
+    "dataset_index": 170,
+    "question_id": 1135,
+    "db_id": "european_football_2",
+    "question": "Please provide top four football players' IDs who are among the lowest potential players and prefer to use the right foot when attacking.",
+    "evidence": "lowest potential players refers to MIN(potential); prefer to use the right foot when attacking refers to preferred_foot = 'right'",
+    "difficulty": "moderate"
+  },
+  {
+    "dataset_index": 175,
+    "question_id": 1145,
+    "db_id": "european_football_2",
+    "question": "Which top 4 leagues had the most games in the 2015-2016 season?",
+    "evidence": "in the 2015-2016 season refers to season = '2015/2016'; league with most games refers to League.name where MAX(COUNT(id))",
+    "difficulty": "simple"
+  },
+  {
+    "dataset_index": 180,
+    "question_id": 847,
+    "db_id": "formula_1",
+    "question": "What is the surname of the driver with the best lap time in race number 19 in the second qualifying period?",
+    "evidence": "race number refers to raceId; second qualifying period refers to q2; best lap time refers to MIN(q2);",
+    "difficulty": "simple"
+  },
+  {
+    "dataset_index": 190,
+    "question_id": 869,
+    "db_id": "formula_1",
+    "question": "For the constructor which got the highest point in the race No. 9 , what is its introduction website?",
+    "evidence": "race number refers to raceId; constructor which got the highest point refers to MAX(constructorResults.points); introduction website of the constructor refers to url;",
+    "difficulty": "moderate"
+  },
+  {
+    "dataset_index": 203,
+    "question_id": 898,
+    "db_id": "formula_1",
+    "question": "How old is the youngest Japanese driver? What is his name?",
+    "evidence": "date of birth refers to drivers.dob; The larger the birthday value, the younger the person is, and vice versa; Japanese refers to nationality = 'Japanese'; age = YEAR(CURRENT_TIMESTAMP) - YEAR(dob);",
+    "difficulty": "simple"
+  },
+  {
+    "dataset_index": 211,
+    "question_id": 915,
+    "db_id": "formula_1",
+    "question": "Which country is the oldest driver from?",
+    "evidence": "date of birth refers to drivers.dob; The larger the birthday value, the younger the person is, and vice versa;",
+    "difficulty": "simple"
+  },
+  {
+    "dataset_index": 220,
+    "question_id": 948,
+    "db_id": "formula_1",
+    "question": "What are the maximum points of British constructors?",
+    "evidence": "maximum points = MAX(points); British is a nationality",
+    "difficulty": "simple"
+  },
+  {
+    "dataset_index": 222,
+    "question_id": 951,
+    "db_id": "formula_1",
+    "question": "How many Japanese constructors have 0 points in 2 races?",
+    "evidence": "2 races refers to COUNT(raceID) = 2; Japanese refers to constructors.nationality = 'Japanese';",
+    "difficulty": "simple"
+  },
+  {
+    "dataset_index": 227,
+    "question_id": 962,
+    "db_id": "formula_1",
+    "question": "From 2000 to 2005, what percentage of drivers who were born before 1985 and the lap numbers were over 50?",
+    "evidence": "born before 1985 refers to year(dob)<1985; in 2000 to 2005 refers to year between 2000 and 2005; percentage = Divide(COUNT(driverId where year (dob) <1985 and laps >50),COUNT(DriverID where year between 2000 and 2005) *100;",
+    "difficulty": "challenging"
+  },
+  {
+    "dataset_index": 228,
+    "question_id": 963,
+    "db_id": "formula_1",
+    "question": "How many French drivers who obtain the laptime less than 02:00.00?",
+    "evidence": "lap time less than 02:00.00 refers to seconds < 120;",
+    "difficulty": "moderate"
+  },
+  {
+    "dataset_index": 230,
+    "question_id": 967,
+    "db_id": "formula_1",
+    "question": "State code numbers of top 3 yougest drivers. How many Netherlandic drivers among them?",
+    "evidence": "youngest driver refers to Max (year(dob)); Netherlandic and Dutch refer to the same country",
+    "difficulty": "simple"
+  },
+  {
+    "dataset_index": 237,
+    "question_id": 989,
+    "db_id": "formula_1",
+    "question": "Who is the champion of the Canadian Grand Prix in 2008? Indicate his finish time.",
+    "evidence": "Only the time of the champion shows in the format of \"hour: minutes: seconds.millionsecond\";",
+    "difficulty": "moderate"
+  },
+  {
+    "dataset_index": 240,
+    "question_id": 994,
+    "db_id": "formula_1",
+    "question": "Which constructor scored most points from Monaco Grand Prix between 1980 and 2010? List the score, name and nationality of this team.",
+    "evidence": "Monaco Grand Priz refers to the race; race in year between 1980 and 2010",
+    "difficulty": "challenging"
+  },
+  {
+    "dataset_index": 241,
+    "question_id": 1001,
+    "db_id": "formula_1",
+    "question": "What is full name of the racer who ranked 1st in the 3rd qualifying race held in the Marina Bay Street Circuit in 2008?",
+    "evidence": "Ranked 1st in the 3rd qualifying race refer to MIN(q3); 2008 is the year of race; full name of racer = forename, surname",
+    "difficulty": "challenging"
+  },
+  {
+    "dataset_index": 243,
+    "question_id": 1003,
+    "db_id": "formula_1",
+    "question": "How many accidents did the driver who had the highest number accidents in the Canadian Grand Prix have?",
+    "evidence": "number of accidents refers to the number where statusid = 3; Canadian Grand Prix refers to the race of name\n",
+    "difficulty": "moderate"
+  },
+  {
+    "dataset_index": 245,
+    "question_id": 1014,
+    "db_id": "formula_1",
+    "question": "Please list the lap records for the circuits in Italy.",
+    "evidence": "lap record means the fastest time recorded which refers to time",
+    "difficulty": "challenging"
+  },
+  {
+    "dataset_index": 250,
+    "question_id": 728,
+    "db_id": "superhero",
+    "question": "Rank superheroes from Marvel Comics by their eye color popularity, starting with the most common color.",
+    "evidence": "the superheroes from Marvel Comics refers to publisher_name = 'Marvel Comics'; most common color refers to COUNT(superhero.id) DESC;",
+    "difficulty": "moderate"
+  }
+]

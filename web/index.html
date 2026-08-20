@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Conversational, glossary-grounded Text-to-SQL client" />
+    <title>Query Room · Text-to-SQL</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">Q</span>
+          <div>
+            <h1>Query Room</h1>
+            <p>Ask the database in plain language</p>
+          </div>
+        </div>
+        <div class="status" id="healthStatus"><span></span> Connecting</div>
+      </header>
+
+      <aside class="sidebar" aria-label="Query configuration">
+        <div class="sidebar-heading">
+          <span>Connection</span>
+          <button class="icon-button" id="resetButton" type="button" title="Reset conversation">↻</button>
+        </div>
+
+        <label for="databaseSelect">Database</label>
+        <select id="databaseSelect"></select>
+
+        <label for="modelSelect">Model</label>
+        <select id="modelSelect"></select>
+
+        <div class="session-card">
+          <span class="eyebrow">Session</span>
+          <code id="sessionId"></code>
+          <p>Follow-up questions reuse the last successful semantic context.</p>
+        </div>
+
+        <details>
+          <summary>Trusted evidence</summary>
+          <textarea id="evidenceInput" rows="5" placeholder="Optional definitions, formulas, or date rules"></textarea>
+        </details>
+
+        <div class="safety-note">
+          <span aria-hidden="true">◇</span>
+          <p><strong>Read-only</strong><br />SQLGlot, semantic validation, EXPLAIN, and bounded execution.</p>
+        </div>
+      </aside>
+
+      <main class="conversation">
+        <section class="hero" id="emptyState">
+          <span class="hero-kicker">CONVERSATIONAL ANALYTICS</span>
+          <h2>What do you want to know?</h2>
+          <p>Ask a complete question, then refine it naturally.</p>
+          <div class="suggestions" id="suggestions">
+            <button type="button">What is the ratio of EUR customers to CZK customers?</button>
+            <button type="button">Show monthly consumption by customer segment.</button>
+            <button type="button">Which year had the highest total consumption?</button>
+          </div>
+        </section>
+        <section id="messages" class="messages" aria-live="polite"></section>
+      </main>
+
+      <form class="composer" id="chatForm">
+        <textarea id="messageInput" rows="1" placeholder="Ask a question about your data…" required></textarea>
+        <button type="submit" id="sendButton" aria-label="Send question">Ask <span>↗</span></button>
+        <button type="button" id="cancelButton" class="cancel-button" hidden>Cancel</button>
+        <p>Enter to send · Shift + Enter for a new line</p>
+      </form>
+    </div>
+    <template id="assistantTemplate">
+      <article class="message assistant-message">
+        <div class="avatar">Q</div>
+        <div class="message-content">
+          <div class="response-meta"></div>
+          <p class="response-note"></p>
+          <details class="attempts-panel">
+            <summary class="attempts-summary">Validation attempts</summary>
+            <div class="attempts-list"></div>
+          </details>
+          <section class="sql-panel">
+            <div class="panel-header"><span>Generated SQL</span><button type="button" class="copy-button">Copy</button></div>
+            <pre><code class="language-sql"></code></pre>
+          </section>
+          <section class="result-panel">
+            <div class="panel-header"><span>Query result</span><span class="row-count"></span></div>
+            <div class="table-wrap"></div>
+          </section>
+          <details class="context-panel">
+            <summary>Verified context sent to Model 2</summary>
+            <div class="context-summary"></div>
+            <pre><code class="context-json"></code></pre>
+          </details>
+          <details class="feedback-panel">
+            <summary>Is this answer wrong?</summary>
+            <div class="feedback-form">
+              <select class="feedback-category" aria-label="Problem category">
+                <option value="wrong_result">Wrong result</option>
+                <option value="wrong_interpretation">Wrong interpretation</option>
+                <option value="missing_filter">Missing filter</option>
+                <option value="wrong_table_column">Wrong table or column</option>
+                <option value="wrong_aggregation">Wrong aggregation</option>
+                <option value="wrong_datetime">Wrong date/time logic</option>
+                <option value="wrong_output">Wrong output columns</option>
+                <option value="wrong_grain">Wrong grouping/grain</option>
+                <option value="duplicate_rows">Duplicate rows</option>
+                <option value="missing_rows">Missing rows</option>
+                <option value="other">Other</option>
+              </select>
+              <input class="correction-input" placeholder="Explain what should change…" />
+              <button class="correction-button" type="button">Correct & rerun</button>
+            </div>
+          </details>
+        </div>
+      </article>
+    </template>
+    <script src="/static/app.js?v=validation-attempts-2" defer></script>
+  </body>
+</html>

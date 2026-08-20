@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s -m 3 http://127.0.0.1:11434/api/tags)",
+      "Bash(curl -s -m 3 http://127.0.0.1:8000/api/health)",
+      "Bash(curl -s -m 5 http://127.0.0.1:8000/api/databases)",
+      "Bash(ps -o command= -p 7950)",
+      "Bash(curl -s -m 2 http://127.0.0.1:8000/api/health)",
+      "Bash(break)",
+      "Bash(.venv/bin/python -c \"import sqlglot, fastapi, semantic_text2sql, ipykernel; print\\('venv has all deps + package installed'\\)\")",
+      "Bash(.venv/bin/python -c \"import semantic_text2sql,os; print\\(semantic_text2sql.__file__\\)\")",
+      "Bash(.venv/bin/jupyter kernelspec *)",
+      "Bash(.venv/bin/python -m ipykernel install --user --name semantic-text2sql-v4 --display-name \"Python \\(semantic_text2sql_v4 .venv\\)\")"
+    ]
+  }
+}

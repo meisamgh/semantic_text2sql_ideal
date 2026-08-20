@@ -1,0 +1,11 @@
+[
+  {
+    "workspace_id": "books_catalog",
+    "name": "Books Catalog",
+    "description": "Books, authors, publication dates, categories, countries, and retail prices.",
+    "db_ids": ["books"],
+    "tables": ["books", "authors"],
+    "terms": ["book", "author", "category", "published", "price"],
+    "system": true
+  }
+]

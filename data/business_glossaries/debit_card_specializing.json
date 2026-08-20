@@ -1,0 +1,171 @@
+{
+  "db_id": "debit_card_specializing",
+  "version": "1.0.0",
+  "source": "BIRD database descriptions plus live schema and offline profiles; no labelled SQL",
+  "precedence": [
+    "current question",
+    "trusted question evidence",
+    "live schema",
+    "business glossary",
+    "historical examples"
+  ],
+  "terms": [
+    {
+      "term": "customer",
+      "definition": "A customer account represented once in customers and identified by CustomerID.",
+      "synonyms": ["client", "card customer"],
+      "columns": ["customers.CustomerID", "transactions_1k.CustomerID", "yearmonth.CustomerID"],
+      "grain": "one row per customers.CustomerID",
+      "caveats": ["Use COUNT(DISTINCT CustomerID) after joins when counting customers."],
+      "core": true
+    },
+    {
+      "term": "transaction",
+      "definition": "One recorded purchase event in transactions_1k.",
+      "synonyms": ["purchase", "payment"],
+      "columns": ["transactions_1k.TransactionID"],
+      "grain": "one row per TransactionID",
+      "core": true
+    },
+    {
+      "term": "monthly consumption",
+      "definition": "Recorded customer consumption for one YYYYMM period.",
+      "synonyms": ["consumption", "gas consumption", "usage"],
+      "formula": "SUM(yearmonth.Consumption) at the requested grain",
+      "columns": ["yearmonth.CustomerID", "yearmonth.Date", "yearmonth.Consumption"],
+      "grain": "one row per CustomerID and YYYYMM in yearmonth",
+      "core": true
+    },
+    {
+      "term": "customer segment",
+      "definition": "Commercial classification of a customer account.",
+      "synonyms": ["SME", "LAM", "KAM", "client segment"],
+      "columns": ["customers.Segment"],
+      "caveats": ["Do not confuse with gasstations.Segment."],
+      "core": false
+    },
+    {
+      "term": "station segment",
+      "definition": "Commercial category of a gas-station chain or location.",
+      "synonyms": ["premium", "discount", "noname", "value for money", "chain segment"],
+      "columns": ["gasstations.Segment"],
+      "caveats": ["Do not confuse with customers.Segment."],
+      "core": false
+    },
+    {
+      "term": "customer currency",
+      "definition": "Configured customer account currency, normally CZK or EUR.",
+      "synonyms": ["pay in", "paid in", "koruna", "euro", "CZK", "EUR"],
+      "columns": ["customers.Currency"],
+      "grain": "customer",
+      "core": false
+    },
+    {
+      "term": "calendar month",
+      "definition": "The yearmonth period is stored as six-character YYYYMM text.",
+      "synonyms": ["month", "annual", "year"],
+      "columns": ["yearmonth.Date"],
+      "caveats": ["Transaction dates use YYYY-MM-DD instead."],
+      "core": false
+    },
+    {
+      "term": "transaction date and time",
+      "definition": "Purchase date is YYYY-MM-DD and purchase time is HH:MM:SS.",
+      "synonyms": ["date", "time", "happened", "took place"],
+      "columns": ["transactions_1k.Date", "transactions_1k.Time"],
+      "grain": "transaction",
+      "core": false
+    },
+    {
+      "term": "station country",
+      "definition": "Country code of a gas station; observed codes include CZE and SVK.",
+      "synonyms": ["country", "Czech Republic", "Slovakia", "CZE", "SVK", "nationality"],
+      "columns": ["gasstations.Country"],
+      "grain": "gas station",
+      "core": false
+    },
+    {
+      "term": "transaction amount",
+      "definition": "Recorded item quantity or amount on a transaction.",
+      "synonyms": ["quantity", "units", "items"],
+      "columns": ["transactions_1k.Amount"],
+      "grain": "transaction",
+      "core": false
+    },
+    {
+      "term": "unit price",
+      "definition": "Price per purchased unit, calculated from transaction total Price and quantity Amount.",
+      "synonyms": [
+        "per unit",
+        "price per unit",
+        "single item price"
+      ],
+      "formula": "transactions_1k.Price / NULLIF(transactions_1k.Amount, 0)",
+      "structural_formula": {
+        "id": "unit_price",
+        "operator": "DIVIDE",
+        "arguments": [
+          "transactions_1k.Price",
+          "transactions_1k.Amount"
+        ],
+        "zero_safe": true,
+        "source": "APPROVED_GLOSSARY",
+        "usage": "FILTER_OPERAND"
+      },
+      "columns": [
+        "transactions_1k.Price",
+        "transactions_1k.Amount"
+      ],
+      "grain": "transaction",
+      "core": false
+    },
+    {
+      "term": "price and spend",
+      "definition": "Price is the total transaction payment or spending; Amount is purchased quantity.",
+      "synonyms": ["price", "spent", "spending", "cost", "money spent", "total spend"],
+      "formula": "SUM(transactions_1k.Price) for total spending",
+      "columns": ["transactions_1k.Price"],
+      "caveats": [
+        "Do not use Amount for monetary spending.",
+        "Amount represents quantity, not money."
+      ],
+      "core": false
+    },
+    {
+      "term": "total spending",
+      "definition": "Total money paid across transactions.",
+      "synonyms": ["top spending", "total spent", "amount spent", "money spent"],
+      "formula": "SUM(transactions_1k.Price)",
+      "columns": ["transactions_1k.CustomerID", "transactions_1k.Price"],
+      "grain": "requested grouping grain",
+      "core": false
+    },
+    {
+      "term": "average unit price",
+      "definition": "Unweighted average of transaction-level unit price.",
+      "synonyms": ["average price per item", "average price per single item"],
+      "formula": "AVG(CAST(transactions_1k.Price AS REAL) / NULLIF(transactions_1k.Amount, 0))",
+      "columns": ["transactions_1k.Price", "transactions_1k.Amount"],
+      "grain": "requested grouping grain",
+      "core": false
+    },
+    {
+      "term": "weighted average unit price",
+      "definition": "Quantity-weighted unit price; use only when the question explicitly says weighted.",
+      "synonyms": ["weighted average price", "weighted unit price"],
+      "formula": "SUM(transactions_1k.Price) / NULLIF(SUM(transactions_1k.Amount), 0)",
+      "columns": ["transactions_1k.Price", "transactions_1k.Amount"],
+      "grain": "requested grouping grain",
+      "caveats": ["Never substitute this for ordinary average unit price."],
+      "core": false
+    },
+    {
+      "term": "percentage or ratio",
+      "definition": "A numerator divided by an explicitly defined denominator at the same grain.",
+      "synonyms": ["percentage", "percent", "ratio", "rate"],
+      "formula": "CAST(numerator AS REAL) / NULLIF(denominator, 0), multiplied by 100 only when percentage is requested",
+      "caveats": ["Use the question or evidence to define numerator and denominator."],
+      "core": false
+    }
+  ]
+}
