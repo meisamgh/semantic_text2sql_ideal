@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from semantic_text2sql.models import (
     ContractDelta,
     ConversationState,
+    ModelProvider,
     TokenUsage,
     TurnInterpretation,
 )
@@ -127,7 +128,7 @@ def requires_model_interpretation(
 async def interpret_turn_detailed(
     completer: ConversationCompleter,
     *,
-    provider: Literal["ollama", "agentrouter"],
+    provider: ModelProvider,
     model: str,
     message: str,
     previous: ConversationState,

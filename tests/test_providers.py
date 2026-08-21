@@ -9,6 +9,7 @@ from semantic_text2sql.llm import (
     AgentRouterClaudeModel,
     AgentRouterCodexModel,
     AgentRouterModel,
+    GroqSQLModel,
     ModelError,
     ollama_model_status,
 )
@@ -180,6 +181,79 @@ def test_agentrouter_gpt_stops_at_a_rejected_key() -> None:
         raise AssertionError("A rejected AgentRouter key was accepted")
 
     assert paths == ["/v1/chat/completions"]
+
+
+def test_groq_qwen_uses_chat_completions_and_reports_usage() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        captured["authorization"] = request.headers.get("authorization")
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "SELECT title FROM books"}}],
+                "usage": {"prompt_tokens": 9, "completion_tokens": 3},
+            },
+        )
+
+    model = GroqSQLModel(
+        "groq-test-key",
+        "https://api.groq.test/openai/v1",
+        transport=httpx.MockTransport(handler),
+    )
+    sql, usage = asyncio.run(model.complete_detailed("qwen/qwen3.6-27b", "Return SQL only"))
+
+    assert sql == "SELECT title FROM books"
+    assert usage.total_tokens == 12
+    assert captured["path"] == "/openai/v1/chat/completions"
+    assert captured["authorization"] == "Bearer groq-test-key"
+    assert captured["body"]["model"] == "qwen/qwen3.6-27b"  # type: ignore[index]
+    assert captured["body"]["reasoning_effort"] == "none"  # type: ignore[index]
+    assert captured["body"]["reasoning_format"] == "hidden"  # type: ignore[index]
+
+
+def test_groq_fails_without_api_key() -> None:
+    try:
+        asyncio.run(GroqSQLModel(None).complete("qwen/qwen3.6-27b", "Return SQL"))
+    except ModelError as exc:
+        assert "GROQ_API_KEY" in str(exc)
+    else:
+        raise AssertionError("Missing Groq key was accepted")
+
+
+def test_groq_retries_transient_rate_limit() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(
+                429,
+                headers={"retry-after": "0.001"},
+                json={"error": {"code": "rate_limit_exceeded"}},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "SELECT 1"}}],
+                "usage": {"prompt_tokens": 2, "completion_tokens": 1},
+            },
+        )
+
+    model = GroqSQLModel(
+        "groq-test-key",
+        "https://api.groq.test/openai/v1",
+        transport=httpx.MockTransport(handler),
+    )
+
+    text, usage = asyncio.run(model.complete_detailed("qwen/qwen3.6-27b", "Return SQL"))
+
+    assert text == "SELECT 1"
+    assert usage.total_tokens == 3
+    assert calls == 2
 
 
 def test_ollama_status_flags_a_model_that_is_not_installed() -> None:

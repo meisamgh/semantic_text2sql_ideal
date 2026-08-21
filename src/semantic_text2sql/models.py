@@ -7,6 +7,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 DEFAULT_OLLAMA_MODEL = "qwen3.5:9b"
+GROQ_QWEN_MODEL = "qwen/qwen3.6-27b"
+ModelProvider = Literal["ollama", "agentrouter", "groq"]
 """Single source of truth for the locally installed Ollama generation model.
 
 Sized to fit in system RAM: a model whose weights exceed memory pages to disk and
@@ -586,7 +588,7 @@ class GenerateRequest(StrictModel):
     question: str = Field(min_length=1, max_length=4_000)
     evidence: str | None = Field(default=None, max_length=8_000)
     dialect: Literal["sqlite", "postgres"] = "sqlite"
-    provider: Literal["ollama", "agentrouter"] = "ollama"
+    provider: ModelProvider = "ollama"
     model: str = Field(default=DEFAULT_OLLAMA_MODEL, min_length=1, max_length=200)
     max_attempts: int = Field(default=3, ge=1, le=3)
     execute: bool = False
@@ -663,7 +665,7 @@ class ChatRequest(StrictModel):
     db_id: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
     message: str = Field(min_length=1, max_length=4_000)
     evidence: str | None = Field(default=None, max_length=8_000)
-    provider: Literal["ollama", "agentrouter"] = "ollama"
+    provider: ModelProvider = "ollama"
     model: str = Field(default=DEFAULT_OLLAMA_MODEL, min_length=1, max_length=200)
     execute: bool = True
     max_rows: int = Field(default=100, ge=1, le=500)
@@ -720,7 +722,7 @@ class TurnInterpretation(StrictModel):
     correction_type: str | None = Field(default=None, max_length=100)
     confidence: float = Field(ge=0, le=1)
     source: Literal["rules", "model", "fallback"] = "model"
-    provider: Literal["ollama", "agentrouter"] | None = None
+    provider: ModelProvider | None = None
     model: str | None = None
 
 
@@ -757,7 +759,7 @@ class EnsembleRequest(StrictModel):
     question: str = Field(min_length=1, max_length=4_000)
     evidence: str | None = Field(default=None, max_length=8_000)
     dialect: Literal["sqlite", "postgres"] = "sqlite"
-    provider: Literal["ollama", "agentrouter"] = "ollama"
+    provider: ModelProvider = "ollama"
     model: str = Field(default=DEFAULT_OLLAMA_MODEL, min_length=1, max_length=200)
     max_attempts: int = Field(default=2, ge=1, le=3)
     max_rows: int = Field(default=100, ge=1, le=500)
@@ -768,7 +770,7 @@ class EnsembleRequest(StrictModel):
 class GenerateResponse(StrictModel):
     db_id: str
     question: str
-    provider: Literal["ollama", "agentrouter"]
+    provider: ModelProvider
     model: str
     dialect: Literal["sqlite", "postgres"] = "sqlite"
     strategy: StrategyHints
@@ -803,7 +805,7 @@ class EnsembleResponse(StrictModel):
     db_id: str
     question: str
     dialect: Literal["sqlite", "postgres"]
-    provider: Literal["ollama", "agentrouter"]
+    provider: ModelProvider
     model: str
     historical_examples: list[HistoricalExample] = Field(default_factory=list)
     candidates: list[GenerateResponse]
@@ -836,7 +838,7 @@ class CheckResponse(StrictModel):
 
 
 class ModelOption(StrictModel):
-    provider: Literal["ollama", "agentrouter"]
+    provider: ModelProvider
     model: str
     local: bool
     configured: bool

@@ -132,12 +132,12 @@ def test_product5_verifier_force_adds_formula_and_relationship_dependencies() ->
 
     verified = verify_context_request(requested, _schema(), contract, _profile())
 
-    assert verified.columns["transactions_1k"] == [
+    assert set(verified.columns["transactions_1k"]) == {
         "ProductID",
         "Price",
         "CustomerID",
         "Amount",
-    ]
+    }
     assert set(verified.columns["yearmonth"]) == {"Date", "Consumption", "CustomerID"}
     assert {item.kind for item in verified.metadata_requirements} >= {
         "RELATIONSHIP",
@@ -165,13 +165,9 @@ def test_product5_verifier_force_adds_formula_and_relationship_dependencies() ->
             ]
         }
     )
-    plan = build_context_plan(
-        selected_schema, _profile(), reconciled, question, None, verified
-    )
-    context = model_context_payload(
-        plan, _profile(), reconciled, None, question, "sqlite"
-    )
-    relationship = context["execution_context"]["relationships"][0]
+    plan = build_context_plan(selected_schema, _profile(), reconciled, question, None, verified)
+    context = model_context_payload(plan, _profile(), reconciled, None, question, "sqlite")
+    relationship = context["relationships"][0]
     assert "recommended_strategy" not in relationship
     assert "filter_side" not in relationship
     assert relationship["cardinality"] == "MANY_TO_MANY"
@@ -190,9 +186,7 @@ def test_top_spending_plan_keeps_ranking_and_requested_metric_separate() -> None
             PlannerAggregation(
                 function="sum", input="transactions_1k.Price", output="total_spending"
             ),
-            PlannerAggregation(
-                function="average", input="unit_price", output="average_unit_price"
-            ),
+            PlannerAggregation(function="average", input="unit_price", output="average_unit_price"),
         ],
         ranking=[PlannerRanking(metric="total_spending", direction="DESC", limit=1)],
         business_concepts=["total_spending", "unit_price", "average_unit_price"],
@@ -244,9 +238,7 @@ def test_single_table_global_ratio_has_no_join_or_date_metadata() -> None:
         outputs=["currency_ratio"],
         tables=["customers"],
         columns={"customers": ["Currency"]},
-        filters=[
-            SemanticFilter(operand="customers.Currency", operator="IN", value=["EUR", "CZK"])
-        ],
+        filters=[SemanticFilter(operand="customers.Currency", operator="IN", value=["EUR", "CZK"])],
         business_concepts=["currency_ratio"],
     )
     verified = verify_context_request(

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import statistics
 import sys
 from collections import Counter
@@ -17,7 +18,12 @@ from typing import Any
 from semantic_text2sql.agent import TextToSQLAgent
 from semantic_text2sql.benchmark import compare_sql
 from semantic_text2sql.database import DatabaseRegistry
-from semantic_text2sql.llm import AgentRouterClaudeModel, OllamaSQLModel, RoutingSQLModel
+from semantic_text2sql.llm import (
+    AgentRouterClaudeModel,
+    GroqSQLModel,
+    OllamaSQLModel,
+    RoutingSQLModel,
+)
 from semantic_text2sql.models import DEFAULT_OLLAMA_MODEL, GenerateRequest
 from semantic_text2sql.profiling import ProfileStore
 
@@ -30,10 +36,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--database-root", type=Path, required=True)
     parser.add_argument("--split-file", type=Path, required=True)
     parser.add_argument("--profile-root", type=Path, required=True)
-    parser.add_argument("--provider", choices=("ollama", "agentrouter"), default="ollama")
+    parser.add_argument("--provider", choices=("ollama", "agentrouter", "groq"), default="ollama")
     parser.add_argument("--model", default=DEFAULT_OLLAMA_MODEL)
     parser.add_argument("--ollama-base-url", default="http://127.0.0.1:11434")
     parser.add_argument("--agentrouter-base-url", default="https://agentrouter.org")
+    parser.add_argument("--groq-base-url", default="https://api.groq.com/openai/v1")
     parser.add_argument("--max-attempts", type=int, default=3, choices=range(1, 5))
     parser.add_argument("--timeout-seconds", type=float, default=30.0)
     parser.add_argument("--limit", type=int, default=100, choices=range(1, 101))
@@ -89,6 +96,7 @@ async def main() -> int:
             _agentrouter_key(),
             args.agentrouter_base_url,
         ),
+        GroqSQLModel(os.environ.get("GROQ_API_KEY"), args.groq_base_url),
     )
     agent = TextToSQLAgent(registry, model_router, profiles=ProfileStore(args.profile_root))
     completed = {int(item["dataset_index"]) for item in results}
@@ -184,8 +192,6 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, object]:
 
 
 def _agentrouter_key() -> str | None:
-    import os
-
     return os.environ.get("AGENTROUTER_API_KEY")
 
 

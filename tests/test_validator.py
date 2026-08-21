@@ -14,11 +14,11 @@ def test_validator_accepts_cte_output_alias(registry) -> None:  # type: ignore[n
     assert result.valid is True
 
 
-def test_validator_rejects_unknown_column(registry) -> None:  # type: ignore[no-untyped-def]
+def test_validator_leaves_unknown_column_to_execution(registry) -> None:  # type: ignore[no-untyped-def]
     result = validate_sql("SELECT missing FROM orders", registry.inspect("shop"))
 
-    assert result.valid is False
-    assert result.code == "SQL_UNAUTHORIZED_COLUMN"
+    assert result.valid is True
+    assert result.code == "SQL_SAFETY_VALID"
 
 
 def test_validator_rejects_writes_and_multiple_statements(registry) -> None:  # type: ignore[no-untyped-def]
@@ -42,7 +42,8 @@ def test_clean_model_sql_extracts_sql_fence_from_explanation() -> None:
     assert clean_model_sql(response) == "SELECT SUBSTR(y.Date, 1, 4) FROM yearmonth AS y"
 
 
-def test_empty_schema_does_not_authorize_invented_table() -> None:
+def test_validator_does_not_check_table_existence() -> None:
     result = validate_sql("SELECT * FROM invented", SchemaInfo(db_id="empty", tables=[]))
 
-    assert result.code == "SQL_UNAUTHORIZED_TABLE"
+    assert result.valid is True
+    assert result.code == "SQL_SAFETY_VALID"

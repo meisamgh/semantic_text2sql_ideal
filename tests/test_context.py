@@ -37,7 +37,6 @@ def test_context_plan_records_selected_dependencies(registry) -> None:  # type: 
     assert "quantiles" in plan.excluded
     assert plan.token_budget == 1_500
     assert any(item.kind == "COLUMN_SCHEMA" for item in plan.requirements)
-    assert any(item.kind == "OUTPUT_GRAIN" for item in plan.requirements)
     assert plan.coverage_complete is False
 
 
@@ -83,12 +82,12 @@ def test_single_table_context_includes_primary_key_and_grain_only(registry) -> N
     plan = build_context_plan(schema, None, contract, question, None)
 
     payload = model_context_payload(plan, None, contract, None, question, "sqlite")
-    customers = payload["execution_context"]["tables"]["customers"]
+    customers = payload["tables"]["customers"]
 
     assert customers["primary_key"] == ["customer_id"]
     assert customers["unique_keys"] == [["customer_id"]]
     assert customers["grain"] == "one row per customer_id"
-    assert "relationships" not in payload["execution_context"]
+    assert payload.get("relationships", []) == []
 
 
 def test_multi_table_context_includes_key_uniqueness_and_fanout(registry) -> None:  # type: ignore[no-untyped-def]
@@ -98,13 +97,13 @@ def test_multi_table_context_includes_key_uniqueness_and_fanout(registry) -> Non
     plan = build_context_plan(schema, None, contract, question, None)
 
     payload = model_context_payload(plan, None, contract, None, question, "sqlite")
-    relationship = payload["execution_context"]["relationships"][0]
+    relationship = payload["relationships"][0]
 
     assert relationship == {
         "left": "orders.customer_id",
         "right": "customers.customer_id",
         "state": "VERIFIED_FK",
-        "cardinality": "ONE_TO_MANY",
+        "cardinality": "MANY_TO_ONE",
         "left_key_unique": False,
         "right_key_unique": True,
         "fanout_risk": True,

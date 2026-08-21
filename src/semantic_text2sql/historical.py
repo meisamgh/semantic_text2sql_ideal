@@ -43,12 +43,12 @@ _NORMALIZATION = {
 _BUSINESS_CONCEPTS = {
     "spending": {"spending", "payment", "price", "cost"},
     "quantity": {"amount", "quantity", "units", "items"},
-    "consumption": {"consumption", "usage", "gas"},
+    "consumption": {"consumption", "usage"},
     "unit_price": {"unit", "per", "price", "item"},
     "customer": {"customer", "client", "people", "person"},
-    "currency": {"currency", "eur", "czk", "euro", "koruna"},
-    "segment": {"segment", "sme", "lam", "kam"},
-    "station": {"station", "gasstation", "chain"},
+    "currency": {"currency"},
+    "segment": {"segment"},
+    "station": {"station"},
 }
 _OPERATIONS = {
     "count": {"count", "many", "number"},

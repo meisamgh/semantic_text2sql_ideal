@@ -21,7 +21,7 @@ async function initialize() {
     $("#healthStatus").lastChild.textContent = " Online";
     const [databases, models] = await Promise.all([api("/api/databases"), api("/api/models")]);
     const preferredModel = models.find((item) => item.configured);
-    fillSelect("#databaseSelect", databases.filter((item) => item.configured && item.dialect === "sqlite"), "db_id", "db_id", "debit_card_specializing");
+    fillSelect("#databaseSelect", databases.filter((item) => item.configured && item.dialect === "sqlite"), "db_id", "db_id", null);
     fillSelect("#modelSelect", models, (item) => `${item.provider}|${item.model}`, modelLabel, preferredModel && `${preferredModel.provider}|${preferredModel.model}`);
     if (!preferredModel) showError("No model can serve queries right now. Hover an entry in the model list to see why.");
   } catch (error) {

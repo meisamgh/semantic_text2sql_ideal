@@ -72,8 +72,6 @@ class TextToSQLAgent:
         schema = database.inspect(request.db_id)
         sql = clean_model_sql(request.sql)
         validation = validate_sql(sql, schema, dialect=request.dialect)
-        if validation.valid:
-            validation = database.explain(request.db_id, sql, validation)
         if not validation.valid or not request.execute:
             return CheckResponse(
                 db_id=request.db_id,
@@ -202,10 +200,6 @@ class TextToSQLAgent:
             baseline_validation = validate_sql(
                 request.previous_sql, schema, dialect=request.dialect
             )
-            if baseline_validation.valid:
-                baseline_validation = database.explain(
-                    request.db_id, request.previous_sql, baseline_validation
-                )
         feedback = None
         if request.optimization_required:
             baseline_plan = (
@@ -250,23 +244,13 @@ class TextToSQLAgent:
             normalized = normalize_sql(sql, dialect=request.dialect)
             fingerprint = hashlib.sha256(normalized.encode()).hexdigest()
             validation = validate_sql(sql, schema, dialect=request.dialect)
-            if validation.valid and approved and not set(validation.tables) <= approved:
-                validation = validation.model_copy(
-                    update={
-                        "valid": False,
-                        "code": "APPROVED_TABLE_VIOLATION",
-                        "message": "SQL used a table outside the user-approved table list.",
-                    }
-                )
-            if validation.valid:
-                validation = database.explain(request.db_id, sql, validation)
             if validation.valid:
                 validation = validation.model_copy(
                     update={
-                        "code": "SQL_EXECUTABLE",
+                        "code": "SQL_SAFETY_VALID",
                         "message": (
-                            "SQL passed read-only safety, schema resolution, and database EXPLAIN. "
-                            "This does not prove business correctness."
+                            "SQL passed syntax and read-only safety validation. "
+                            "This does not prove executability or business correctness."
                         ),
                     }
                 )

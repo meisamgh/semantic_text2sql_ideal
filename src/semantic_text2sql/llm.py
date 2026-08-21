@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -12,7 +13,7 @@ from typing import Literal, Protocol, cast
 
 import httpx
 
-from semantic_text2sql.models import SchemaInfo, StrategyHints, TokenUsage
+from semantic_text2sql.models import ModelProvider, SchemaInfo, StrategyHints, TokenUsage
 
 
 class ModelError(RuntimeError):
@@ -42,7 +43,7 @@ class SQLModel(Protocol):
     async def generate(
         self,
         *,
-        provider: Literal["ollama", "agentrouter"],
+        provider: ModelProvider,
         model: str,
         question: str,
         evidence: str | None,
@@ -65,7 +66,7 @@ class OllamaSQLModel:
     async def generate(
         self,
         *,
-        provider: Literal["ollama", "agentrouter"],
+        provider: ModelProvider,
         model: str,
         question: str,
         evidence: str | None,
@@ -160,6 +161,106 @@ class OllamaSQLModel:
         )
 
 
+class GroqSQLModel:
+    """Groq OpenAI-compatible client used for both bounded model calls."""
+
+    def __init__(
+        self,
+        api_key: str | None,
+        base_url: str = "https://api.groq.com/openai/v1",
+        timeout: float = 120.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+        self.transport = transport
+
+    async def generate(self, **kwargs: object) -> tuple[str, int, TokenUsage]:
+        from time import perf_counter
+
+        prompt = _prompt(
+            str(kwargs["question"]),
+            cast(str | None, kwargs.get("evidence")),
+            cast(SchemaInfo, kwargs["schema"]),
+            cast(StrategyHints, kwargs["strategy"]),
+            cast(Literal["sqlite", "postgres"], kwargs["dialect"]),
+            str(kwargs["profile_context"]),
+            cast(str | None, kwargs.get("previous_sql")),
+            cast(str | None, kwargs.get("feedback")),
+            cast(list[str], kwargs["rejected_shapes"]),
+            cast(Literal["reasoning", "icl", "alternative"], kwargs["generation_style"]),
+        )
+        started = perf_counter()
+        content, usage = await self._complete_detailed(str(kwargs["model"]), prompt, 2_000)
+        return content, round((perf_counter() - started) * 1_000), usage
+
+    async def complete(self, model: str, prompt: str) -> str:
+        content, _ = await self.complete_detailed(model, prompt)
+        return content
+
+    async def complete_detailed(self, model: str, prompt: str) -> tuple[str, TokenUsage]:
+        return await self._complete_detailed(model, prompt, 4_000)
+
+    async def _complete_detailed(
+        self, model: str, prompt: str, max_tokens: int
+    ) -> tuple[str, TokenUsage]:
+        if not self.api_key:
+            raise ModelError("GROQ_API_KEY is not configured.")
+        try:
+            async with httpx.AsyncClient(
+                base_url=self.base_url,
+                timeout=self.timeout,
+                transport=self.transport,
+            ) as client:
+                for attempt in range(3):
+                    response = await client.post(
+                        "chat/completions",
+                        headers={
+                            "authorization": f"Bearer {self.api_key}",
+                            "content-type": "application/json",
+                        },
+                        json={
+                            "model": model,
+                            "messages": [{"role": "user", "content": prompt}],
+                            "temperature": 0.2,
+                            "max_completion_tokens": max_tokens,
+                            "reasoning_effort": "none",
+                            "reasoning_format": "hidden",
+                        },
+                    )
+                    if response.status_code != 429 or attempt == 2:
+                        break
+                    await asyncio.sleep(_groq_retry_delay(response))
+                response.raise_for_status()
+                body = response.json()
+                content = body["choices"][0]["message"]["content"]
+        except httpx.HTTPStatusError as exc:
+            detail = exc.response.text[-500:].strip()
+            raise ModelError(
+                f"The Groq request failed: {detail or f'HTTP {exc.response.status_code}'}"
+            ) from exc
+        except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
+            raise ModelError(f"The Groq request failed: {exc}") from exc
+        if not isinstance(content, str) or not content.strip():
+            raise ModelError("Groq returned no text output.")
+        return content, _token_usage(body.get("usage") or {})
+
+
+def _groq_retry_delay(response: httpx.Response) -> float:
+    """Return Groq's bounded retry delay for a transient token-rate rejection."""
+    header = response.headers.get("retry-after")
+    if header:
+        try:
+            return min(max(float(header), 0.1), 30.0)
+        except ValueError:
+            pass
+    match = re.search(r"try again in\s+([0-9.]+)s", response.text, re.IGNORECASE)
+    if match:
+        return min(max(float(match.group(1)) + 0.25, 0.1), 30.0)
+    return 2.0
+
+
 class AgentRouterClaudeModel:
     """Claude Code client for the AgentRouter gateway.
 
@@ -182,7 +283,7 @@ class AgentRouterClaudeModel:
     async def generate(
         self,
         *,
-        provider: Literal["ollama", "agentrouter"],
+        provider: ModelProvider,
         model: str,
         question: str,
         evidence: str | None,
@@ -561,16 +662,18 @@ class RoutingSQLModel:
         self,
         ollama: OllamaSQLModel,
         agentrouter: AgentRouterClaudeModel | AgentRouterModel,
+        groq: GroqSQLModel,
     ) -> None:
         self.providers: dict[str, SQLModel] = {
             "ollama": ollama,
             "agentrouter": agentrouter,
+            "groq": groq,
         }
 
     async def generate(
         self,
         *,
-        provider: Literal["ollama", "agentrouter"],
+        provider: ModelProvider,
         model: str,
         question: str,
         evidence: str | None,

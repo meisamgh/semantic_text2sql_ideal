@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Literal
 
 from fastapi.testclient import TestClient
@@ -93,16 +92,6 @@ class UncertainTurnModel:
             ),
             TokenUsage(input_tokens=10, output_tokens=5),
         )
-
-
-def test_all_debit_card_questions_are_independent_chat_turns() -> None:
-    queue_path = Path(__file__).parents[1] / "data" / "debit_card_all30_questions.json"
-    queue = json.loads(queue_path.read_text(encoding="utf-8"))
-
-    operations = [classify_operation(item["question"], has_state=True) for item in queue]
-
-    assert len(operations) == 30
-    assert operations == ["NEW_QUERY"] * 30
 
 
 def test_classifier_detects_correction_and_explanation() -> None:

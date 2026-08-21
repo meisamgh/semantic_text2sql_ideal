@@ -29,10 +29,7 @@ Deterministic grounding
 Model 2: SQL-only generator
     |
     v
-SQLGlot safety and schema validation
-    |
-    v
-Database EXPLAIN
+SQLGlot syntax and read-only safety validation
     |
     v
 Read-only execution
@@ -88,22 +85,22 @@ Example Model 2 context:
 
 ```json
 {
-  "question": "What is the ratio of EUR customers to CZK customers?",
+  "question": "How many records are in each category?",
   "dialect": "sqlite",
   "tables": {
-    "customers": {
-      "grain": "one row per CustomerID",
-      "primary_key": ["CustomerID"],
-      "unique_keys": [["CustomerID"]],
+    "items": {
+      "grain": "one row per ItemID",
+      "primary_key": ["ItemID"],
+      "unique_keys": [["ItemID"]],
       "columns": {
-        "CustomerID": {
+        "ItemID": {
           "type": "INTEGER",
           "observed_nulls": false
         },
-        "Currency": {
+        "Category": {
           "type": "TEXT",
           "observed_nulls": false,
-          "example_values": ["CZK", "EUR"]
+          "example_values": ["Books", "Music"]
         }
       }
     }
@@ -133,11 +130,6 @@ The active generation path deliberately keeps only high-confidence validation:
 - Exactly one statement
 - `SELECT` or `WITH ... SELECT` only
 - No `INSERT`, `UPDATE`, `DELETE`, DDL, administrative commands, or `SELECT INTO`
-- Referenced tables exist
-- Referenced columns exist
-- Aliases and CTE columns resolve
-- Only retrieved/approved tables are used
-- Database `EXPLAIN` succeeds
 - Execution uses a read-only connection/transaction
 
 The runtime does **not** reject SQL using exact formula strings, exact aggregation structures,
@@ -145,14 +137,14 @@ specific join/CTE strategies, grain/cardinality AST patterns, or glossary formul
 
 Statuses have narrow meanings:
 
-- `SQL_EXECUTABLE`: safety/schema checks and `EXPLAIN` passed
+- `SQL_SAFETY_VALID`: syntax and read-only safety checks passed
 - `ACCEPTED`: read-only execution also succeeded
 
 Neither status proves business correctness. Returning rows—or returning a non-empty result—is never
 treated as proof that the query correctly answers the question.
 
 When an attempt fails, the web application displays its attempt number, error code, explanation,
-and rejected SQL. Parse, schema, and database failures receive focused repair feedback. Generation
+and rejected SQL. Parse and database failures receive focused repair feedback. Generation
 is bounded to three total SQL attempts.
 
 ## Models
@@ -163,9 +155,11 @@ The current model catalog exposes:
 - AgentRouter: `gpt-5.6-sol`
 - AgentRouter: `claude-opus-5`
 - AgentRouter: `claude-opus-4-7`
+- Groq: `qwen/qwen3.6-27b`
 
 The model endpoint reports whether each option is currently configured. AgentRouter credentials
-remain server-side and are never sent to the browser.
+and Groq credentials remain server-side and are never sent to the browser. The selected provider
+and model are used for both Model 1 and Model 2 unless an explicit server-side override is set.
 
 ## Install
 
@@ -196,6 +190,13 @@ AGENTROUTER_API_KEY=your-token-here
 AGENTROUTER_BASE_URL=https://agentrouter.org
 ```
 
+For Qwen 3.6 27B on Groq:
+
+```dotenv
+GROQ_API_KEY=your-groq-key-here
+GROQ_BASE_URL=https://api.groq.com/openai/v1
+```
+
 Never commit `.env`; it is ignored by Git.
 
 ## Database layout
@@ -221,12 +222,14 @@ Profiles are generated offline:
 ```bash
 uv run python scripts/profile_database.py \
   --dialect sqlite \
-  --db-id debit_card_specializing \
+  --db-id books \
   --output profiles
 ```
 
 Historical examples are disabled by default. The implementation remains available behind
 `TEXT2SQL_HISTORY_ENABLED=false`; enable it only after a paired evaluation demonstrates benefit.
+The bundled BIRD seed and evaluation tools live under `benchmarks/` and are not part of the runtime
+pipeline.
 
 ## Run
 
@@ -292,6 +295,8 @@ Important environment variables:
 | `OLLAMA_BASE_URL` | Ollama endpoint | `http://127.0.0.1:11434` |
 | `AGENTROUTER_API_KEY` | AgentRouter token | unset |
 | `AGENTROUTER_BASE_URL` | AgentRouter gateway | `https://agentrouter.org` |
+| `GROQ_API_KEY` | Groq API token | unset |
+| `GROQ_BASE_URL` | Groq OpenAI-compatible endpoint | `https://api.groq.com/openai/v1` |
 | `TEXT2SQL_CONTEXT_PLANNER_ENABLED` | Enable Model 1 | `true` |
 | `TEXT2SQL_CONTEXT_MODEL` | Optional Model 1 override | selected model |
 | `TEXT2SQL_SQL_MODEL` | Optional Model 2 override | selected model |
@@ -330,9 +335,9 @@ src/semantic_text2sql/
   linker.py           table-first and column-level retrieval
   profiling.py        offline database profiles
   glossary.py         direct-match glossary retrieval
-  llm.py              Ollama and AgentRouter adapters and Model 2 prompt
-  validator.py        SQLGlot safety and schema checks
-  agent.py            bounded repair, EXPLAIN, and execution
+  llm.py              Ollama, AgentRouter, and Groq adapters plus Model 2 prompt
+  validator.py        SQLGlot syntax and read-only safety checks
+  agent.py            bounded repair and read-only execution
 web/
   index.html
   app.js
@@ -340,6 +345,11 @@ web/
 scripts/
   create_demo_db.py
   profile_database.py
+benchmarks/
+  evaluate_bird.py
+  build_bird_history.py
+  run_chat_queue.py
+  data/bird_history_seed42_400.json
 ```
 
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party references and licenses.

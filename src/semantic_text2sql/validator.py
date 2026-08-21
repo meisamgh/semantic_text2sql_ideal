@@ -1,4 +1,4 @@
-"""Fail-closed SQLGlot validation with CTE-aware column qualification."""
+"""Minimal fail-closed validation for SQL syntax and read-only safety."""
 
 from __future__ import annotations
 
@@ -7,8 +7,7 @@ from typing import Literal
 
 import sqlglot
 from sqlglot import exp
-from sqlglot.errors import OptimizeError, ParseError, TokenError
-from sqlglot.optimizer.qualify import qualify
+from sqlglot.errors import ParseError, TokenError
 
 from semantic_text2sql.models import SchemaInfo, ValidationResult
 
@@ -77,62 +76,21 @@ def validate_sql(
         for table in root.find_all(exp.Table)
         if table.name and table.name.casefold() not in cte_names
     ]
-    table_lookup = {table.name.casefold(): table.name for table in schema.tables}
-    unknown_tables = sorted(
-        {table for table in physical_tables if table.casefold() not in table_lookup}
-    )
-    if unknown_tables:
-        return _failure(
-            "SQL_UNAUTHORIZED_TABLE",
-            "Unknown tables: " + ", ".join(unknown_tables),
-            available,
-            tables=physical_tables,
-        )
-    schema_map = {
-        table.name: {column.name: column.data_type for column in table.columns}
-        for table in schema.tables
-    }
-    try:
-        qualify(
-            root.copy(),
-            dialect=dialect,
-            schema=schema_map,
-            validate_qualify_columns=True,
-            identify=False,
-        )
-    except OptimizeError as exc:
-        return _failure(
-            "SQL_UNAUTHORIZED_COLUMN",
-            f"Column qualification failed: {exc}",
-            available,
-            tables=physical_tables,
-        )
-    alias_map = {
-        table.alias_or_name: table_lookup.get(table.name.casefold(), table.name)
-        for table in root.find_all(exp.Table)
-        if table.name.casefold() not in cte_names
-    }
     columns = list(
         dict.fromkeys(column.sql(dialect=dialect) for column in root.find_all(exp.Column))
     )
     return ValidationResult(
         valid=True,
         code="SQL_SAFETY_VALID",
-        message="SQL is one read-only statement using valid live-schema identifiers.",
+        message="SQL is one syntactically valid read-only statement.",
         tables=list(dict.fromkeys(physical_tables)),
         columns=columns,
-        alias_map=alias_map,
         available_columns=available,
     )
 
 
 def repair_context(result: ValidationResult) -> str:
-    return (
-        f"Validation code: {result.code}\n"
-        f"Validation message: {result.message}\n"
-        f"Alias-to-table map: {result.alias_map}\n"
-        f"Available columns by table: {result.available_columns}"
-    )[:12_000]
+    return (f"Validation code: {result.code}\nValidation message: {result.message}")[:12_000]
 
 
 def _failure(

@@ -7,7 +7,7 @@ import logging
 import os
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Literal
+from typing import Any
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
@@ -37,6 +37,7 @@ from semantic_text2sql.llm import (
     AgentRouterClaudeModel,
     AgentRouterCodexModel,
     AgentRouterModel,
+    GroqSQLModel,
     ModelError,
     OllamaSQLModel,
     RoutingSQLModel,
@@ -45,6 +46,7 @@ from semantic_text2sql.llm import (
 )
 from semantic_text2sql.models import (
     DEFAULT_OLLAMA_MODEL,
+    GROQ_QWEN_MODEL,
     ChatRequest,
     ChatResponse,
     CheckRequest,
@@ -57,6 +59,7 @@ from semantic_text2sql.models import (
     HistoricalExample,
     IntentRequest,
     ModelOption,
+    ModelProvider,
     SemanticContract,
     TableProposalRequest,
     TokenUsage,
@@ -86,7 +89,9 @@ def create_app(
         Path(os.environ.get("TEXT2SQL_GLOSSARY_ROOT", "data/business_glossaries"))
     )
     history = HistoricalQueryStore(
-        Path(os.environ.get("TEXT2SQL_HISTORY_PATH", "data/bird_history_seed42_400.json"))
+        Path(
+            os.environ.get("TEXT2SQL_HISTORY_PATH", "benchmarks/data/bird_history_seed42_400.json")
+        )
     )
     claude = AgentRouterClaudeModel(
         os.environ.get("AGENTROUTER_API_KEY"),
@@ -100,15 +105,20 @@ def create_app(
         ),
     )
     ollama = OllamaSQLModel(os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434"))
+    groq = GroqSQLModel(
+        os.environ.get("GROQ_API_KEY"),
+        os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
+    )
     active_agent = agent or TextToSQLAgent(
         sqlite,
-        RoutingSQLModel(ollama, agentrouter),
+        RoutingSQLModel(ollama, agentrouter, groq),
         postgres,
         profiles,
     )
     turn_completers = conversation_completers or {
         "ollama": ollama,
         "agentrouter": agentrouter,
+        "groq": groq,
     }
     app = FastAPI(
         title="Semantic Text-to-SQL v5",
@@ -145,6 +155,11 @@ def create_app(
             if os.environ.get("AGENTROUTER_API_KEY")
             else "AGENTROUTER_API_KEY is not set in the environment."
         )
+        missing_groq_key = (
+            None
+            if os.environ.get("GROQ_API_KEY")
+            else "GROQ_API_KEY is not set in the environment."
+        )
         local_reason = await ollama_model_status(DEFAULT_OLLAMA_MODEL, base_url=ollama.base_url)
         claude_reason = missing_key or (
             None
@@ -156,6 +171,7 @@ def create_app(
             _model_option("agentrouter", "gpt-5.6-sol", local=False, reason=missing_key),
             _model_option("agentrouter", "claude-opus-5", local=False, reason=claude_reason),
             _model_option("agentrouter", "claude-opus-4-7", local=False, reason=claude_reason),
+            _model_option("groq", GROQ_QWEN_MODEL, local=False, reason=missing_groq_key),
         ]
 
     @app.get("/api/databases", response_model=list[DatabaseOption])
@@ -294,7 +310,7 @@ def create_app(
                     "business glossary",
                     "live schema and PK/FK relationships",
                     "semantic contract",
-                    "SQLGlot and database EXPLAIN",
+                    "SQLGlot read-only safety validation",
                 ],
                 token_usage=conversation_usage,
                 timings_ms={
@@ -523,7 +539,7 @@ def create_app(
                 "session-scoped conversation contract",
                 "business glossary",
                 "live schema and column profiles",
-                "SQLGlot and database EXPLAIN",
+                "SQLGlot read-only safety validation",
             ],
             token_usage=_add_usage(
                 conversation_usage,
@@ -596,7 +612,7 @@ def create_app(
 
 
 def _model_option(
-    provider: Literal["ollama", "agentrouter"],
+    provider: ModelProvider,
     model: str,
     *,
     local: bool,
@@ -639,7 +655,7 @@ def _conversational_answer(operation: str, generated: GenerateResponse) -> str:
         prefix = "I applied your correction and reran the query."
     elif operation == "NEW_QUERY":
         prefix = (
-            "The SQL passed read-only safety and schema checks and executed successfully; "
+            "The SQL passed read-only safety checks and executed successfully; "
             "execution does not prove business correctness."
         )
     else:
