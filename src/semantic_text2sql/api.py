@@ -410,11 +410,8 @@ def create_app(
                 planner_call_used = True
             except (ModelError, ValueError):
                 pass
-        glossary = glossaries.load(request.db_id)
-        approved_concepts = (
-            {item.term.casefold().replace(" ", "_") for item in glossary.terms}
-            if glossary is not None
-            else set()
+        approved_concepts = glossaries.relevant_concept_ids(
+            request.db_id, pending.resolved_question
         )
         context_request = verify_context_request(
             context_request,
@@ -425,10 +422,10 @@ def create_app(
         )
         logger.info("verified_context_request=%s", context_request.model_dump_json())
         contract = reconcile_context_contract(contract, context_request)
-        generation_business_context = glossaries.retrieve(
-            request.db_id,
-            pending.resolved_question,
-            top_k=5,
+        generation_business_context = (
+            glossaries.retrieve(request.db_id, pending.resolved_question, top_k=5)
+            if context_request.business_concepts
+            else None
         )
         historical_examples: list[HistoricalExample] = []
         if os.environ.get("TEXT2SQL_HISTORY_ENABLED", "false").casefold() == "true":

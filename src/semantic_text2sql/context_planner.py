@@ -47,6 +47,8 @@ approved business concepts, and extra metadata types needed. Do not define outpu
 measures, aggregation, grouping, grain, ranking, derived metrics, or temporal operations. Never
 generate SQL and never recommend JOIN, EXISTS, CTE, DISTINCT, or another implementation strategy.
 Use only candidate table and column identifiers. Keep metadata requests minimal and specific.
+Select a business concept only when it appears in RELEVANT APPROVED GLOSSARY and directly helps the
+resolved question. If that section is None or an empty list, return business_concepts as [].
 
 RESOLVED QUESTION:
 {question}

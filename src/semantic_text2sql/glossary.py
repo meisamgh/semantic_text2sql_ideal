@@ -105,6 +105,18 @@ class GlossaryStore:
             and query & _tokens(f"{item.term} {' '.join(item.synonyms)}")
         ]
 
+    def relevant_concept_ids(self, db_id: str, question: str) -> set[str]:
+        """Return only glossary concepts with direct term/synonym overlap."""
+        glossary = self.load(db_id)
+        if glossary is None:
+            return set()
+        query = _tokens(question)
+        return {
+            item.term.casefold().replace(" ", "_")
+            for item in glossary.terms
+            if query & _tokens(f"{item.term} {' '.join(item.synonyms)}")
+        }
+
 
 def _score(item: GlossaryTerm, query: set[str]) -> int:
     return len(query & _tokens(f"{item.term} {' '.join(item.synonyms)} {item.definition}"))
