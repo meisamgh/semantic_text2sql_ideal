@@ -111,11 +111,11 @@ def create_app(
         "agentrouter": agentrouter,
     }
     app = FastAPI(
-        title="QueryGPT-Inspired Text-to-SQL v4",
-        version="0.4.0",
+        title="Semantic Text-to-SQL v5",
+        version="0.5.0",
         description=(
-            "Conversational workspace intent, glossary-grounded planning, table approval, "
-            "column pruning, and safe SQL generation."
+            "Bounded context selection, compact grounding, SQL-only generation, "
+            "safety-first validation, and read-only execution."
         ),
     )
     web_root = Path(__file__).resolve().parents[2] / "web"
