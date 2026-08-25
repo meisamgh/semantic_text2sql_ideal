@@ -4,6 +4,18 @@ localStorage.setItem("queryRoomSession", sessionId);
 $("#sessionId").textContent = sessionId;
 
 const state = { busy: false, jobId: null, cancelled: false };
+const postSafetyOptimizationCodes = new Set([
+  "OPTIMIZATION_NOT_FASTER",
+  "OPTIMIZATION_CHANGED_RESULT",
+  "OPTIMIZATION_EQUIVALENCE_UNPROVEN",
+]);
+
+function attemptOutcome(attempt) {
+  const validation = attempt.validation || {};
+  if (validation.valid === true) return "passed";
+  if (postSafetyOptimizationCodes.has(validation.code)) return "not_selected";
+  return "failed";
+}
 
 async function api(path, options = {}) {
   const response = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
@@ -152,11 +164,12 @@ function appendAssistant(body, elapsed) {
     badge.textContent = value;
     fragment.querySelector(".response-meta").append(badge);
   }
-  const failedAttempts = attempts.filter((attempt) => attempt.validation?.valid !== true);
-  const failureSummary = failedAttempts.length
-    ? failedAttempts.map((attempt) => {
+  const rejectedAttempts = attempts.filter((attempt) => attemptOutcome(attempt) !== "passed");
+  const failureSummary = rejectedAttempts.length
+    ? rejectedAttempts.map((attempt) => {
       const validation = attempt.validation || {};
-      return `Attempt ${attempt.number} failed: ${validation.code || "UNKNOWN"} — ${validation.message || "No reason returned."}`;
+      const outcome = attemptOutcome(attempt) === "not_selected" ? "not selected" : "failed";
+      return `Attempt ${attempt.number} ${outcome}: ${validation.code || "UNKNOWN"} — ${validation.message || "No reason returned."}`;
     }).join(" ")
     : "";
   const responseMessage = body.explanation || body.message || "";
@@ -269,13 +282,27 @@ function renderSemanticStatus(fragment, generation, hidden) {
     return;
   }
   const attempts = generation.attempts || [];
-  const safetyPassed = attempts.some((attempt) => attempt.validation?.valid === true);
+  const safetyPassed = attempts.some((attempt) => attemptOutcome(attempt) !== "failed");
   const executionPassed = generation.accepted === true && generation.execution_status === "ACCEPTED";
   const items = [
     ["Safety", safetyPassed ? "Passed" : "Failed", safetyPassed ? "pass" : "fail"],
     ["Execution", executionPassed ? "Succeeded" : "Not completed", executionPassed ? "pass" : "fail"],
-    ["Correctness", "Not measured", "unknown"],
   ];
+  const optimization = generation.optimization || null;
+  if (optimization) {
+    const equivalent = optimization.result_equivalent === true;
+    items.push([
+      "Equivalence",
+      equivalent ? "Passed" : "Not proven",
+      equivalent ? "pass" : "unknown",
+    ]);
+    items.push([
+      "Performance",
+      optimization.status === "optimized" ? "Improved" : "Not faster",
+      optimization.status === "optimized" ? "pass" : "unknown",
+    ]);
+  }
+  items.push(["Correctness", "Not measured", "unknown"]);
   items.forEach(([label, value, stateName]) => {
     const item = document.createElement("div");
     item.className = `status-card status-${stateName}`;
@@ -297,19 +324,25 @@ function renderAttempts(fragment, attempts) {
     return;
   }
 
-  const failed = attempts.filter((attempt) => attempt.validation?.valid !== true).length;
-  summary.textContent = `Validation attempts (${attempts.length}) · ${failed} failed`;
-  panel.open = failed > 0;
+  const failed = attempts.filter((attempt) => attemptOutcome(attempt) === "failed").length;
+  const notSelected = attempts.filter((attempt) => attemptOutcome(attempt) === "not_selected").length;
+  const summaryParts = [`Validation attempts (${attempts.length})`, `${failed} failed`];
+  if (notSelected) summaryParts.push(`${notSelected} not selected`);
+  summary.textContent = summaryParts.join(" · ");
+  panel.open = failed > 0 || notSelected > 0;
   attempts.forEach((attempt, index) => {
     const validation = attempt.validation || {};
-    const passed = validation.valid === true;
+    const outcome = attemptOutcome(attempt);
+    const passed = outcome === "passed";
+    const notSelected = outcome === "not_selected";
     const item = document.createElement("section");
-    item.className = `attempt-item ${passed ? "attempt-pass" : "attempt-fail"}`;
+    item.className = `attempt-item ${passed ? "attempt-pass" : notSelected ? "attempt-warn" : "attempt-fail"}`;
 
     const header = document.createElement("div");
     header.className = "attempt-header";
     const title = document.createElement("strong");
-    title.textContent = `Attempt ${attempt.number || index + 1} · ${passed ? "PASSED" : "FAILED"} · ${validation.code || "UNKNOWN_VALIDATION_RESULT"}`;
+    const outcomeLabel = passed ? "PASSED" : notSelected ? "NOT SELECTED" : "FAILED";
+    title.textContent = `Attempt ${attempt.number || index + 1} · ${outcomeLabel} · ${validation.code || "UNKNOWN_VALIDATION_RESULT"}`;
     header.append(title);
 
     const reason = document.createElement("p");

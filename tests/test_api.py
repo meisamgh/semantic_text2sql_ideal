@@ -52,6 +52,10 @@ def test_web_chat_application_is_served() -> None:
     assert "renderTokenAccounting" in script.text
     assert "const label = item.model;" in script.text
     assert "`${item.provider} · ${item.model}`" not in script.text
+    assert '"OPTIMIZATION_NOT_FASTER"' in script.text
+    assert '"Equivalence"' in script.text
+    assert '"Performance"' in script.text
+    assert '"NOT SELECTED"' in script.text
 
     sql_position = page.text.index('class="sql-panel"')
     result_position = page.text.index('class="result-panel"')

@@ -126,6 +126,7 @@ th { position: sticky; top: 0; background: #f1eee5; color: var(--muted); font-si
 .attempts-panel[open] > summary { border-bottom: 1px solid var(--line); }
 .attempt-item + .attempt-item { border-top: 1px solid var(--line); }
 .attempt-item { border-left: 4px solid var(--green-2); }
+.attempt-item.attempt-warn { border-left-color: #c5923d; }
 .attempt-item.attempt-fail { border-left-color: var(--danger); }
 .attempt-header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 12px 14px 0; }
 .attempt-header strong { color: var(--ink); font-size: 12px; word-spacing: .08em; }
