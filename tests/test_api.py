@@ -5,6 +5,7 @@ import time
 from fastapi.testclient import TestClient
 
 from semantic_text2sql.api import create_app
+from semantic_text2sql.models import ChatRequest
 
 
 def test_database_catalog_reports_both_dialects(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -28,11 +29,7 @@ def test_health_endpoint() -> None:
 
 def test_public_post_surface_contains_only_current_workflow() -> None:
     app = create_app()
-    post_paths = {
-        route.path
-        for route in app.routes
-        if "POST" in getattr(route, "methods", set())
-    }
+    post_paths = {route.path for route in app.routes if "POST" in getattr(route, "methods", set())}
 
     assert post_paths == {"/api/check", "/api/chat", "/api/chat/jobs"}
 
@@ -46,8 +43,25 @@ def test_web_chat_application_is_served() -> None:
     assert page.status_code == 200
     assert "Query Room" in page.text
     assert 'id="chatForm"' in page.text
+    assert 'id="contextModelSelect"' in page.text
+    assert 'id="sqlModelSelect"' in page.text
     assert script.status_code == 200
     assert 'api("/api/chat"' in script.text
+
+
+def test_chat_request_accepts_independent_context_and_sql_models() -> None:
+    request = ChatRequest(
+        session_id="models-test",
+        db_id="books",
+        message="Count the books",
+        provider="agentrouter",
+        model="gpt-5.6-sol",
+        context_provider="ollama",
+        context_model="qwen3.5:9b",
+    )
+
+    assert (request.context_provider, request.context_model) == ("ollama", "qwen3.5:9b")
+    assert (request.provider, request.model) == ("agentrouter", "gpt-5.6-sol")
 
 
 def test_chat_job_reports_progress_and_completion() -> None:

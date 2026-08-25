@@ -682,6 +682,8 @@ class ChatRequest(StrictModel):
     evidence: str | None = Field(default=None, max_length=8_000)
     provider: ModelProvider = "ollama"
     model: str = Field(default=DEFAULT_OLLAMA_MODEL, min_length=1, max_length=200)
+    context_provider: ModelProvider | None = None
+    context_model: str | None = Field(default=None, min_length=1, max_length=200)
     execute: bool = True
     max_rows: int = Field(default=100, ge=1, le=500)
     context_mode: Literal["model1", "retrieval"] = "model1"

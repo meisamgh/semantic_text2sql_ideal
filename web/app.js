@@ -22,7 +22,10 @@ async function initialize() {
     const [databases, models] = await Promise.all([api("/api/databases"), api("/api/models")]);
     const preferredModel = models.find((item) => item.configured);
     fillSelect("#databaseSelect", databases.filter((item) => item.configured && item.dialect === "sqlite"), "db_id", "db_id", null);
-    fillSelect("#modelSelect", models, (item) => `${item.provider}|${item.model}`, modelLabel, preferredModel && `${preferredModel.provider}|${preferredModel.model}`);
+    const preferred = preferredModel && `${preferredModel.provider}|${preferredModel.model}`;
+    fillSelect("#contextModelSelect", models, (item) => `${item.provider}|${item.model}`, modelLabel, preferred);
+    fillSelect("#sqlModelSelect", models, (item) => `${item.provider}|${item.model}`, modelLabel, preferred);
+    updateContextModelState();
     if (!preferredModel) showError("No model can serve queries right now. Hover an entry in the model list to see why.");
   } catch (error) {
     $("#healthStatus").lastChild.textContent = " Offline";
@@ -45,8 +48,16 @@ function fillSelect(selector, items, valueKey, labelKey, preferred) {
 }
 
 function modelLabel(item) {
-  return item.configured ? item.model : `${item.model} — unavailable`;
+  const label = `${item.provider} · ${item.model}`;
+  return item.configured ? label : `${label} — unavailable`;
 }
+
+function updateContextModelState() {
+  const retrievalOnly = $("#contextModeSelect").value === "retrieval";
+  $("#contextModelSelect").disabled = retrievalOnly;
+}
+
+$("#contextModeSelect").addEventListener("change", updateContextModelState);
 
 function formatSqlForDisplay(sql) {
   if (!sql || sql === "No SQL was accepted.") return sql;
@@ -277,7 +288,8 @@ async function send(message, feedbackCategory = null) {
   state.busy = true;
   $("#sendButton").disabled = true;
   appendUser(message.trim());
-  const [provider, model] = $("#modelSelect").value.split("|");
+  const [provider, model] = $("#sqlModelSelect").value.split("|");
+  const [contextProvider, contextModel] = $("#contextModelSelect").value.split("|");
   const started = performance.now();
   const progress = appendProgress(provider, model);
   state.cancelled = false;
@@ -292,6 +304,8 @@ async function send(message, feedbackCategory = null) {
         evidence: $("#evidenceInput").value.trim() || null,
         provider,
         model,
+        context_provider: $("#contextModeSelect").value === "model1" ? contextProvider : null,
+        context_model: $("#contextModeSelect").value === "model1" ? contextModel : null,
         context_mode: $("#contextModeSelect").value,
         execute: true,
         max_rows: 100,

@@ -339,9 +339,7 @@ def create_app(
             proposed_tables = previous.approved_tables
             planner_schema = schema.model_copy(
                 update={
-                    "tables": [
-                        table for table in schema.tables if table.name in proposed_tables
-                    ],
+                    "tables": [table for table in schema.tables if table.name in proposed_tables],
                     "relationships": [
                         item
                         for item in schema.relationships
@@ -418,15 +416,15 @@ def create_app(
         planner_call_used = False
         planner_enabled = (
             request.context_mode == "model1"
-            and
-            os.environ.get(
+            and os.environ.get(
                 "TEXT2SQL_CONTEXT_PLANNER_ENABLED", "true" if agent is None else "false"
             ).casefold()
             == "true"
         )
-        # The user's selection owns both LLM calls; grounding and validation stay deterministic.
-        planner_provider = request.provider
-        planner_model = os.environ.get("TEXT2SQL_CONTEXT_MODEL") or request.model
+        planner_provider = request.context_provider or request.provider
+        planner_model = (
+            request.context_model or os.environ.get("TEXT2SQL_CONTEXT_MODEL") or request.model
+        )
         if planner_enabled and operation != "OPTIMIZE":
             try:
                 selection, planner_usage = await plan_context_detailed(

@@ -45,8 +45,9 @@ Read-only execution
 Final SQL, result, context JSON, and attempt history
 ```
 
-The web application exposes both context modes. In `model1` mode, the selected provider/model is
-used for Model 1 and Model 2 by default. In `retrieval` mode, the Model 1 call is skipped.
+The web application exposes both context modes and separate selectors for the context model and SQL
+generator. In `model1` mode, each stage can use a different configured provider/model. In
+`retrieval` mode, the context-model selector is disabled and the Model 1 call is skipped.
 
 ## Model responsibilities
 
@@ -209,8 +210,9 @@ The current model catalog exposes:
 - Groq: `qwen/qwen3.6-27b`
 
 The model endpoint reports whether each option is currently configured. AgentRouter credentials
-and Groq credentials remain server-side and are never sent to the browser. The selected provider
-and model are used for both Model 1 and Model 2 unless an explicit server-side override is set.
+and Groq credentials remain server-side and are never sent to the browser. The web application lets
+the user select the context model and SQL generator independently. Server-side SQL-model overrides
+remain available for controlled deployments.
 
 ## Install
 
