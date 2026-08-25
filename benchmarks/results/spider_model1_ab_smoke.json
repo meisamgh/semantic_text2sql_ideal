@@ -1,0 +1,67 @@
+{
+  "summary": {
+    "benchmark": "Spider 1.0 dev paired A/B",
+    "provider": "agentrouter",
+    "model": "gpt-5.6-sol",
+    "seed": 42,
+    "requested_count": 1,
+    "completed_count": 1,
+    "indices": [
+      272
+    ],
+    "retrieval": {
+      "correct": 1,
+      "execution_accuracy": 1.0,
+      "accepted": 1,
+      "model1_call_rate": 0.0,
+      "average_tokens": 0.0,
+      "average_latency_ms": 5003
+    },
+    "model1": {
+      "correct": 1,
+      "execution_accuracy": 1.0,
+      "accepted": 1,
+      "model1_call_rate": 1.0,
+      "average_tokens": 0.0,
+      "average_latency_ms": 7068
+    },
+    "paired": {
+      "both_correct": 1,
+      "retrieval_only": 0,
+      "model1_only": 0,
+      "neither": 0
+    }
+  },
+  "results": [
+    {
+      "dataset_index": 272,
+      "db_id": "employee_hire_evaluation",
+      "question": "What are the minimum and maximum number of products across all the shops?",
+      "gold_sql": "SELECT min(Number_products) ,  max(Number_products) FROM shop",
+      "retrieval": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT MIN(Number_products) AS minimum_number_products, MAX(Number_products) AS maximum_number_products\nFROM shop",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 5003,
+        "model1_called": false,
+        "selected_tables": 3,
+        "selected_columns": 13
+      },
+      "model1": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT MIN(shop.Number_products) AS minimum_number_products, MAX(shop.Number_products) AS maximum_number_products\nFROM shop",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 7068,
+        "model1_called": true,
+        "selected_tables": 1,
+        "selected_columns": 2
+      }
+    }
+  ]
+}

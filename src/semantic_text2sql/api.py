@@ -7,7 +7,7 @@ import logging
 import os
 from pathlib import Path
 from time import perf_counter
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
@@ -32,6 +32,12 @@ from semantic_text2sql.conversation import (
 from semantic_text2sql.database import DatabaseRegistry
 from semantic_text2sql.glossary import GlossaryStore
 from semantic_text2sql.historical import HistoricalQueryStore
+from semantic_text2sql.hybrid_retrieval import (
+    FastEmbedEncoder,
+    HybridSchemaRetriever,
+    LightGBMSchemaReranker,
+    metadata_requests,
+)
 from semantic_text2sql.llm import (
     CLAUDE_CODE_EXECUTABLE,
     AgentRouterClaudeModel,
@@ -57,17 +63,15 @@ from semantic_text2sql.models import (
     GenerateRequest,
     GenerateResponse,
     HistoricalExample,
-    IntentRequest,
     ModelOption,
     ModelProvider,
+    PlannerMetadataRequirement,
     SemanticContract,
-    TableProposalRequest,
     TokenUsage,
     TurnInterpretation,
 )
 from semantic_text2sql.postgres import PostgresRegistry
 from semantic_text2sql.profiling import ProfileStore
-from semantic_text2sql.querygpt import QueryGPTFlow, WorkspaceRegistry
 from semantic_text2sql.semantic import (
     apply_structural_formulas,
     resolution_report,
@@ -131,11 +135,20 @@ def create_app(
     web_root = Path(__file__).resolve().parents[2] / "web"
     if web_root.is_dir():
         app.mount("/static", StaticFiles(directory=web_root), name="static")
-    workspace_path = os.environ.get("TEXT2SQL_WORKSPACES_PATH")
-    workspace_registry = (
-        WorkspaceRegistry(Path(workspace_path)) if workspace_path else WorkspaceRegistry()
+    reranker = None
+    reranker_path = os.environ.get("TEXT2SQL_SCHEMA_RERANKER_MODEL")
+    if os.environ.get("TEXT2SQL_SCHEMA_RERANKER_ENABLED", "false").casefold() == "true":
+        try:
+            reranker = LightGBMSchemaReranker(Path(reranker_path or ""))
+        except (FileNotFoundError, RuntimeError, ValueError) as exc:
+            logger.warning("schema_reranker_disabled=%s", exc)
+    hybrid_retriever = HybridSchemaRetriever(
+        FastEmbedEncoder(os.environ.get("TEXT2SQL_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")),
+        max_tables=int(os.environ.get("TEXT2SQL_RETRIEVAL_TABLES", "5")),
+        max_columns_per_table=int(os.environ.get("TEXT2SQL_RETRIEVAL_COLUMNS", "5")),
+        reranker=reranker,
+        reranker_pool=int(os.environ.get("TEXT2SQL_SCHEMA_RERANKER_POOL", "30")),
     )
-    querygpt = QueryGPTFlow(sqlite, postgres, profiles, workspace_registry)
     conversations = ConversationStore()
     chat_jobs: dict[str, dict[str, Any]] = {}
     chat_tasks: dict[str, asyncio.Task[None]] = {}
@@ -319,33 +332,59 @@ def create_app(
                 },
             )
         routing_started = perf_counter()
+        schema = sqlite.inspect(request.db_id)
+        database_profile = profiles.load("sqlite", request.db_id)
+        retrieval_trace = None
         if operation == "OPTIMIZE" and previous and previous.approved_tables:
             proposed_tables = previous.approved_tables
+            planner_schema = schema.model_copy(
+                update={
+                    "tables": [
+                        table for table in schema.tables if table.name in proposed_tables
+                    ],
+                    "relationships": [
+                        item
+                        for item in schema.relationships
+                        if item.from_table in proposed_tables and item.to_table in proposed_tables
+                    ],
+                }
+            )
+            context_request = fallback_context_request(
+                previous.semantic_contract or SemanticContract()
+            )
         else:
-            intent = querygpt.classify_intent(
-                IntentRequest(
-                    db_id=request.db_id,
-                    question=pending.resolved_question,
-                    evidence=request.evidence,
-                )
+            historical_schema_evidence = history.schema_evidence(
+                pending.resolved_question,
+                request.db_id,
+                schema,
+                top_k=3,
+                min_score=float(os.environ.get("TEXT2SQL_HISTORY_ML_MIN_SCORE", "0.65")),
             )
-            proposal = querygpt.propose_tables(
-                TableProposalRequest(
-                    db_id=request.db_id,
-                    question=pending.resolved_question,
-                    evidence=request.evidence,
-                    workspace_id=intent.selected_workspace,
-                    # Keep retrieval high-recall for queries that genuinely span
-                    # several business tables. Downstream context selection may
-                    # reduce this set, while deterministic grounding can still
-                    # restore required relationship/bridge tables.
-                    max_tables=5,
-                )
+            planner_schema, retrieval_selection, retrieval_trace = hybrid_retriever.retrieve(
+                pending.resolved_question,
+                request.evidence,
+                schema,
+                database_profile,
+                glossaries.load(request.db_id),
+                historical_schema_evidence,
             )
-            proposed_tables = proposal.proposed_tables
+            proposed_tables = retrieval_selection.tables
+            metadata = metadata_requests(
+                pending.resolved_question, planner_schema, database_profile
+            )
+            context_request = ContextRequest(
+                tables=retrieval_selection.tables,
+                columns=retrieval_selection.columns,
+                business_concepts=sorted(
+                    glossaries.relevant_concept_ids(request.db_id, pending.resolved_question)
+                ),
+                metadata_requirements=[
+                    PlannerMetadataRequirement(kind=cast(Any, kind), targets=[target])
+                    for kind, target in metadata
+                ],
+            )
         routing_ms = round((perf_counter() - routing_started) * 1_000)
         planning_started = perf_counter()
-        schema = sqlite.inspect(request.db_id)
         contract = (
             previous.semantic_contract
             if operation == "OPTIMIZE" and previous and previous.semantic_contract
@@ -356,17 +395,6 @@ def create_app(
             glossaries.structural_formulas(request.db_id, pending.resolved_question),
         )
         candidate_names = set(proposed_tables)
-        planner_schema = schema.model_copy(
-            update={
-                "tables": [table for table in schema.tables if table.name in candidate_names],
-                "relationships": [
-                    item
-                    for item in schema.relationships
-                    if item.from_table in candidate_names and item.to_table in candidate_names
-                ],
-            }
-        )
-        database_profile = profiles.load("sqlite", request.db_id)
         candidate_relationships = [
             {
                 "left": f"{item.from_table}.{item.from_column}",
@@ -386,20 +414,11 @@ def create_app(
                 for item in database_profile.relationships
                 if item.parent_table in candidate_names and item.child_table in candidate_names
             )
-        context_request = (
-            fallback_context_request(contract)
-            if operation == "OPTIMIZE"
-            else ContextRequest(
-                tables=[table.name for table in planner_schema.tables],
-                columns={
-                    table.name: [column.name for column in table.columns]
-                    for table in planner_schema.tables
-                },
-            )
-        )
         planner_usage = TokenUsage()
         planner_call_used = False
         planner_enabled = (
+            request.context_mode == "model1"
+            and
             os.environ.get(
                 "TEXT2SQL_CONTEXT_PLANNER_ENABLED", "true" if agent is None else "false"
             ).casefold()
@@ -494,6 +513,8 @@ def create_app(
                 "telemetry": generated.telemetry.model_copy(
                     update={
                         "model1_latency_ms": planning_ms,
+                        "ab_context_mode": request.context_mode,
+                        "retrieval": retrieval_trace,
                         "selected_table_count": len(context_request.tables),
                         "selected_column_count": sum(
                             len(columns) for columns in context_request.columns.values()

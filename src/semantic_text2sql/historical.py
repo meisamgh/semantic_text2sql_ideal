@@ -6,6 +6,7 @@ import json
 import math
 import re
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -16,6 +17,7 @@ from sqlglot.errors import ParseError
 from semantic_text2sql.models import (
     ContextRequest,
     HistoricalExample,
+    SchemaInfo,
     SemanticContract,
     SemanticPlan,
 )
@@ -144,16 +146,30 @@ class HistoricalQueryStore:
             records = raw.get("records", raw) if isinstance(raw, dict) else raw
             if not isinstance(records, list):
                 raise ValueError("Historical query corpus must be a JSON list.")
-            for item in records:
-                if not isinstance(item, dict) or item.get("success") is not True:
-                    continue
-                question = item.get("question")
-                sql = item.get("sql") or item.get("SQL")
-                db_id = item.get("db_id")
-                if all(isinstance(value, str) and value for value in (question, sql, db_id)):
-                    self.records.append(
-                        {"question": str(question), "sql": str(sql), "db_id": str(db_id)}
-                    )
+            self._add_records(records)
+
+    @classmethod
+    def from_records(cls, records: list[dict[str, object]]) -> HistoricalQueryStore:
+        store = cls()
+        store._add_records(records)
+        return store
+
+    def _add_records(self, records: Sequence[object]) -> None:
+        for item in records:
+            if not isinstance(item, dict) or item.get("success") is not True:
+                continue
+            question = item.get("question")
+            sql = item.get("sql") or item.get("SQL")
+            db_id = item.get("db_id")
+            if all(isinstance(value, str) and value for value in (question, sql, db_id)):
+                self.records.append(
+                    {
+                        "question": str(question),
+                        "sql": str(sql),
+                        "db_id": str(db_id),
+                        "record_id": str(item.get("dataset_index", "")),
+                    }
+                )
 
     def search(
         self,
@@ -166,20 +182,104 @@ class HistoricalQueryStore:
         semantic_pool: int = 5,
         candidate_tables: set[str] | None = None,
         signature: SemanticSignature | None = None,
+        exclude_record_id: str | None = None,
     ) -> list[HistoricalExample]:
         """BM25 and semantic reranking with fail-closed zero-to-two example selection."""
         if top_k == 0:
             return []
-        records = [item for item in self.records if item["db_id"] == db_id]
-        if not records:
+        scored, query_signature = self._ranked_candidates(
+            question,
+            db_id,
+            min_score=min_score,
+            bm25_pool=bm25_pool,
+            candidate_tables=candidate_tables,
+            signature=signature,
+            exclude_record_id=exclude_record_id,
+        )
+        semantic_ranked = scored[: max(top_k, semantic_pool)]
+        if self.reranker is not None and semantic_ranked:
+            semantic_ranked = self.reranker.rerank(question, semantic_ranked)
+        if not semantic_ranked:
             return []
+        selected = [semantic_ranked[0]]
+        if min(2, top_k) > 1:
+            first_signature = _signature_from_text(
+                semantic_ranked[0].question, _sql_tables(semantic_ranked[0].sql)
+            )
+            for candidate in semantic_ranked[1:]:
+                candidate_signature = _signature_from_text(
+                    candidate.question, _sql_tables(candidate.sql)
+                )
+                if _complements(query_signature, first_signature, candidate_signature):
+                    selected.append(candidate)
+                    break
+        return selected
+
+    def schema_evidence(
+        self,
+        question: str,
+        db_id: str,
+        schema: SchemaInfo,
+        *,
+        top_k: int = 3,
+        min_score: float = 0.65,
+        exclude_record_id: str | None = None,
+    ) -> dict[str, dict[str, float]]:
+        """Aggregate strong historical SQL usage into schema-candidate ranking features."""
+        ranked, query_signature = self._ranked_candidates(
+            question,
+            db_id,
+            min_score=min_score,
+            bm25_pool=20,
+            candidate_tables=None,
+            signature=None,
+            exclude_record_id=exclude_record_id,
+        )
+        evidence: dict[str, dict[str, float]] = {}
+        for example in ranked[:top_k]:
+            candidate_signature = _signature_from_text(example.question, _sql_tables(example.sql))
+            operation_match = float(_operation_compatible(query_signature, candidate_signature))
+            for identifier in _sql_schema_identifiers(example.sql, schema):
+                item = evidence.setdefault(
+                    identifier,
+                    {
+                        "max_similarity": 0.0,
+                        "weighted_usage": 0.0,
+                        "support_count": 0.0,
+                        "operation_match": 0.0,
+                    },
+                )
+                item["max_similarity"] = max(item["max_similarity"], example.score)
+                item["weighted_usage"] += example.score
+                item["support_count"] += 1.0
+                item["operation_match"] = max(item["operation_match"], operation_match)
+        return evidence
+
+    def _ranked_candidates(
+        self,
+        question: str,
+        db_id: str,
+        *,
+        min_score: float,
+        bm25_pool: int,
+        candidate_tables: set[str] | None,
+        signature: SemanticSignature | None,
+        exclude_record_id: str | None,
+    ) -> tuple[list[HistoricalExample], SemanticSignature]:
+        records = [
+            item
+            for item in self.records
+            if item["db_id"] == db_id and item.get("record_id") != exclude_record_id
+        ]
+        if not records:
+            return [], signature or _signature_from_text(question, candidate_tables or set())
         query_tokens = _normalized_tokens(question)
         documents = [_normalized_tokens(item["question"]) for item in records]
         bm25_scores = _bm25_scores(query_tokens, documents)
         bm25_ranked = sorted(
             zip(records, bm25_scores, strict=True),
             key=lambda item: (-item[1], item[0]["question"]),
-        )[: max(top_k, bm25_pool)]
+        )[:bm25_pool]
         max_bm25 = max((item[1] for item in bm25_ranked), default=0.0)
         query_signature = signature or _signature_from_text(question, candidate_tables or set())
         scored: list[HistoricalExample] = []
@@ -198,27 +298,15 @@ class HistoricalQueryStore:
             normalized_bm25 = bm25_score / max_bm25 if max_bm25 else 0.0
             score = 0.45 * normalized_bm25 + 0.55 * semantic_score
             if score >= min_score:
-                scored.append(HistoricalExample(**record, score=score))
-        semantic_ranked = sorted(scored, key=lambda item: (-item.score, item.question))[
-            : max(top_k, semantic_pool)
-        ]
-        if self.reranker is not None and semantic_ranked:
-            semantic_ranked = self.reranker.rerank(question, semantic_ranked)
-        if not semantic_ranked:
-            return []
-        selected = [semantic_ranked[0]]
-        if min(2, top_k) > 1:
-            first_signature = _signature_from_text(
-                semantic_ranked[0].question, _sql_tables(semantic_ranked[0].sql)
-            )
-            for candidate in semantic_ranked[1:]:
-                candidate_signature = _signature_from_text(
-                    candidate.question, _sql_tables(candidate.sql)
+                scored.append(
+                    HistoricalExample(
+                        db_id=record["db_id"],
+                        question=record["question"],
+                        sql=record["sql"],
+                        score=score,
+                    )
                 )
-                if _complements(query_signature, first_signature, candidate_signature):
-                    selected.append(candidate)
-                    break
-        return selected
+        return sorted(scored, key=lambda item: (-item.score, item.question)), query_signature
 
 
 def format_examples(examples: list[HistoricalExample]) -> str:
@@ -368,3 +456,35 @@ def _sql_tables(sql: str) -> set[str]:
         return {table.name for table in parse_one(sql).find_all(exp.Table)}
     except ParseError:
         return set()
+
+
+def _sql_schema_identifiers(sql: str, schema: SchemaInfo) -> set[str]:
+    try:
+        tree = parse_one(sql, read=schema.dialect)
+    except ParseError:
+        return set()
+    aliases = {
+        table.alias_or_name.casefold(): table.name
+        for table in tree.find_all(exp.Table)
+        if table.name
+    }
+    tables = {table.name for table in tree.find_all(exp.Table) if table.name}
+    live_columns = {
+        table.name: {column.name.casefold(): column.name for column in table.columns}
+        for table in schema.tables
+    }
+    identifiers = {f"table:{table}" for table in tables if table in live_columns}
+    for column in tree.find_all(exp.Column):
+        if column.name == "*":
+            continue
+        if column.table:
+            table_name = aliases.get(column.table.casefold(), column.table)
+            actual = live_columns.get(table_name, {}).get(column.name.casefold())
+            if actual:
+                identifiers.add(f"column:{table_name}.{actual}")
+            continue
+        for table_name in tables:
+            actual = live_columns.get(table_name, {}).get(column.name.casefold())
+            if actual:
+                identifiers.add(f"column:{table_name}.{actual}")
+    return identifiers

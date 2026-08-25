@@ -112,6 +112,25 @@ def test_composite_relationship_is_profiled_as_one_key(tmp_path) -> None:  # typ
     assert store.load("sqlite", "composite") == profile
 
 
+def test_profiler_handles_mixed_sqlite_storage_classes(tmp_path) -> None:
+    directory = tmp_path / "mixed"
+    directory.mkdir()
+    with sqlite3.connect(directory / "mixed.sqlite") as connection:
+        connection.executescript(
+            """
+            CREATE TABLE observations (id INTEGER PRIMARY KEY, value);
+            INSERT INTO observations VALUES (1, 7), (2, 'unknown'), (3, NULL);
+            """
+        )
+
+    profile = profile_database(DatabaseRegistry(tmp_path), "mixed", "sqlite")
+    value = next(item for item in profile.columns if item.column == "value")
+
+    assert value.minimum == "7"
+    assert value.maximum == "unknown"
+    assert value.null_count == 1
+
+
 def test_bird_descriptions_enrich_profiles(registry, tmp_path) -> None:  # type: ignore[no-untyped-def]
     profile = profile_database(registry, "shop", "sqlite")
     description_dir = tmp_path / "database_description"

@@ -503,6 +503,19 @@ class ContextPlan(StrictModel):
     token_budget: int = Field(default=1_800, ge=500, le=8_000)
 
 
+class RetrievalTrace(StrictModel):
+    bm25_ranks: dict[str, int] = Field(default_factory=dict)
+    embedding_ranks: dict[str, int] = Field(default_factory=dict)
+    value_match_ranks: dict[str, int] = Field(default_factory=dict)
+    rrf_scores: dict[str, float] = Field(default_factory=dict)
+    ml_reranker_applied: bool = False
+    ml_reranker_scores: dict[str, float] = Field(default_factory=dict)
+    selected_tables: list[str] = Field(default_factory=list)
+    selected_columns: dict[str, list[str]] = Field(default_factory=dict)
+    bridge_tables_added: list[str] = Field(default_factory=list)
+    metadata_supplied: list[str] = Field(default_factory=list)
+
+
 class PipelineTelemetry(StrictModel):
     available_context_tokens: int = Field(default=0, ge=0)
     selected_context_tokens: int = Field(default=0, ge=0)
@@ -529,6 +542,8 @@ class PipelineTelemetry(StrictModel):
     historical_candidates_retrieved: int | None = Field(default=None, ge=0)
     historical_examples_admitted: int = Field(default=0, ge=0, le=2)
     historical_similarity_scores: list[float] = Field(default_factory=list, max_length=2)
+    ab_context_mode: Literal["model1", "retrieval"] | None = None
+    retrieval: RetrievalTrace | None = None
 
 
 class ContractDelta(StrictModel):
@@ -669,6 +684,7 @@ class ChatRequest(StrictModel):
     model: str = Field(default=DEFAULT_OLLAMA_MODEL, min_length=1, max_length=200)
     execute: bool = True
     max_rows: int = Field(default=100, ge=1, le=500)
+    context_mode: Literal["model1", "retrieval"] = "model1"
     feedback_category: (
         Literal[
             "wrong_result",

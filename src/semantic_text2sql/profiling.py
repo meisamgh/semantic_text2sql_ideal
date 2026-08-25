@@ -424,6 +424,9 @@ def _profile_column(
     )
     sentinels = _sentinels(non_null, semantic_type)
     lengths = sorted(len(value) for value in strings)
+    comparable: list[float] | list[str] = (
+        numeric if len(numeric) == len(non_null) else strings
+    )
     null_count = len(values) - len(non_null)
     denominator = len(values) or 1
     return ColumnProfile(
@@ -442,8 +445,8 @@ def _profile_column(
         empty_string_count=sum(value == "" for value in strings),
         suspected_sentinels=sentinels,
         distinct_count=len(counts),
-        minimum=str(min(non_null)) if non_null else None,
-        maximum=str(max(non_null)) if non_null else None,
+        minimum=str(min(comparable)) if comparable else None,
+        maximum=str(max(comparable)) if comparable else None,
         range_exact=exact,
         median=median(numeric) if numeric else None,
         quantiles=_quantiles(numeric),

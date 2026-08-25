@@ -1,0 +1,612 @@
+{
+  "summary": {
+    "benchmark": "debit_card_specializing labelled hard-20 paired A/B",
+    "provider": "agentrouter",
+    "model": "gpt-5.6-sol",
+    "completed_count": 20,
+    "retrieval": {
+      "correct": 6,
+      "execution_accuracy": 0.3,
+      "accepted": 20,
+      "average_latency_ms": 18989,
+      "average_selected_tables": 3.95,
+      "average_selected_columns": 15.5
+    },
+    "model1": {
+      "correct": 6,
+      "execution_accuracy": 0.3,
+      "accepted": 20,
+      "average_latency_ms": 23402,
+      "average_selected_tables": 1.95,
+      "average_selected_columns": 5.3
+    },
+    "paired": {
+      "both_correct": 5,
+      "retrieval_only": 1,
+      "model1_only": 1,
+      "neither": 13
+    }
+  },
+  "results": [
+    {
+      "question_id": 1481,
+      "difficulty": "challenging",
+      "question": "What is the difference in the annual average consumption of the customers with the least amount of consumption paid in CZK for 2013 between SME and LAM, LAM and KAM, and KAM and SME?",
+      "evidence": "annual average consumption of customer with the lowest consumption in each segment = total consumption per year / the number of customer with lowest consumption in each segment; Difference in annual average = SME's annual average - LAM's annual average; Difference in annual average = LAM's annual average - KAM's annual average; Year 2013 can be presented as Between 201301 And 201312; The first 4 strings of the Date values in the yearmonth table can represent year.",
+      "gold_sql": "SELECT CAST(SUM(IIF(T1.Segment = 'SME', T2.Consumption, 0)) AS REAL) / COUNT(T1.CustomerID) - CAST(SUM(IIF(T1.Segment = 'LAM', T2.Consumption, 0)) AS REAL) / COUNT(T1.CustomerID) , CAST(SUM(IIF(T1.Segment = 'LAM', T2.Consumption, 0)) AS REAL) / COUNT(T1.CustomerID) - CAST(SUM(IIF(T1.Segment = 'KAM', T2.Consumption, 0)) AS REAL) / COUNT(T1.CustomerID) , CAST(SUM(IIF(T1.Segment = 'KAM', T2.Consumption, 0)) AS REAL) / COUNT(T1.CustomerID) - CAST(SUM(IIF(T1.Segment = 'SME', T2.Consumption, 0)) AS REAL) / COUNT(T1.CustomerID) FROM customers AS T1 INNER JOIN yearmonth AS T2 ON T1.CustomerID = T2.CustomerID WHERE T1.Currency = 'CZK' AND T2.Consumption = ( SELECT MIN(Consumption) FROM yearmonth ) AND T2.Date BETWEEN 201301 AND 201312",
+      "retrieval": {
+        "correct": false,
+        "accepted": true,
+        "sql": "WITH customer_annual_average AS (\n    SELECT\n        c.Segment AS customer_segment,\n        ym.CustomerID AS customer_id,\n        AVG(ym.Consumption) AS annual_average_consumption\n    FROM customers AS c\n    JOIN yearmonth AS ym\n        ON ym.CustomerID = c.CustomerID\n    WHERE c.Currency = 'CZK'\n      AND SUBSTR(ym.Date, 1, 4) = '2013'\n      AND c.Segment IN ('SME', 'LAM', 'KAM')\n    GROUP BY c.Segment, ym.CustomerID\n),\nsegment_minimum AS (\n    SELECT\n        customer_segment,\n        MIN(annual_average_consumption) AS least_annual_average_consumption\n    FROM customer_annual_average\n    GROUP BY customer_segment\n)\nSELECT\n    sme.least_annual_average_consumption - lam.least_annual_average_consumption AS sme_minus_lam,\n    lam.least_annual_average_consumption - kam.least_annual_average_consumption AS lam_minus_kam,\n    kam.least_annual_average_consumption - sme.least_annual_average_consumption AS kam_minus_sme\nFROM segment_minimum AS sme\nJOIN segment_minimum AS lam\n    ON lam.customer_segment = 'LAM'\nJOIN segment_minimum AS kam\n    ON kam.customer_segment = 'KAM'\nWHERE sme.customer_segment = 'SME'",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 29451,
+        "model1_called": false,
+        "selected_tables": 4,
+        "selected_columns": 17
+      },
+      "model1": {
+        "correct": false,
+        "accepted": true,
+        "sql": "WITH customer_annual_consumption AS (\n    SELECT\n        c.CustomerID AS customer_id,\n        c.Segment AS segment,\n        SUM(y.Consumption) AS annual_consumption\n    FROM customers AS c\n    JOIN yearmonth AS y\n        ON y.CustomerID = c.CustomerID\n    WHERE c.Currency = 'CZK'\n      AND SUBSTR(y.Date, 1, 4) = '2013'\n    GROUP BY c.CustomerID, c.Segment\n),\nsegment_minimum_consumption AS (\n    SELECT\n        segment,\n        MIN(annual_consumption) AS minimum_annual_consumption\n    FROM customer_annual_consumption\n    GROUP BY segment\n),\nleast_consumption_customers AS (\n    SELECT\n        a.customer_id,\n        a.segment,\n        a.annual_consumption\n    FROM customer_annual_consumption AS a\n    JOIN segment_minimum_consumption AS m\n        ON m.segment = a.segment\n       AND m.minimum_annual_consumption = a.annual_consumption\n),\nsegment_annual_averages AS (\n    SELECT\n        segment,\n        AVG(annual_consumption) AS annual_average_consumption\n    FROM least_consumption_customers\n    GROUP BY segment\n),\nsegment_comparison_values AS (\n    SELECT\n        MAX(CASE WHEN segment = 'SME' THEN annual_average_consumption END) AS sme_annual_average_consumption,\n        MAX(CASE WHEN segment = 'LAM' THEN annual_average_consumption END) AS lam_annual_average_consumption,\n        MAX(CASE WHEN segment = 'KAM' THEN annual_average_consumption END) AS kam_annual_average_consumption\n    FROM segment_annual_averages\n)\nSELECT\n    sme_annual_average_consumption - lam_annual_average_consumption AS difference_sme_lam,\n    lam_annual_average_consumption - kam_annual_average_consumption AS difference_lam_kam,\n    kam_annual_average_consumption - sme_annual_average_consumption AS difference_kam_sme\nFROM segment_comparison_values",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 40301,
+        "model1_called": true,
+        "selected_tables": 2,
+        "selected_columns": 6
+      }
+    },
+    {
+      "question_id": 1482,
+      "difficulty": "challenging",
+      "question": "Which of the three segments\u2014SME, LAM and KAM\u2014has the biggest and lowest percentage increases in consumption paid in EUR between 2012 and 2013?",
+      "evidence": "Increase or Decrease = consumption for 2013 - consumption for 2012; Percentage of Increase = (Increase or Decrease / consumption for 2013) * 100%; The first 4 strings of the Date values in the yearmonth table can represent year",
+      "gold_sql": "SELECT CAST((SUM(IIF(T1.Segment = 'SME' AND T2.Date LIKE '2013%', T2.Consumption, 0)) - SUM(IIF(T1.Segment = 'SME' AND T2.Date LIKE '2012%', T2.Consumption, 0))) AS FLOAT) * 100 / SUM(IIF(T1.Segment = 'SME' AND T2.Date LIKE '2012%', T2.Consumption, 0)), CAST(SUM(IIF(T1.Segment = 'LAM' AND T2.Date LIKE '2013%', T2.Consumption, 0)) - SUM(IIF(T1.Segment = 'LAM' AND T2.Date LIKE '2012%', T2.Consumption, 0)) AS FLOAT) * 100 / SUM(IIF(T1.Segment = 'LAM' AND T2.Date LIKE '2012%', T2.Consumption, 0)) , CAST(SUM(IIF(T1.Segment = 'KAM' AND T2.Date LIKE '2013%', T2.Consumption, 0)) - SUM(IIF(T1.Segment = 'KAM' AND T2.Date LIKE '2012%', T2.Consumption, 0)) AS FLOAT) * 100 / SUM(IIF(T1.Segment = 'KAM' AND T2.Date LIKE '2012%', T2.Consumption, 0)) FROM customers AS T1 INNER JOIN yearmonth AS T2 ON T1.CustomerID = T2.CustomerID",
+      "retrieval": {
+        "correct": false,
+        "accepted": true,
+        "sql": "WITH filtered_consumption AS (\n    SELECT\n        c.Segment AS segment,\n        SUBSTR(y.Date, 1, 4) AS period_year,\n        y.Consumption AS consumption\n    FROM customers AS c\n    JOIN yearmonth AS y\n        ON y.CustomerID = c.CustomerID\n    WHERE c.Currency = 'EUR'\n      AND c.Segment IN ('SME', 'LAM', 'KAM')\n      AND SUBSTR(y.Date, 1, 4) IN ('2012', '2013')\n),\nsegment_totals AS (\n    SELECT\n        segment,\n        SUM(CASE WHEN period_year = '2012' THEN consumption END) AS consumption_2012,\n        SUM(CASE WHEN period_year = '2013' THEN consumption END) AS consumption_2013\n    FROM filtered_consumption\n    GROUP BY segment\n),\nsegment_changes AS (\n    SELECT\n        segment,\n        consumption_2012,\n        consumption_2013,\n        consumption_2013 - consumption_2012 AS consumption_change,\n        consumption_2012 AS baseline_consumption\n    FROM segment_totals\n),\npercentage_increases AS (\n    SELECT\n        segment,\n        consumption_2012,\n        consumption_2013,\n        consumption_change,\n        (CAST(consumption_change AS REAL) / NULLIF(baseline_consumption, 0)) * 100 AS percentage_increase\n    FROM segment_changes\n),\nextrema AS (\n    SELECT\n        MAX(percentage_increase) AS biggest_percentage_increase,\n        MIN(percentage_increase) AS lowest_percentage_increase\n    FROM percentage_increases\n)\nSELECT\n    p.segment,\n    p.percentage_increase,\n    CASE\n        WHEN p.percentage_increase = e.biggest_percentage_increase THEN 'biggest'\n        WHEN p.percentage_increase = e.lowest_percentage_increase THEN 'lowest'\n    END AS increase_rank\nFROM percentage_increases AS p\nCROSS JOIN extrema AS e\nWHERE p.percentage_increase = e.biggest_percentage_increase\n   OR p.percentage_increase = e.lowest_percentage_increase\nORDER BY\n    CASE\n        WHEN p.percentage_increase = e.biggest_percentage_increase THEN 1\n        ELSE 2\n    END,\n    p.segment",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 31615,
+        "model1_called": false,
+        "selected_tables": 4,
+        "selected_columns": 17
+      },
+      "model1": {
+        "correct": false,
+        "accepted": true,
+        "sql": "WITH segment_consumption AS (\n    SELECT\n        c.Segment AS segment,\n        SUM(CASE WHEN SUBSTR(y.Date, 1, 4) = '2012' THEN y.Consumption ELSE 0 END) AS consumption_2012,\n        SUM(CASE WHEN SUBSTR(y.Date, 1, 4) = '2013' THEN y.Consumption ELSE 0 END) AS consumption_2013\n    FROM customers AS c\n    JOIN yearmonth AS y\n        ON y.CustomerID = c.CustomerID\n    WHERE c.Currency = 'EUR'\n      AND c.Segment IN ('SME', 'LAM', 'KAM')\n    GROUP BY c.Segment\n),\npercentage_increases AS (\n    SELECT\n        segment,\n        consumption_2012,\n        consumption_2013,\n        CAST(consumption_2013 - consumption_2012 AS REAL)\n            / NULLIF(consumption_2012, 0) * 100 AS percentage_increase\n    FROM segment_consumption\n),\nranked_increases AS (\n    SELECT\n        segment,\n        consumption_2012,\n        consumption_2013,\n        percentage_increase,\n        RANK() OVER (ORDER BY percentage_increase DESC) AS biggest_rank,\n        RANK() OVER (ORDER BY percentage_increase ASC) AS lowest_rank\n    FROM percentage_increases\n)\nSELECT\n    segment,\n    consumption_2012,\n    consumption_2013,\n    percentage_increase,\n    CASE\n        WHEN biggest_rank = 1 THEN 'biggest'\n        WHEN lowest_rank = 1 THEN 'lowest'\n    END AS increase_category\nFROM ranked_increases\nWHERE biggest_rank = 1\n   OR lowest_rank = 1\nORDER BY percentage_increase DESC",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 35678,
+        "model1_called": true,
+        "selected_tables": 2,
+        "selected_columns": 6
+      }
+    },
+    {
+      "question_id": 1526,
+      "difficulty": "challenging",
+      "question": "For the customer who paid 634.8 in 2012/8/25, what was the consumption decrease rate from Year 2012 to 2013?",
+      "evidence": "'2012/8/24' can be represented by '2012-08-24'; Consumption decrease rate = (consumption_2012 - consumption_2013) / consumption_2012",
+      "gold_sql": "SELECT CAST(SUM(IIF(SUBSTRING(Date, 1, 4) = '2012', Consumption, 0)) - SUM(IIF(SUBSTRING(Date, 1, 4) = '2013', Consumption, 0)) AS FLOAT) / SUM(IIF(SUBSTRING(Date, 1, 4) = '2012', Consumption, 0)) FROM yearmonth WHERE CustomerID = ( SELECT T1.CustomerID FROM transactions_1k AS T1 INNER JOIN gasstations AS T2 ON T1.GasStationID = T2.GasStationID WHERE T1.Date = '2012-08-25' AND T1.Price  = 1513.12 )",
+      "retrieval": {
+        "correct": false,
+        "accepted": true,
+        "sql": "WITH target_customers AS (\n    SELECT c.CustomerID\n    FROM customers AS c\n    WHERE EXISTS (\n        SELECT 1\n        FROM transactions_1k AS t\n        WHERE t.CustomerID = c.CustomerID\n          AND t.Amount = 634.8\n          AND t.Date = '2012-08-25'\n    )\n),\nannual_consumption AS (\n    SELECT\n        ym.CustomerID,\n        SUBSTR(ym.Date, 1, 4) AS consumption_year,\n        SUM(ym.Consumption) AS annual_consumption\n    FROM yearmonth AS ym\n    INNER JOIN target_customers AS tc\n        ON tc.CustomerID = ym.CustomerID\n    WHERE SUBSTR(ym.Date, 1, 4) IN ('2012', '2013')\n    GROUP BY ym.CustomerID, SUBSTR(ym.Date, 1, 4)\n),\ncustomer_consumption AS (\n    SELECT\n        ac.CustomerID,\n        SUM(CASE WHEN ac.consumption_year = '2012' THEN ac.annual_consumption ELSE 0 END) AS consumption_2012,\n        SUM(CASE WHEN ac.consumption_year = '2013' THEN ac.annual_consumption ELSE 0 END) AS consumption_2013\n    FROM annual_consumption AS ac\n    GROUP BY ac.CustomerID\n)\nSELECT\n    cc.CustomerID,\n    cc.consumption_2012,\n    cc.consumption_2013,\n    CAST(cc.consumption_2012 - cc.consumption_2013 AS REAL) / NULLIF(cc.consumption_2012, 0) AS consumption_decrease_rate\nFROM customer_consumption AS cc",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 118721,
+        "model1_called": false,
+        "selected_tables": 4,
+        "selected_columns": 16
+      },
+      "model1": {
+        "correct": false,
+        "accepted": true,
+        "sql": "WITH target_customer AS (\n    SELECT DISTINCT t.CustomerID AS customer_id\n    FROM transactions_1k AS t\n    WHERE t.Date = '2012-08-25'\n      AND t.Amount = 634.8\n),\nannual_consumption AS (\n    SELECT\n        y.CustomerID AS customer_id,\n        SUBSTR(y.Date, 1, 4) AS consumption_year,\n        SUM(y.Consumption) AS annual_consumption\n    FROM yearmonth AS y\n    WHERE EXISTS (\n        SELECT 1\n        FROM target_customer AS tc\n        WHERE tc.customer_id = y.CustomerID\n    )\n      AND SUBSTR(y.Date, 1, 4) IN ('2012', '2013')\n    GROUP BY y.CustomerID, SUBSTR(y.Date, 1, 4)\n),\nyearly_consumption AS (\n    SELECT\n        ac.customer_id,\n        MAX(CASE WHEN ac.consumption_year = '2012' THEN ac.annual_consumption END) AS consumption_2012,\n        MAX(CASE WHEN ac.consumption_year = '2013' THEN ac.annual_consumption END) AS consumption_2013\n    FROM annual_consumption AS ac\n    GROUP BY ac.customer_id\n)\nSELECT\n    customer_id,\n    consumption_2012,\n    consumption_2013,\n    CAST(consumption_2012 - consumption_2013 AS REAL) / NULLIF(consumption_2012, 0) AS consumption_decrease_rate\nFROM yearly_consumption",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 29488,
+        "model1_called": true,
+        "selected_tables": 2,
+        "selected_columns": 7
+      }
+    },
+    {
+      "question_id": 1476,
+      "difficulty": "challenging",
+      "question": "What was the difference in gas consumption between CZK-paying customers and EUR-paying customers in 2012?",
+      "evidence": "Year 2012 can be presented as Between 201201 And 201212; The first 4 strings of the Date values in the yearmonth table can represent year; Difference in Consumption = CZK customers consumption in 2012 - EUR customers consumption in 2012",
+      "gold_sql": "SELECT SUM(IIF(T1.Currency = 'CZK', T2.Consumption, 0)) - SUM(IIF(T1.Currency = 'EUR', T2.Consumption, 0)) FROM customers AS T1 INNER JOIN yearmonth AS T2 ON T1.CustomerID = T2.CustomerID WHERE SUBSTR(T2.Date, 1, 4) = '2012'",
+      "retrieval": {
+        "correct": true,
+        "accepted": true,
+        "sql": "WITH consumption_by_currency AS (\n    SELECT\n        c.Currency AS currency,\n        SUM(y.Consumption) AS total_consumption_2012\n    FROM yearmonth AS y\n    JOIN customers AS c\n        ON c.CustomerID = y.CustomerID\n    WHERE SUBSTR(y.Date, 1, 4) = '2012'\n      AND c.Currency IN ('CZK', 'EUR')\n    GROUP BY c.Currency\n),\nconsumption_difference AS (\n    SELECT\n        COALESCE(MAX(CASE WHEN currency = 'CZK' THEN total_consumption_2012 END), 0.0)\n        - COALESCE(MAX(CASE WHEN currency = 'EUR' THEN total_consumption_2012 END), 0.0)\n        AS czk_minus_eur_consumption_difference\n    FROM consumption_by_currency\n)\nSELECT czk_minus_eur_consumption_difference\nFROM consumption_difference",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 16699,
+        "model1_called": false,
+        "selected_tables": 4,
+        "selected_columns": 16
+      },
+      "model1": {
+        "correct": true,
+        "accepted": true,
+        "sql": "WITH consumption_by_currency AS (\n    SELECT\n        c.Currency AS currency,\n        SUM(y.Consumption) AS total_consumption_2012\n    FROM customers AS c\n    JOIN yearmonth AS y\n        ON c.CustomerID = y.CustomerID\n    WHERE SUBSTR(y.Date, 1, 4) = '2012'\n    GROUP BY c.Currency\n)\nSELECT\n    MAX(CASE WHEN currency = 'CZK' THEN total_consumption_2012 END) -\n    MAX(CASE WHEN currency = 'EUR' THEN total_consumption_2012 END) AS consumption_difference\nFROM consumption_by_currency",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 25248,
+        "model1_called": true,
+        "selected_tables": 2,
+        "selected_columns": 5
+      }
+    },
+    {
+      "question_id": 1531,
+      "difficulty": "moderate",
+      "question": "Who is the top spending customer and how much is the average price per single item purchased by this customer? What currency was being used?",
+      "evidence": "average price per single item = Total(price) / Total(amount)",
+      "gold_sql": "SELECT T2.CustomerID, SUM(T2.Price / T2.Amount), T1.Currency FROM customers AS T1 INNER JOIN transactions_1k AS T2 ON T1.CustomerID = T2.CustomerID WHERE T2.CustomerID = ( SELECT CustomerID FROM yearmonth ORDER BY Consumption DESC LIMIT 1 ) GROUP BY T2.CustomerID, T1.Currency",
+      "retrieval": {
+        "correct": false,
+        "accepted": true,
+        "sql": "WITH customer_metrics AS (\n    SELECT\n        c.CustomerID AS customer_id,\n        c.Currency AS currency,\n        SUM(t.Price) AS total_spending,\n        AVG(CAST(t.Price AS REAL) / NULLIF(t.Amount, 0)) AS average_price_per_single_item\n    FROM customers AS c\n    JOIN transactions_1k AS t\n        ON t.CustomerID = c.CustomerID\n    GROUP BY c.CustomerID, c.Currency\n),\ntop_customer AS (\n    SELECT\n        customer_id,\n        currency,\n        total_spending,\n        average_price_per_single_item\n    FROM customer_metrics\n    ORDER BY total_spending DESC, customer_id ASC\n    LIMIT 1\n)\nSELECT\n    customer_id,\n    total_spending,\n    average_price_per_single_item,\n    currency\nFROM top_customer",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 14273,
+        "model1_called": false,
+        "selected_tables": 5,
+        "selected_columns": 20
+      },
+      "model1": {
+        "correct": false,
+        "accepted": true,
+        "sql": "WITH customer_metrics AS (\n    SELECT\n        t.CustomerID AS customer_id,\n        SUM(t.Price) AS total_spending,\n        AVG(CAST(t.Price AS REAL) / NULLIF(t.Amount, 0)) AS average_unit_price\n    FROM transactions_1k AS t\n    GROUP BY t.CustomerID\n)\nSELECT\n    cm.customer_id AS CustomerID,\n    cm.average_unit_price AS average_price_per_single_item,\n    c.Currency AS Currency\nFROM customer_metrics AS cm\nJOIN customers AS c\n    ON c.CustomerID = cm.customer_id\nORDER BY cm.total_spending DESC, cm.customer_id\nLIMIT 1",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 18062,
+        "model1_called": true,
+        "selected_tables": 2,
+        "selected_columns": 6
+      }
+    },
+    {
+      "question_id": 1533,
+      "difficulty": "moderate",
+      "question": "For all the people who paid more than 29.00 per unit of product id No.5. Give their consumption status in the August of 2012.",
+      "evidence": "August of 2012 refers to the Date value = '201208' ; Price per unit of product = Price / Amount;",
+      "gold_sql": "SELECT T2.Consumption FROM transactions_1k AS T1 INNER JOIN yearmonth AS T2 ON T1.CustomerID = T2.CustomerID WHERE T1.Price / T1.Amount > 29.00 AND T1.ProductID = 5 AND T2.Date = '201208'",
+      "retrieval": {
+        "correct": false,
+        "accepted": true,
+        "sql": "WITH qualifying_transactions AS (\n    SELECT\n        t.CustomerID AS CustomerID,\n        CAST(t.Price AS REAL) / NULLIF(t.Amount, 0) AS unit_price\n    FROM transactions_1k AS t\n    WHERE t.ProductID = 5\n),\nqualifying_customers AS (\n    SELECT\n        CustomerID AS CustomerID\n    FROM qualifying_transactions\n    WHERE unit_price > 29.00\n    GROUP BY CustomerID\n),\naugust_consumption AS (\n    SELECT\n        y.CustomerID AS CustomerID,\n        SUM(y.Consumption) AS monthly_consumption\n    FROM yearmonth AS y\n    INNER JOIN qualifying_customers AS q\n        ON q.CustomerID = y.CustomerID\n    WHERE SUBSTR(y.Date, 1, 4) = '2012'\n      AND SUBSTR(y.Date, 5, 2) = '08'\n    GROUP BY y.CustomerID\n)\nSELECT\n    CustomerID,\n    monthly_consumption\nFROM august_consumption\nORDER BY CustomerID",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 20038,
+        "model1_called": false,
+        "selected_tables": 5,
+        "selected_columns": 19
+      },
+      "model1": {
+        "correct": false,
+        "accepted": true,
+        "sql": "SELECT y.CustomerID, y.Consumption AS consumption_status\nFROM yearmonth AS y\nWHERE y.Date = '201208'\n  AND EXISTS (\n    SELECT 1\n    FROM transactions_1k AS t\n    WHERE t.CustomerID = y.CustomerID\n      AND t.ProductID = 5\n      AND CAST(t.Price AS REAL) / NULLIF(t.Amount, 0) > 29.00\n  )",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 24701,
+        "model1_called": true,
+        "selected_tables": 2,
+        "selected_columns": 8
+      }
+    },
+    {
+      "question_id": 1472,
+      "difficulty": "moderate",
+      "question": "In 2012, who had the least consumption in LAM?",
+      "evidence": "Year 2012 can be presented as Between 201201 And 201212; The first 4 strings of the Date values in the yearmonth table can represent year.",
+      "gold_sql": "SELECT T1.CustomerID FROM customers AS T1 INNER JOIN yearmonth AS T2 ON T1.CustomerID = T2.CustomerID WHERE T1.Segment = 'LAM' AND SUBSTR(T2.Date, 1, 4) = '2012' GROUP BY T1.CustomerID ORDER BY SUM(T2.Consumption) ASC LIMIT 1",
+      "retrieval": {
+        "correct": false,
+        "accepted": true,
+        "sql": "WITH customer_consumption AS (\n    SELECT\n        c.CustomerID AS customer_id,\n        SUM(y.Consumption) AS total_consumption\n    FROM customers AS c\n    JOIN yearmonth AS y\n        ON y.CustomerID = c.CustomerID\n    WHERE c.Segment = 'LAM'\n      AND SUBSTR(y.Date, 1, 4) = '2012'\n    GROUP BY c.CustomerID\n)\nSELECT\n    customer_id,\n    total_consumption\nFROM customer_consumption\nORDER BY total_consumption ASC, customer_id ASC\nLIMIT 1",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 10033,
+        "model1_called": false,
+        "selected_tables": 3,
+        "selected_columns": 12
+      },
+      "model1": {
+        "correct": false,
+        "accepted": true,
+        "sql": "WITH customer_consumption AS (\n    SELECT\n        c.CustomerID AS customer_id,\n        SUM(y.Consumption) AS total_consumption\n    FROM customers AS c\n    JOIN yearmonth AS y\n        ON y.CustomerID = c.CustomerID\n    WHERE c.Segment = 'LAM'\n      AND SUBSTR(y.Date, 1, 4) = '2012'\n    GROUP BY c.CustomerID\n)\nSELECT\n    customer_id AS CustomerID,\n    total_consumption AS consumption\nFROM customer_consumption\nORDER BY total_consumption ASC, customer_id ASC\nLIMIT 1",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 21624,
+        "model1_called": true,
+        "selected_tables": 2,
+        "selected_columns": 5
+      }
+    },
+    {
+      "question_id": 1473,
+      "difficulty": "moderate",
+      "question": "What was the average monthly consumption of customers in SME for the year 2013?",
+      "evidence": "Average Monthly consumption = AVG(Consumption) / 12; Year 2013 can be presented as Between 201301 And 201312; The first 4 strings of the Date values in the yearmonth table can represent year.",
+      "gold_sql": "SELECT AVG(T2.Consumption) / 12 FROM customers AS T1 INNER JOIN yearmonth AS T2 ON T1.CustomerID = T2.CustomerID WHERE SUBSTR(T2.Date, 1, 4) = '2013' AND T1.Segment = 'SME'",
+      "retrieval": {
+        "correct": false,
+        "accepted": true,
+        "sql": "WITH monthly_consumption AS (\n    SELECT\n        ym.Date AS month_period,\n        SUM(ym.Consumption) AS monthly_consumption\n    FROM yearmonth AS ym\n    JOIN customers AS c\n        ON c.CustomerID = ym.CustomerID\n    WHERE c.Segment = 'SME'\n      AND SUBSTR(ym.Date, 1, 4) = '2013'\n    GROUP BY ym.Date\n)\nSELECT\n    AVG(monthly_consumption) AS average_monthly_consumption\nFROM monthly_consumption",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 16411,
+        "model1_called": false,
+        "selected_tables": 4,
+        "selected_columns": 15
+      },
+      "model1": {
+        "correct": false,
+        "accepted": true,
+        "sql": "WITH monthly_consumption AS (\n    SELECT\n        y.CustomerID AS customer_id,\n        y.Date AS yearmonth,\n        SUM(y.Consumption) AS monthly_consumption\n    FROM yearmonth AS y\n    JOIN customers AS c\n        ON c.CustomerID = y.CustomerID\n    WHERE c.Segment = 'SME'\n      AND SUBSTR(y.Date, 1, 4) = '2013'\n    GROUP BY y.CustomerID, y.Date\n)\nSELECT\n    AVG(monthly_consumption) AS average_monthly_consumption\nFROM monthly_consumption",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 32673,
+        "model1_called": true,
+        "selected_tables": 2,
+        "selected_columns": 5
+      }
+    },
+    {
+      "question_id": 1479,
+      "difficulty": "moderate",
+      "question": "Which year recorded the most consumption of gas paid in CZK?",
+      "evidence": "The first 4 strings of the Date values in the yearmonth table can represent year.",
+      "gold_sql": "SELECT SUBSTR(T2.Date, 1, 4) FROM customers AS T1 INNER JOIN yearmonth AS T2 ON T1.CustomerID = T2.CustomerID WHERE T1.Currency = 'CZK' GROUP BY SUBSTR(T2.Date, 1, 4) ORDER BY SUM(T2.Consumption) DESC LIMIT 1",
+      "retrieval": {
+        "correct": true,
+        "accepted": true,
+        "sql": "WITH yearly_consumption AS (\n    SELECT\n        SUBSTR(ym.Date, 1, 4) AS year,\n        SUM(ym.Consumption) AS total_consumption\n    FROM yearmonth AS ym\n    JOIN customers AS c\n        ON c.CustomerID = ym.CustomerID\n    WHERE c.Currency = 'CZK'\n    GROUP BY SUBSTR(ym.Date, 1, 4)\n)\nSELECT year\nFROM yearly_consumption\nORDER BY total_consumption DESC, year ASC\nLIMIT 1",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 9245,
+        "model1_called": false,
+        "selected_tables": 4,
+        "selected_columns": 16
+      },
+      "model1": {
+        "correct": false,
+        "accepted": true,
+        "sql": "WITH yearly_consumption AS (\n    SELECT\n        SUBSTR(y.Date, 1, 4) AS consumption_year,\n        SUM(y.Consumption) AS total_consumption\n    FROM yearmonth AS y\n    JOIN customers AS c\n        ON c.CustomerID = y.CustomerID\n    WHERE c.Currency = 'CZK'\n    GROUP BY SUBSTR(y.Date, 1, 4)\n)\nSELECT\n    consumption_year,\n    total_consumption\nFROM yearly_consumption\nORDER BY total_consumption DESC, consumption_year\nLIMIT 1",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 19571,
+        "model1_called": true,
+        "selected_tables": 2,
+        "selected_columns": 5
+      }
+    },
+    {
+      "question_id": 1480,
+      "difficulty": "moderate",
+      "question": "What was the gas consumption peak month for SME customers in 2013?",
+      "evidence": "Year 2013 can be presented as Between 201301 And 201312; The first 4 strings of the Date values in the yearmonth table can represent year; The 5th and 6th string of the date can refer to month.",
+      "gold_sql": "SELECT SUBSTR(T2.Date, 5, 2) FROM customers AS T1 INNER JOIN yearmonth AS T2 ON T1.CustomerID = T2.CustomerID WHERE SUBSTR(T2.Date, 1, 4) = '2013' AND T1.Segment = 'SME' GROUP BY SUBSTR(T2.Date, 5, 2) ORDER BY SUM(T2.Consumption) DESC LIMIT 1",
+      "retrieval": {
+        "correct": false,
+        "accepted": true,
+        "sql": "WITH monthly_consumption AS (\n    SELECT\n        ym.Date AS month,\n        SUM(ym.Consumption) AS total_consumption\n    FROM yearmonth AS ym\n    JOIN customers AS c\n        ON c.CustomerID = ym.CustomerID\n    WHERE c.Segment = 'SME'\n      AND SUBSTR(ym.Date, 1, 4) = '2013'\n    GROUP BY ym.Date\n)\nSELECT\n    month,\n    total_consumption\nFROM monthly_consumption\nORDER BY total_consumption DESC, month ASC\nLIMIT 1",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 11119,
+        "model1_called": false,
+        "selected_tables": 4,
+        "selected_columns": 15
+      },
+      "model1": {
+        "correct": false,
+        "accepted": true,
+        "sql": "WITH monthly_consumption AS (\n    SELECT\n        ym.Date AS peak_month,\n        SUM(ym.Consumption) AS total_consumption\n    FROM yearmonth AS ym\n    WHERE SUBSTR(ym.Date, 1, 4) = '2013'\n      AND EXISTS (\n          SELECT 1\n          FROM customers AS c\n          WHERE c.CustomerID = ym.CustomerID\n            AND c.Segment = 'SME'\n      )\n    GROUP BY ym.Date\n)\nSELECT\n    peak_month,\n    total_consumption\nFROM monthly_consumption\nORDER BY total_consumption DESC, peak_month ASC\nLIMIT 1",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 19115,
+        "model1_called": true,
+        "selected_tables": 2,
+        "selected_columns": 5
+      }
+    },
+    {
+      "question_id": 1490,
+      "difficulty": "moderate",
+      "question": "How many percent of LAM customer consumed more than 46.73?",
+      "evidence": "Percentage of LAM customer consumed more than 46.73 = (Total no. of LAM customers who consumed more than 46.73 / Total no. of LAM customers) * 100.",
+      "gold_sql": "SELECT CAST(SUM(IIF(T2.Consumption > 46.73, 1, 0)) AS FLOAT) * 100 / COUNT(T1.CustomerID) FROM customers AS T1 INNER JOIN yearmonth AS T2 ON T1.CustomerID = T2.CustomerID WHERE T1.Segment = 'LAM'",
+      "retrieval": {
+        "correct": false,
+        "accepted": true,
+        "sql": "WITH lam_customers AS (\n    SELECT CustomerID\n    FROM customers\n    WHERE Segment = 'LAM'\n),\ncustomer_consumption AS (\n    SELECT\n        l.CustomerID,\n        COALESCE(SUM(y.Consumption), 0) AS total_consumption\n    FROM lam_customers AS l\n    LEFT JOIN yearmonth AS y\n        ON y.CustomerID = l.CustomerID\n    GROUP BY l.CustomerID\n),\nlam_consumption_counts AS (\n    SELECT\n        SUM(CASE WHEN total_consumption > 46.73 THEN 1 ELSE 0 END) AS customers_above_threshold,\n        COUNT(*) AS total_lam_customers\n    FROM customer_consumption\n)\nSELECT\n    CAST(customers_above_threshold AS REAL) / NULLIF(total_lam_customers, 0) * 100 AS percentage_lam_customers\nFROM lam_consumption_counts",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 15140,
+        "model1_called": false,
+        "selected_tables": 3,
+        "selected_columns": 11
+      },
+      "model1": {
+        "correct": false,
+        "accepted": true,
+        "sql": "WITH lam_customers AS (\n    SELECT CustomerID\n    FROM customers\n    WHERE Segment = 'LAM'\n),\nqualifying_customers AS (\n    SELECT DISTINCT l.CustomerID\n    FROM lam_customers AS l\n    JOIN yearmonth AS y\n      ON y.CustomerID = l.CustomerID\n    WHERE y.Consumption > 46.73\n),\ncustomer_counts AS (\n    SELECT\n        (SELECT COUNT(*) FROM qualifying_customers) AS qualifying_customer_count,\n        (SELECT COUNT(*) FROM lam_customers) AS lam_customer_count\n)\nSELECT\n    CAST(qualifying_customer_count AS REAL) * 100.0 / NULLIF(lam_customer_count, 0) AS percentage_lam_customers\nFROM customer_counts",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 37113,
+        "model1_called": true,
+        "selected_tables": 2,
+        "selected_columns": 5
+      }
+    },
+    {
+      "question_id": 1501,
+      "difficulty": "moderate",
+      "question": "Please list the countries of the gas stations with transactions taken place in June, 2013.",
+      "evidence": "June 2013 refers to '201306'; The first 4 strings of the Date values in the yearmonth table can represent year; The 5th and 6th string of the date can refer to month;",
+      "gold_sql": "SELECT DISTINCT T2.Country FROM transactions_1k AS T1 INNER JOIN gasstations AS T2 ON T1.GasStationID = T2.GasStationID INNER JOIN yearmonth AS T3 ON T1.CustomerID = T3.CustomerID WHERE T3.Date = '201306'",
+      "retrieval": {
+        "correct": false,
+        "accepted": true,
+        "sql": "SELECT DISTINCT g.Country\nFROM gasstations AS g\nWHERE EXISTS (\n    SELECT 1\n    FROM transactions_1k AS t\n    WHERE t.GasStationID = g.GasStationID\n      AND t.Date >= '2013-06-01'\n      AND t.Date < '2013-07-01'\n)\nORDER BY g.Country",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 8452,
+        "model1_called": false,
+        "selected_tables": 4,
+        "selected_columns": 16
+      },
+      "model1": {
+        "correct": false,
+        "accepted": true,
+        "sql": "SELECT DISTINCT g.Country\nFROM gasstations AS g\nJOIN transactions_1k AS t\n  ON t.GasStationID = g.GasStationID\nWHERE t.Date >= '2013-06-01'\n  AND t.Date < '2013-07-01'",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 17031,
+        "model1_called": true,
+        "selected_tables": 2,
+        "selected_columns": 5
+      }
+    },
+    {
+      "question_id": 1506,
+      "difficulty": "moderate",
+      "question": "Please list the product descriptions of the transactions taken place in the gas stations in the Czech Republic.",
+      "evidence": "Czech Republic can be represented as the Country value in the gasstations table is 'CZE';",
+      "gold_sql": "SELECT DISTINCT T3.Description FROM transactions_1k AS T1 INNER JOIN gasstations AS T2 ON T1.GasStationID = T2.GasStationID INNER JOIN products AS T3 ON T1.ProductID = T3.ProductID WHERE T2.Country = 'CZE'",
+      "retrieval": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT DISTINCT p.Description\nFROM transactions_1k AS t\nJOIN gasstations AS g ON g.GasStationID = t.GasStationID\nJOIN products AS p ON p.ProductID = t.ProductID\nWHERE g.Country = 'CZE'",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 7673,
+        "model1_called": false,
+        "selected_tables": 5,
+        "selected_columns": 19
+      },
+      "model1": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT DISTINCT p.Description\nFROM transactions_1k AS t\nJOIN gasstations AS g ON g.GasStationID = t.GasStationID\nJOIN products AS p ON p.ProductID = t.ProductID\nWHERE g.Country = 'CZE'",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 15943,
+        "model1_called": true,
+        "selected_tables": 3,
+        "selected_columns": 7
+      }
+    },
+    {
+      "question_id": 1509,
+      "difficulty": "moderate",
+      "question": "Among the transactions made in the gas stations in the Czech Republic, how many of them are taken place after 2012/1/1?",
+      "evidence": "Czech Republic can be represented as the Country value in the gasstations table is 'CZE'",
+      "gold_sql": "SELECT COUNT(T1.TransactionID) FROM transactions_1k AS T1 INNER JOIN gasstations AS T2 ON T1.GasStationID = T2.GasStationID WHERE T2.Country = 'CZE' AND STRFTIME('%Y', T1.Date) >= '2012'",
+      "retrieval": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT COUNT(t.TransactionID) AS transaction_count\nFROM transactions_1k AS t\nJOIN gasstations AS g\n  ON g.GasStationID = t.GasStationID\nWHERE g.Country = 'CZE'\n  AND t.Date > '2012-01-01'",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 7165,
+        "model1_called": false,
+        "selected_tables": 5,
+        "selected_columns": 19
+      },
+      "model1": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT COUNT(*) AS transaction_count\nFROM transactions_1k\nJOIN gasstations ON gasstations.GasStationID = transactions_1k.GasStationID\nWHERE gasstations.Country = 'CZE'\n  AND transactions_1k.Date > '2012-01-01'",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 13861,
+        "model1_called": true,
+        "selected_tables": 2,
+        "selected_columns": 5
+      }
+    },
+    {
+      "question_id": 1521,
+      "difficulty": "moderate",
+      "question": "For all the transactions happened during 8:00-9:00 in 2012/8/26, how many happened in CZE?",
+      "evidence": "Czech Republic can be represented as the Country value in the gasstations table is 'CZE'; '2012/8/26' can be represented by '2012-08-26'; during 8:00-9:00 can be represented as Time BETWEEN '08:00:00' AND '09:00:00'",
+      "gold_sql": "SELECT COUNT(T1.TransactionID) FROM transactions_1k AS T1 INNER JOIN gasstations AS T2 ON T1.GasStationID = T2.GasStationID WHERE T1.Date = '2012-08-26' AND T1.Time BETWEEN '08:00:00' AND '09:00:00' AND T2.Country = 'CZE'",
+      "retrieval": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT COUNT(*) AS transaction_count\nFROM transactions_1k\nJOIN gasstations\n  ON transactions_1k.GasStationID = gasstations.GasStationID\nWHERE transactions_1k.Date = '2012-08-26'\n  AND transactions_1k.Time >= '08:00:00'\n  AND transactions_1k.Time < '09:00:00'\n  AND gasstations.Country = 'CZE'",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 8018,
+        "model1_called": false,
+        "selected_tables": 3,
+        "selected_columns": 14
+      },
+      "model1": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT COUNT(*) AS transaction_count\nFROM transactions_1k AS t\nJOIN gasstations AS g\n  ON g.GasStationID = t.GasStationID\nWHERE t.Date = '2012-08-26'\n  AND t.Time >= '08:00:00'\n  AND t.Time < '09:00:00'\n  AND g.Country = 'CZE'",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 20934,
+        "model1_called": true,
+        "selected_tables": 2,
+        "selected_columns": 6
+      }
+    },
+    {
+      "question_id": 1529,
+      "difficulty": "moderate",
+      "question": "What is the amount spent by customer \"38508\" at the gas stations? How much had the customer spent in January 2012?",
+      "evidence": "January 2012 refers to the Date value = '201201'",
+      "gold_sql": "SELECT SUM(T1.Price ) , SUM(IIF(T3.Date = '201201', T1.Price, 0)) FROM transactions_1k AS T1 INNER JOIN gasstations AS T2 ON T1.GasStationID = T2.GasStationID INNER JOIN yearmonth AS T3 ON T1.CustomerID = T3.CustomerID WHERE T1.CustomerID = '38508'",
+      "retrieval": {
+        "correct": false,
+        "accepted": true,
+        "sql": "SELECT\n    SUM(t.Price) AS total_spent,\n    SUM(CASE\n        WHEN t.Date >= '2012-01-01' AND t.Date < '2012-02-01' THEN t.Price\n        ELSE 0\n    END) AS january_2012_spent\nFROM transactions_1k AS t\nJOIN gasstations AS g\n    ON g.GasStationID = t.GasStationID\nWHERE t.CustomerID = 38508",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 11665,
+        "model1_called": false,
+        "selected_tables": 5,
+        "selected_columns": 19
+      },
+      "model1": {
+        "correct": false,
+        "accepted": true,
+        "sql": "SELECT\n  SUM(t.Price) AS total_spent,\n  SUM(CASE WHEN SUBSTR(t.Date, 1, 7) = '2012-01' THEN t.Price ELSE 0 END) AS january_2012_spent\nFROM transactions_1k AS t\nWHERE t.CustomerID = 38508\n  AND EXISTS (\n    SELECT 1\n    FROM gasstations AS g\n    WHERE g.GasStationID = t.GasStationID\n  )",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 17792,
+        "model1_called": true,
+        "selected_tables": 2,
+        "selected_columns": 6
+      }
+    },
+    {
+      "question_id": 1471,
+      "difficulty": "simple",
+      "question": "What is the ratio of customers who pay in EUR against customers who pay in CZK?",
+      "evidence": "ratio of customers who pay in EUR against customers who pay in CZK = count(Currency = 'EUR') / count(Currency = 'CZK').",
+      "gold_sql": "SELECT CAST(SUM(IIF(Currency = 'EUR', 1, 0)) AS FLOAT) / SUM(IIF(Currency = 'CZK', 1, 0)) AS ratio FROM customers",
+      "retrieval": {
+        "correct": true,
+        "accepted": true,
+        "sql": "WITH customer_currency_counts AS (\n    SELECT\n        SUM(CASE WHEN Currency = 'EUR' THEN 1 ELSE 0 END) AS eur_customer_count,\n        SUM(CASE WHEN Currency = 'CZK' THEN 1 ELSE 0 END) AS czk_customer_count\n    FROM customers\n),\ncustomer_currency_ratio AS (\n    SELECT\n        CAST(eur_customer_count AS REAL) / NULLIF(czk_customer_count, 0) AS eur_to_czk_ratio\n    FROM customer_currency_counts\n)\nSELECT eur_to_czk_ratio\nFROM customer_currency_ratio",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 14040,
+        "model1_called": false,
+        "selected_tables": 3,
+        "selected_columns": 11
+      },
+      "model1": {
+        "correct": true,
+        "accepted": true,
+        "sql": "WITH customer_currency_counts AS (\n    SELECT\n        COUNT(CASE WHEN Currency = 'EUR' THEN CustomerID END) AS eur_customer_count,\n        COUNT(CASE WHEN Currency = 'CZK' THEN CustomerID END) AS czk_customer_count\n    FROM customers\n)\nSELECT\n    CAST(eur_customer_count AS REAL) / NULLIF(czk_customer_count, 0) AS eur_to_czk_customer_ratio\nFROM customer_currency_counts",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 24885,
+        "model1_called": true,
+        "selected_tables": 1,
+        "selected_columns": 2
+      }
+    },
+    {
+      "question_id": 1498,
+      "difficulty": "simple",
+      "question": "What is the highest monthly consumption in the year 2012?",
+      "evidence": "The first 4 strings of the Date values in the yearmonth table can represent year; The 5th and 6th string of the date can refer to month.",
+      "gold_sql": "SELECT SUM(Consumption) FROM yearmonth WHERE SUBSTR(Date, 1, 4) = '2012' GROUP BY SUBSTR(Date, 5, 2) ORDER BY SUM(Consumption) DESC LIMIT 1",
+      "retrieval": {
+        "correct": false,
+        "accepted": true,
+        "sql": "WITH monthly_consumption AS (\n    SELECT\n        Date AS month,\n        SUM(Consumption) AS monthly_consumption\n    FROM yearmonth\n    WHERE SUBSTR(Date, 1, 4) = '2012'\n    GROUP BY Date\n)\nSELECT\n    month,\n    monthly_consumption\nFROM monthly_consumption\nORDER BY monthly_consumption DESC\nLIMIT 1",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 11224,
+        "model1_called": false,
+        "selected_tables": 3,
+        "selected_columns": 12
+      },
+      "model1": {
+        "correct": true,
+        "accepted": true,
+        "sql": "WITH monthly_consumption AS (\n    SELECT\n        Date AS month,\n        SUM(Consumption) AS monthly_consumption\n    FROM yearmonth\n    WHERE SUBSTR(Date, 1, 4) = '2012'\n    GROUP BY Date\n)\nSELECT MAX(monthly_consumption) AS highest_monthly_consumption\nFROM monthly_consumption",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 19310,
+        "model1_called": true,
+        "selected_tables": 1,
+        "selected_columns": 3
+      }
+    },
+    {
+      "question_id": 1500,
+      "difficulty": "simple",
+      "question": "Please list the product description of the products consumed in September, 2013.",
+      "evidence": "September 2013 refers to 201309; The first 4 strings of the Date values in the yearmonth table can represent year; The 5th and 6th string of the date can refer to month.",
+      "gold_sql": "SELECT T3.Description FROM transactions_1k AS T1 INNER JOIN yearmonth AS T2 ON T1.CustomerID = T2.CustomerID INNER JOIN products AS T3 ON T1.ProductID = T3.ProductID WHERE T2.Date = '201309'",
+      "retrieval": {
+        "correct": false,
+        "accepted": true,
+        "sql": "SELECT DISTINCT p.Description\nFROM transactions_1k AS t\nJOIN products AS p\n  ON p.ProductID = t.ProductID\nWHERE t.Date >= '2013-09-01'\n  AND t.Date < '2013-10-01'\nORDER BY p.Description",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 5659,
+        "model1_called": false,
+        "selected_tables": 4,
+        "selected_columns": 14
+      },
+      "model1": {
+        "correct": false,
+        "accepted": true,
+        "sql": "SELECT DISTINCT p.Description\nFROM products AS p\nJOIN transactions_1k AS t\n  ON t.ProductID = p.ProductID\nWHERE t.Date >= '2013-09-01'\n  AND t.Date < '2013-10-01'",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 12890,
+        "model1_called": true,
+        "selected_tables": 2,
+        "selected_columns": 5
+      }
+    },
+    {
+      "question_id": 1525,
+      "difficulty": "simple",
+      "question": "What is the percentage of the customers who used EUR in 2012/8/25?",
+      "evidence": "'2012/8/25' can be represented by '2012-08-25'",
+      "gold_sql": "SELECT CAST(SUM(IIF(T2.Currency = 'EUR', 1, 0)) AS FLOAT) * 100 / COUNT(T1.CustomerID) FROM transactions_1k AS T1 INNER JOIN customers AS T2 ON T1.CustomerID = T2.CustomerID WHERE T1.Date = '2012-08-25'",
+      "retrieval": {
+        "correct": false,
+        "accepted": true,
+        "sql": "WITH active_customers AS (\n    SELECT DISTINCT\n        t.CustomerID AS CustomerID\n    FROM transactions_1k AS t\n    WHERE t.Date = '2012-08-25'\n),\ncustomer_counts AS (\n    SELECT\n        COUNT(*) AS total_customer_count,\n        SUM(CASE WHEN c.Currency = 'EUR' THEN 1 ELSE 0 END) AS eur_customer_count\n    FROM active_customers AS a\n    JOIN customers AS c\n        ON c.CustomerID = a.CustomerID\n)\nSELECT\n    CAST(eur_customer_count AS REAL) / NULLIF(total_customer_count, 0) * 100 AS percentage\nFROM customer_counts",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 13133,
+        "model1_called": false,
+        "selected_tables": 3,
+        "selected_columns": 12
+      },
+      "model1": {
+        "correct": false,
+        "accepted": true,
+        "sql": "WITH customers_on_date AS (\n    SELECT DISTINCT\n        c.CustomerID AS customer_id,\n        c.Currency AS currency\n    FROM customers AS c\n    WHERE EXISTS (\n        SELECT 1\n        FROM yearmonth AS y\n        WHERE y.CustomerID = c.CustomerID\n          AND SUBSTR(y.Date, 1, 4) = '2012'\n          AND SUBSTR(y.Date, 5, 2) = '08'\n    )\n),\ncustomer_counts AS (\n    SELECT\n        SUM(CASE WHEN currency = 'EUR' THEN 1 ELSE 0 END) AS eur_customer_count,\n        COUNT(*) AS customer_count\n    FROM customers_on_date\n)\nSELECT\n    CAST(eur_customer_count AS REAL) / NULLIF(customer_count, 0) * 100 AS percentage_eur_customers\nFROM customer_counts",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "latency_ms": 21825,
+        "model1_called": true,
+        "selected_tables": 2,
+        "selected_columns": 4
+      }
+    }
+  ]
+}

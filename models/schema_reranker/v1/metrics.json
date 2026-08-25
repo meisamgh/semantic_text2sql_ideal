@@ -1,0 +1,27 @@
+{
+  "training_questions": 290,
+  "holdout_questions": 69,
+  "skipped_questions": 40,
+  "seed": 42,
+  "features": [
+    "bm25_reciprocal_rank",
+    "embedding_reciprocal_rank",
+    "value_reciprocal_rank",
+    "rrf_score",
+    "is_table",
+    "is_primary_key",
+    "is_relationship_key",
+    "historical_max_similarity",
+    "historical_weighted_usage",
+    "historical_support_count",
+    "historical_operation_match"
+  ],
+  "baseline_rrf": {
+    "table_exact_recall_at_5": 0.8551,
+    "mean_gold_column_recall_at_5_per_table": 0.7484
+  },
+  "ml_reranker": {
+    "table_exact_recall_at_5": 0.8551,
+    "mean_gold_column_recall_at_5_per_table": 0.8368
+  }
+}

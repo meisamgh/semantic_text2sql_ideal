@@ -1,0 +1,662 @@
+{
+  "summary": {
+    "benchmark": "Spider 1.0 dev paired A/B",
+    "provider": "agentrouter",
+    "model": "gpt-5.6-sol",
+    "seed": 42,
+    "requested_count": 20,
+    "completed_count": 20,
+    "indices": [
+      18,
+      49,
+      211,
+      247,
+      260,
+      272,
+      290,
+      354,
+      365,
+      418,
+      465,
+      500,
+      804,
+      852,
+      875,
+      897,
+      910,
+      943,
+      962,
+      1030
+    ],
+    "retrieval": {
+      "correct": 17,
+      "execution_accuracy": 0.85,
+      "accepted": 20,
+      "model1_call_rate": 0.0,
+      "token_accounting_available": false,
+      "average_tokens": null,
+      "average_latency_ms": 6897,
+      "average_selected_tables": 3.35,
+      "average_selected_columns": 13.75
+    },
+    "model1": {
+      "correct": 17,
+      "execution_accuracy": 0.85,
+      "accepted": 20,
+      "model1_call_rate": 1.0,
+      "token_accounting_available": false,
+      "average_tokens": null,
+      "average_latency_ms": 11505,
+      "average_selected_tables": 1.45,
+      "average_selected_columns": 3.7
+    },
+    "paired": {
+      "both_correct": 16,
+      "retrieval_only": 1,
+      "model1_only": 1,
+      "neither": 2
+    }
+  },
+  "results": [
+    {
+      "dataset_index": 18,
+      "db_id": "concert_singer",
+      "question": "What is the name and capacity for the stadium with highest average attendance?",
+      "gold_sql": "SELECT name ,  capacity FROM stadium ORDER BY average DESC LIMIT 1",
+      "retrieval": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT Name, Capacity\nFROM stadium\nORDER BY Average DESC\nLIMIT 1",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 3655,
+        "model1_called": false,
+        "selected_tables": 4,
+        "selected_columns": 17
+      },
+      "model1": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT Name, Capacity\nFROM stadium\nWHERE Average = (SELECT MAX(Average) FROM stadium)\nORDER BY Stadium_ID",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 8288,
+        "model1_called": true,
+        "selected_tables": 1,
+        "selected_columns": 4
+      }
+    },
+    {
+      "dataset_index": 49,
+      "db_id": "pets_1",
+      "question": "Find the maximum weight for each type of pet. List the maximum weight and pet type.",
+      "gold_sql": "SELECT max(weight) ,  petType FROM pets GROUP BY petType",
+      "retrieval": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT MAX(Pets.weight) AS maximum_weight, Pets.PetType AS pet_type\nFROM Pets\nGROUP BY Pets.PetType",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 4274,
+        "model1_called": false,
+        "selected_tables": 3,
+        "selected_columns": 11
+      },
+      "model1": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT MAX(Pets.weight) AS maximum_weight, Pets.PetType AS pet_type FROM Pets GROUP BY Pets.PetType",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 10265,
+        "model1_called": true,
+        "selected_tables": 1,
+        "selected_columns": 3
+      }
+    },
+    {
+      "dataset_index": 211,
+      "db_id": "flight_2",
+      "question": "How many flights depart from City 'Aberdeen' and have destination City 'Ashley'?",
+      "gold_sql": "SELECT count(*) FROM FLIGHTS AS T1 JOIN AIRPORTS AS T2 ON T1.DestAirport  =  T2.AirportCode JOIN AIRPORTS AS T3 ON T1.SourceAirport  =  T3.AirportCode WHERE T2.City  =  \"Ashley\" AND T3.City  =  \"Aberdeen\"",
+      "retrieval": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT COUNT(*) AS flight_count\nFROM flights AS f\nJOIN airports AS source_airport\n  ON source_airport.AirportCode = f.SourceAirport\nJOIN airports AS destination_airport\n  ON destination_airport.AirportCode = f.DestAirport\nWHERE TRIM(source_airport.City) = 'Aberdeen'\n  AND TRIM(destination_airport.City) = 'Ashley'",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 9422,
+        "model1_called": false,
+        "selected_tables": 2,
+        "selected_columns": 9
+      },
+      "model1": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT COUNT(*) AS flight_count\nFROM flights AS f\nJOIN airports AS source_airport\n  ON source_airport.AirportCode = f.SourceAirport\nJOIN airports AS destination_airport\n  ON destination_airport.AirportCode = f.DestAirport\nWHERE source_airport.City = 'Aberdeen '\n  AND destination_airport.City = 'Ashley '",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 15357,
+        "model1_called": true,
+        "selected_tables": 2,
+        "selected_columns": 6
+      }
+    },
+    {
+      "dataset_index": 247,
+      "db_id": "flight_2",
+      "question": "What are flight numbers of flights departing from Airport \"APG\"?",
+      "gold_sql": "SELECT FlightNo FROM FLIGHTS WHERE SourceAirport  =  \"APG\"",
+      "retrieval": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT f.FlightNo\nFROM flights AS f\nJOIN airports AS a\n  ON a.AirportCode = f.SourceAirport\nWHERE a.AirportCode = 'APG'",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 8787,
+        "model1_called": false,
+        "selected_tables": 2,
+        "selected_columns": 9
+      },
+      "model1": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT FlightNo\nFROM flights\nWHERE SourceAirport = 'APG'",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 7598,
+        "model1_called": true,
+        "selected_tables": 1,
+        "selected_columns": 3
+      }
+    },
+    {
+      "dataset_index": 260,
+      "db_id": "employee_hire_evaluation",
+      "question": "Count the number of employees",
+      "gold_sql": "SELECT count(*) FROM employee",
+      "retrieval": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT COUNT(*) AS employee_count\nFROM employee",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 4599,
+        "model1_called": false,
+        "selected_tables": 4,
+        "selected_columns": 16
+      },
+      "model1": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT COUNT(*) AS employee_count\nFROM employee",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 7601,
+        "model1_called": true,
+        "selected_tables": 1,
+        "selected_columns": 1
+      }
+    },
+    {
+      "dataset_index": 272,
+      "db_id": "employee_hire_evaluation",
+      "question": "What are the minimum and maximum number of products across all the shops?",
+      "gold_sql": "SELECT min(Number_products) ,  max(Number_products) FROM shop",
+      "retrieval": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT MIN(shop.Number_products) AS minimum_number_products, MAX(shop.Number_products) AS maximum_number_products FROM shop",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 2961,
+        "model1_called": false,
+        "selected_tables": 3,
+        "selected_columns": 13
+      },
+      "model1": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT MIN(Number_products) AS minimum_number_products, MAX(Number_products) AS maximum_number_products\nFROM shop",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 7768,
+        "model1_called": true,
+        "selected_tables": 1,
+        "selected_columns": 2
+      }
+    },
+    {
+      "dataset_index": 290,
+      "db_id": "employee_hire_evaluation",
+      "question": "Find the total amount of bonus given in all the evaluations.",
+      "gold_sql": "SELECT sum(bonus) FROM evaluation",
+      "retrieval": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT SUM(evaluation.Bonus) AS total_bonus\nFROM evaluation",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 3479,
+        "model1_called": false,
+        "selected_tables": 4,
+        "selected_columns": 16
+      },
+      "model1": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT SUM(evaluation.Bonus) AS total_bonus\nFROM evaluation",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 10545,
+        "model1_called": true,
+        "selected_tables": 1,
+        "selected_columns": 3
+      }
+    },
+    {
+      "dataset_index": 354,
+      "db_id": "cre_Doc_Template_Mgt",
+      "question": "Return the different descriptions for templates that have been used in a document.",
+      "gold_sql": "SELECT DISTINCT T1.template_type_description FROM Ref_template_types AS T1 JOIN Templates AS T2 ON T1.template_type_code  = T2.template_type_code JOIN Documents AS T3 ON T2.Template_ID  =  T3.template_ID",
+      "retrieval": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT DISTINCT r.Template_Type_Description\nFROM Documents AS d\nJOIN Templates AS t\n  ON d.Template_ID = t.Template_ID\nJOIN Ref_Template_Types AS r\n  ON t.Template_Type_Code = r.Template_Type_Code",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 7025,
+        "model1_called": false,
+        "selected_tables": 4,
+        "selected_columns": 16
+      },
+      "model1": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT DISTINCT r.Template_Type_Description\nFROM Ref_Template_Types AS r\nJOIN Templates AS t\n  ON t.Template_Type_Code = r.Template_Type_Code\nWHERE EXISTS (\n  SELECT 1\n  FROM Documents AS d\n  WHERE d.Template_ID = t.Template_ID\n)",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 12285,
+        "model1_called": true,
+        "selected_tables": 3,
+        "selected_columns": 6
+      }
+    },
+    {
+      "dataset_index": 365,
+      "db_id": "cre_Doc_Template_Mgt",
+      "question": "Show all paragraph texts for the document \"Customer reviews\".",
+      "gold_sql": "SELECT T1.paragraph_text FROM Paragraphs AS T1 JOIN Documents AS T2 ON T1.document_id  =  T2.document_id WHERE T2.document_name  =  \"Customer reviews\"",
+      "retrieval": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT p.Paragraph_Text\nFROM Paragraphs AS p\nJOIN Documents AS d ON d.Document_ID = p.Document_ID\nWHERE d.Document_Name = 'Customer reviews'",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 3318,
+        "model1_called": false,
+        "selected_tables": 2,
+        "selected_columns": 9
+      },
+      "model1": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT p.Paragraph_Text\nFROM Paragraphs AS p\nJOIN Documents AS d\n  ON d.Document_ID = p.Document_ID\nWHERE d.Document_Name = 'Customer reviews'",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 11994,
+        "model1_called": true,
+        "selected_tables": 2,
+        "selected_columns": 5
+      }
+    },
+    {
+      "dataset_index": 418,
+      "db_id": "museum_visit",
+      "question": "find the names of museums which have more staff than the minimum staff number of all museums opened after 2010.",
+      "gold_sql": "SELECT name FROM museum WHERE num_of_staff  >  (SELECT min(num_of_staff) FROM museum WHERE open_year  >  2010)",
+      "retrieval": {
+        "correct": true,
+        "accepted": true,
+        "sql": "WITH post_2010_min_staff AS (\n    SELECT MIN(Num_of_Staff) AS minimum_staff_number\n    FROM museum\n    WHERE Open_Year > '2010'\n)\nSELECT m.Name\nFROM museum AS m\nCROSS JOIN post_2010_min_staff AS p\nWHERE m.Num_of_Staff > p.minimum_staff_number",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 14218,
+        "model1_called": false,
+        "selected_tables": 3,
+        "selected_columns": 12
+      },
+      "model1": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT Name\nFROM museum\nWHERE Num_of_Staff > (\n    SELECT MIN(Num_of_Staff)\n    FROM museum\n    WHERE Open_Year > '2010'\n)",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 6762,
+        "model1_called": true,
+        "selected_tables": 1,
+        "selected_columns": 4
+      }
+    },
+    {
+      "dataset_index": 465,
+      "db_id": "wta_1",
+      "question": "Find the name of the winner who has the highest rank points and participated in the Australian Open tourney.",
+      "gold_sql": "SELECT winner_name FROM matches WHERE tourney_name  =  'Australian Open' ORDER BY winner_rank_points DESC LIMIT 1",
+      "retrieval": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT p.first_name || ' ' || p.last_name AS winner_name\nFROM matches AS m\nJOIN players AS p ON p.player_id = m.winner_id\nWHERE m.tourney_name = 'Australian Open'\nORDER BY m.winner_rank_points DESC\nLIMIT 1",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 10161,
+        "model1_called": false,
+        "selected_tables": 3,
+        "selected_columns": 16
+      },
+      "model1": {
+        "correct": true,
+        "accepted": true,
+        "sql": "WITH winner_points AS (\n    SELECT\n        winner_id,\n        MAX(winner_rank_points) AS highest_rank_points\n    FROM matches\n    WHERE tourney_name = 'Australian Open'\n    GROUP BY winner_id\n),\ntop_winner AS (\n    SELECT\n        winner_id,\n        highest_rank_points\n    FROM winner_points\n    ORDER BY highest_rank_points DESC, winner_id\n    LIMIT 1\n)\nSELECT\n    p.first_name || ' ' || p.last_name AS name\nFROM top_winner AS tw\nJOIN players AS p\n    ON p.player_id = tw.winner_id",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 15639,
+        "model1_called": true,
+        "selected_tables": 2,
+        "selected_columns": 7
+      }
+    },
+    {
+      "dataset_index": 500,
+      "db_id": "battle_death",
+      "question": "What is the ship id and name that caused most total injuries?",
+      "gold_sql": "SELECT T2.id ,  T2.name FROM death AS T1 JOIN ship AS t2 ON T1.caused_by_ship_id  =  T2.id GROUP BY T2.id ORDER BY count(*) DESC LIMIT 1",
+      "retrieval": {
+        "correct": false,
+        "accepted": true,
+        "sql": "WITH injury_totals AS (\n  SELECT caused_by_ship_id AS ship_id, SUM(injured) AS total_injuries\n  FROM death\n  GROUP BY caused_by_ship_id\n)\nSELECT s.id AS ship_id, s.name AS ship_name\nFROM ship AS s\nJOIN injury_totals AS it ON it.ship_id = s.id\nORDER BY it.total_injuries DESC\nLIMIT 1",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 12150,
+        "model1_called": false,
+        "selected_tables": 3,
+        "selected_columns": 15
+      },
+      "model1": {
+        "correct": false,
+        "accepted": true,
+        "sql": "WITH ship_injury_totals AS (\n  SELECT\n    s.id AS ship_id,\n    s.name AS ship_name,\n    SUM(d.injured) AS total_injuries\n  FROM ship AS s\n  JOIN death AS d\n    ON s.id = d.caused_by_ship_id\n  GROUP BY s.id, s.name\n)\nSELECT ship_id, ship_name\nFROM ship_injury_totals\nORDER BY total_injuries DESC\nLIMIT 1",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 29223,
+        "model1_called": true,
+        "selected_tables": 2,
+        "selected_columns": 5
+      }
+    },
+    {
+      "dataset_index": 804,
+      "db_id": "world_1",
+      "question": "What are the names of the nations with the 3 lowest populations?",
+      "gold_sql": "SELECT Name FROM country ORDER BY Population ASC LIMIT 3",
+      "retrieval": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT Name AS nation_name\nFROM country\nORDER BY Population ASC\nLIMIT 3",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 5518,
+        "model1_called": false,
+        "selected_tables": 3,
+        "selected_columns": 14
+      },
+      "model1": {
+        "correct": false,
+        "accepted": true,
+        "sql": "SELECT country.Name\nFROM country\nORDER BY country.Population ASC, country.Name ASC\nLIMIT 3",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 6434,
+        "model1_called": true,
+        "selected_tables": 1,
+        "selected_columns": 3
+      }
+    },
+    {
+      "dataset_index": 852,
+      "db_id": "orchestra",
+      "question": "List the record company shared by the most number of orchestras.",
+      "gold_sql": "SELECT Record_Company FROM orchestra GROUP BY Record_Company ORDER BY COUNT(*) DESC LIMIT 1",
+      "retrieval": {
+        "correct": true,
+        "accepted": true,
+        "sql": "WITH company_orchestra_counts AS (\n    SELECT\n        Record_Company,\n        COUNT(Orchestra_ID) AS orchestra_count\n    FROM orchestra\n    GROUP BY Record_Company\n)\nSELECT Record_Company\nFROM company_orchestra_counts\nORDER BY orchestra_count DESC, Record_Company\nLIMIT 1",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 7391,
+        "model1_called": false,
+        "selected_tables": 4,
+        "selected_columns": 21
+      },
+      "model1": {
+        "correct": true,
+        "accepted": true,
+        "sql": "WITH company_counts AS (\n    SELECT\n        Record_Company AS record_company,\n        COUNT(Orchestra_ID) AS orchestra_count\n    FROM orchestra\n    GROUP BY Record_Company\n)\nSELECT record_company\nFROM company_counts\nORDER BY orchestra_count DESC, record_company\nLIMIT 1",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 17192,
+        "model1_called": true,
+        "selected_tables": 1,
+        "selected_columns": 2
+      }
+    },
+    {
+      "dataset_index": 875,
+      "db_id": "network_1",
+      "question": "Count the number of high schoolers in grades 9 or 10.",
+      "gold_sql": "SELECT count(*) FROM Highschooler WHERE grade  =  9 OR grade  =  10",
+      "retrieval": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT COUNT(*) AS highschooler_count\nFROM Highschooler\nWHERE grade IN (9, 10)",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 3797,
+        "model1_called": false,
+        "selected_tables": 3,
+        "selected_columns": 7
+      },
+      "model1": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT COUNT(*) AS highschooler_count\nFROM Highschooler\nWHERE grade IN (9, 10)",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 10568,
+        "model1_called": true,
+        "selected_tables": 1,
+        "selected_columns": 2
+      }
+    },
+    {
+      "dataset_index": 897,
+      "db_id": "network_1",
+      "question": "What are the names of students who have no friends?",
+      "gold_sql": "SELECT name FROM Highschooler EXCEPT SELECT T2.name FROM Friend AS T1 JOIN Highschooler AS T2 ON T1.student_id  =  T2.id",
+      "retrieval": {
+        "correct": false,
+        "accepted": true,
+        "sql": "SELECT h.name\nFROM Highschooler AS h\nWHERE NOT EXISTS (\n    SELECT 1\n    FROM Friend AS f\n    WHERE f.student_id = h.ID\n       OR f.friend_id = h.ID\n)",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 6733,
+        "model1_called": false,
+        "selected_tables": 3,
+        "selected_columns": 7
+      },
+      "model1": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT h.name\nFROM Highschooler AS h\nWHERE NOT EXISTS (\n    SELECT 1\n    FROM Friend AS f\n    WHERE f.student_id = h.ID\n)",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 9430,
+        "model1_called": true,
+        "selected_tables": 2,
+        "selected_columns": 4
+      }
+    },
+    {
+      "dataset_index": 910,
+      "db_id": "network_1",
+      "question": "Show the names of students who have a grade higher than 5 and have at least 2 friends.",
+      "gold_sql": "SELECT T2.name FROM Friend AS T1 JOIN Highschooler AS T2 ON T1.student_id  =  T2.id WHERE T2.grade  >  5 GROUP BY T1.student_id HAVING count(*)  >=  2",
+      "retrieval": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT h.name\nFROM Highschooler AS h\nJOIN (\n    SELECT student_id, COUNT(*) AS friend_count\n    FROM Friend\n    GROUP BY student_id\n    HAVING COUNT(*) >= 2\n) AS f\n    ON f.student_id = h.ID\nWHERE h.grade > 5",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 8294,
+        "model1_called": false,
+        "selected_tables": 3,
+        "selected_columns": 7
+      },
+      "model1": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT h.name\nFROM Highschooler AS h\nJOIN (\n    SELECT student_id, COUNT(*) AS friend_count\n    FROM Friend\n    GROUP BY student_id\n) AS f\n    ON f.student_id = h.ID\nWHERE h.grade > 5\n  AND f.friend_count >= 2",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 11667,
+        "model1_called": true,
+        "selected_tables": 2,
+        "selected_columns": 5
+      }
+    },
+    {
+      "dataset_index": 943,
+      "db_id": "dog_kennels",
+      "question": "Find the id and cell phone of the professionals who operate two or more types of treatments.",
+      "gold_sql": "SELECT T1.professional_id ,  T1.cell_number FROM Professionals AS T1 JOIN Treatments AS T2 ON T1.professional_id  =  T2.professional_id GROUP BY T1.professional_id HAVING count(*)  >=  2",
+      "retrieval": {
+        "correct": false,
+        "accepted": true,
+        "sql": "WITH professional_treatment_types AS (\n    SELECT\n        professional_id,\n        COUNT(DISTINCT treatment_type_code) AS treatment_type_count\n    FROM Treatments\n    GROUP BY professional_id\n)\nSELECT\n    p.professional_id,\n    p.cell_number\nFROM Professionals AS p\nJOIN professional_treatment_types AS ptt\n    ON p.professional_id = ptt.professional_id\nWHERE ptt.treatment_type_count >= 2",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 10441,
+        "model1_called": false,
+        "selected_tables": 6,
+        "selected_columns": 24
+      },
+      "model1": {
+        "correct": false,
+        "accepted": true,
+        "sql": "WITH qualifying_professionals AS (\n    SELECT\n        professional_id,\n        COUNT(DISTINCT treatment_type_code) AS treatment_type_count\n    FROM Treatments\n    GROUP BY professional_id\n    HAVING COUNT(DISTINCT treatment_type_code) >= 2\n)\nSELECT\n    p.professional_id,\n    p.cell_number\nFROM Professionals AS p\nJOIN qualifying_professionals AS q\n    ON q.professional_id = p.professional_id",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 15155,
+        "model1_called": true,
+        "selected_tables": 2,
+        "selected_columns": 5
+      }
+    },
+    {
+      "dataset_index": 962,
+      "db_id": "dog_kennels",
+      "question": "List the emails of the professionals who live in the state of Hawaii or the state of Wisconsin.",
+      "gold_sql": "SELECT email_address FROM Professionals WHERE state  =  'Hawaii' OR state  =  'Wisconsin'",
+      "retrieval": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT email_address\nFROM Professionals\nWHERE state IN ('Hawaii', 'Wisconsin')",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 4345,
+        "model1_called": false,
+        "selected_tables": 4,
+        "selected_columns": 20
+      },
+      "model1": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT email_address\nFROM Professionals\nWHERE state IN ('Hawaii', 'Wisconsin')",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 8245,
+        "model1_called": true,
+        "selected_tables": 1,
+        "selected_columns": 3
+      }
+    },
+    {
+      "dataset_index": 1030,
+      "db_id": "real_estate_properties",
+      "question": "How many available features are there in total?",
+      "gold_sql": "SELECT count(*) FROM Other_Available_Features",
+      "retrieval": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT COUNT(*) AS total_available_features\nFROM Other_Available_Features",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 7368,
+        "model1_called": false,
+        "selected_tables": 4,
+        "selected_columns": 16
+      },
+      "model1": {
+        "correct": true,
+        "accepted": true,
+        "sql": "SELECT COUNT(*) AS total_available_features\nFROM Other_Available_Features",
+        "termination_reason": "accepted",
+        "attempts": 1,
+        "tokens": 0,
+        "latency_ms": 8088,
+        "model1_called": true,
+        "selected_tables": 1,
+        "selected_columns": 1
+      }
+    }
+  ]
+}

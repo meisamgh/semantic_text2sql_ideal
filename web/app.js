@@ -292,6 +292,7 @@ async function send(message, feedbackCategory = null) {
         evidence: $("#evidenceInput").value.trim() || null,
         provider,
         model,
+        context_mode: $("#contextModeSelect").value,
         execute: true,
         max_rows: 100,
         feedback_category: feedbackCategory,

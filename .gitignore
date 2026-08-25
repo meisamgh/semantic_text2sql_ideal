@@ -3,6 +3,8 @@
 !.env.example
 .env.postgres
 profiles/
+benchmarks/.cache/
+benchmarks/spider_data/
 .venv/
 .pytest_cache/
 .mypy_cache/
