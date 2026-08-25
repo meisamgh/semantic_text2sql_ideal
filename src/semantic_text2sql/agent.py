@@ -32,12 +32,12 @@ from semantic_text2sql.models import (
     GenerateResponse,
     OptimizationEvidence,
     PipelineTelemetry,
+    SemanticContract,
     TokenUsage,
     ValidationResult,
 )
 from semantic_text2sql.postgres import PostgresRegistry
 from semantic_text2sql.profiling import ProfileStore
-from semantic_text2sql.semantic import plan_semantics
 from semantic_text2sql.strategy import route_question
 from semantic_text2sql.validator import (
     clean_model_sql,
@@ -91,9 +91,7 @@ class TextToSQLAgent:
 
     async def generate(self, request: GenerateRequest) -> GenerateResponse:
         strategy = route_question(request.question)
-        semantic_contract = request.semantic_contract or plan_semantics(
-            request.question, request.evidence
-        )
+        semantic_contract = request.semantic_contract or SemanticContract()
         try:
             database = self._database(request.dialect)
             schema = database.inspect(request.db_id)
@@ -172,7 +170,6 @@ class TextToSQLAgent:
             request.evidence,
             request.business_context,
             request.historical_examples,
-            None,
         )
         final_model_context = model_context_payload(
             context_plan,
@@ -182,7 +179,6 @@ class TextToSQLAgent:
             request.question,
             request.dialect,
             request.historical_examples,
-            None,
         )
         available_context_tokens = (
             estimate_tokens(schema.model_dump_json())
@@ -359,15 +355,12 @@ class TextToSQLAgent:
                     termination_reason="accepted",
                     token_usage=_sum_usage(attempts),
                     optimization=optimization_evidence,
-                    resolution_report=request.resolution_report,
                     context_plan=context_plan,
                     model_context=final_model_context,
                     context_request=request.context_request,
                     telemetry=_telemetry(
                         available_context_tokens,
                         profile_context,
-                        request.semantic_call_used,
-                        request.semantic_token_usage,
                         request.planner_call_used,
                         request.planner_token_usage,
                         retrieved_categories,
@@ -407,15 +400,12 @@ class TextToSQLAgent:
                         baseline_explain=baseline_validation.explain_plan,
                         selected_sql="baseline",
                     ),
-                    resolution_report=request.resolution_report,
                     context_plan=context_plan,
                     model_context=final_model_context,
                     context_request=request.context_request,
                     telemetry=_telemetry(
                         available_context_tokens,
                         profile_context,
-                        request.semantic_call_used,
-                        request.semantic_token_usage,
                         request.planner_call_used,
                         request.planner_token_usage,
                         retrieved_categories,
@@ -437,15 +427,12 @@ class TextToSQLAgent:
                 termination_reason="model_error" if model_failed else "attempt_limit",
                 model_error=model_error_detail,
                 token_usage=_sum_usage(attempts),
-                resolution_report=request.resolution_report,
                 context_plan=context_plan,
                 model_context=final_model_context,
                 context_request=request.context_request,
                 telemetry=_telemetry(
                     available_context_tokens,
                     profile_context,
-                    request.semantic_call_used,
-                    request.semantic_token_usage,
                     request.planner_call_used,
                     request.planner_token_usage,
                     retrieved_categories,
@@ -475,15 +462,12 @@ class TextToSQLAgent:
             termination_reason="accepted",
             token_usage=_sum_usage(attempts),
             optimization=optimization_evidence,
-            resolution_report=request.resolution_report,
             context_plan=context_plan,
             model_context=final_model_context,
             context_request=request.context_request,
             telemetry=_telemetry(
                 available_context_tokens,
                 profile_context,
-                request.semantic_call_used,
-                request.semantic_token_usage,
                 request.planner_call_used,
                 request.planner_token_usage,
                 retrieved_categories,
@@ -511,8 +495,6 @@ def _sum_known(values: Iterable[int | None]) -> int | None:
 def _telemetry(
     available_context_tokens: int,
     context: str,
-    semantic_call_used: bool,
-    semantic_usage: TokenUsage,
     planner_call_used: bool,
     planner_usage: TokenUsage,
     categories: list[str],
@@ -527,11 +509,9 @@ def _telemetry(
         selected_model_context_tokens=selected,
         pruned_tokens=pruned,
         pruning_percentage=(pruned / available * 100) if available else 0,
-        semantic_call_used=semantic_call_used,
         context_expansions=len(categories),
         retrieved_context_categories=categories,
         generation_attempts=len(attempts),
-        semantic_call=semantic_usage if semantic_call_used else TokenUsage(),
         planner_call_used=planner_call_used,
         planner_call=planner_usage if planner_call_used else TokenUsage(),
         generation_call=(attempts[0].token_usage if attempts else TokenUsage()),

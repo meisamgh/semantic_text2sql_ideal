@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from semantic_text2sql.api import create_app
 
-PIPELINE_VERSION = "querygpt-inspired-v5-conversation"
+PIPELINE_VERSION = "ideal-hybrid-context-v1"
 
 
 def main() -> None:

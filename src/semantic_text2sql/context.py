@@ -16,7 +16,6 @@ from semantic_text2sql.models import (
     HistoricalExample,
     SchemaInfo,
     SemanticContract,
-    SemanticPlan,
     VerifiedColumn,
     VerifiedContext,
     VerifiedRelationship,
@@ -106,8 +105,6 @@ def build_context_plan(
             if (item.table, item.column) in selected and item.observed_format
         ]
     formulas = [item.id for item in contract.structural_formulas]
-    formulas.extend(item.name for item in contract.formula_metrics)
-    formulas.extend(item.name for item in contract.derived_metrics)
     relationships = _relationships(schema, profile, tables)
     requirements = _requirements(schema, profile, contract, relationships)
     if context_request is not None:
@@ -145,7 +142,6 @@ def render_context(
     evidence: str | None,
     business_context: str | None,
     historical_examples: list[HistoricalExample] | None = None,
-    semantic_plan: SemanticPlan | None = None,
 ) -> str:
     return json.dumps(
         model_context_payload(
@@ -156,7 +152,6 @@ def render_context(
             question,
             schema.dialect,
             historical_examples,
-            semantic_plan,
         ),
         separators=(",", ":"),
     )
@@ -170,7 +165,6 @@ def model_context_payload(
     question: str,
     dialect: str,
     historical_examples: list[HistoricalExample] | None = None,
-    semantic_plan: SemanticPlan | None = None,
 ) -> dict[str, Any]:
     """Return the single authoritative JSON object supplied to SQL generation."""
     verified = _verified_context(
@@ -187,8 +181,6 @@ def model_context_payload(
     ]
     if formulas:
         payload["approved_formulas"] = formulas
-    if semantic_plan is not None:
-        payload["verified_semantic_plan"] = semantic_plan.model_dump(mode="json", exclude_none=True)
     if historical_examples:
         payload["historical_examples"] = [
             {
@@ -613,8 +605,6 @@ def _dependency_profile_context(
 def _token_budget(question: str, contract: SemanticContract) -> int:
     complexity = (
         len(contract.aggregation_stages)
-        + len(contract.formula_metrics)
-        + len(contract.derived_metrics)
         + len(contract.selectors)
         + len(contract.output_operations)
     )

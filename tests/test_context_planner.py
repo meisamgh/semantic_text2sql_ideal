@@ -8,6 +8,7 @@ from semantic_text2sql.context_planner import (
     reconcile_context_contract,
     verify_context_request,
 )
+from semantic_text2sql.formulas import apply_structural_formulas
 from semantic_text2sql.models import (
     ColumnInfo,
     ContextRequest,
@@ -17,12 +18,12 @@ from semantic_text2sql.models import (
     PlannerRanking,
     RelationshipProfile,
     SchemaInfo,
+    SemanticContract,
     SemanticFilter,
     StructuralFormula,
     TableInfo,
     TableProfile,
 )
-from semantic_text2sql.semantic import apply_structural_formulas, plan_semantics
 
 
 def _schema() -> SchemaInfo:
@@ -84,7 +85,7 @@ def _profile() -> DatabaseProfile:
 
 def _unit_price_contract(question: str):  # type: ignore[no-untyped-def]
     return apply_structural_formulas(
-        plan_semantics(question),
+        SemanticContract(),
         [
             StructuralFormula(
                 id="unit_price",
@@ -224,7 +225,7 @@ def test_customer_spending_date_request_does_not_force_unneeded_tables() -> None
     verified = verify_context_request(
         requested,
         _schema(),
-        plan_semantics("What did customer 38508 spend in January 2012?"),
+        SemanticContract(),
         _profile(),
     )
 
@@ -244,7 +245,7 @@ def test_single_table_global_ratio_has_no_join_or_date_metadata() -> None:
     verified = verify_context_request(
         requested,
         _schema(),
-        plan_semantics("What is the ratio of EUR to CZK customers?"),
+        SemanticContract(),
         _profile(),
     )
 
@@ -275,7 +276,7 @@ def test_controller_restores_primary_key_omitted_by_model_1() -> None:
     verified = verify_context_request(
         requested,
         schema,
-        plan_semantics("What is the ratio of EUR to CZK customers?"),
+        SemanticContract(),
         _profile(),
     )
 

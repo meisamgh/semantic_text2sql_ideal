@@ -1,10 +1,8 @@
 # Semantic Text-to-SQL — Ideal A/B Version
 
-A v5-derived, local-first Text-to-SQL application for measuring the incremental effect of a bounded
+A local-first Text-to-SQL application for measuring the incremental effect of a bounded
 Model 1 context selector. Both experimental arms share hybrid retrieval, ML reranking, deterministic
 grounding, the SQL model, validation, and execution.
-
-
 
 <p align="center">
   <img src="docs/semantic_text2sql_architecture.svg" alt="Semantic Text-to-SQL architecture" width="720" />
@@ -425,5 +423,3 @@ benchmarks/
   run_chat_queue.py
   data/bird_history_seed42_400.json
 ```
-
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party references and licenses.

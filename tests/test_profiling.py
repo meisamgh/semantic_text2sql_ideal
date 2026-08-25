@@ -3,8 +3,6 @@ from __future__ import annotations
 import sqlite3
 
 from semantic_text2sql.database import DatabaseRegistry
-from semantic_text2sql.linker import cardinality_plan_context, compact_profile_context
-from semantic_text2sql.models import SemanticContract
 from semantic_text2sql.profiling import (
     ProfileStore,
     apply_bird_descriptions,
@@ -65,15 +63,6 @@ def test_offline_profiler_captures_numeric_and_categorical_data(registry, tmp_pa
                 "confidence": 1.0,
             }
     ]
-    context = compact_profile_context(registry.inspect("shop"), profile)
-    assert "RELATIONSHIP" not in context
-    plan = cardinality_plan_context(
-        registry.inspect("shop"),
-        profile,
-        SemanticContract(grain=["customers.customer_id"], measures=["customers.customer_id"]),
-    )
-    assert '"type":"ONE_TO_MANY"' in plan
-    assert '"target_grain":["customers.customer_id"]' in plan
     store = ProfileStore(tmp_path / "profiles")
     path = store.save(profile)
     assert path.is_file()

@@ -9,18 +9,11 @@ from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
 
 from sqlglot import exp, parse_one
 from sqlglot.errors import ParseError
 
-from semantic_text2sql.models import (
-    ContextRequest,
-    HistoricalExample,
-    SchemaInfo,
-    SemanticContract,
-    SemanticPlan,
-)
+from semantic_text2sql.models import HistoricalExample, SchemaInfo
 
 _TOKEN = re.compile(r"[A-Za-z0-9]+")
 _YEAR = re.compile(r"\b(?:19|20)\d{2}\b")
@@ -82,65 +75,9 @@ class SemanticSignature:
     temporal: frozenset[str]
 
 
-def build_semantic_signature(
-    question: str,
-    request: ContextRequest,
-    contract: SemanticContract,
-    plan: SemanticPlan | None = None,
-) -> SemanticSignature:
-    """Build the retrieval key from the verified post-grounding semantic plan."""
-    operations = set(plan.operations if plan is not None else _operation_types(question))
-    aggregations = plan.aggregations if plan is not None else request.aggregations
-    ranking = plan.ranking if plan is not None else request.ranking
-    concepts = plan.business_concepts if plan is not None else request.business_concepts
-    measures = plan.measures if plan is not None else request.measures
-    group_by = plan.group_by if plan is not None else request.group_by
-    temporal = plan.temporal_operations if plan is not None else list(_temporal_features(question))
-    operations.update(item.function.upper() for item in aggregations)
-    operations.update("ARGMAX" if item.direction == "DESC" else "ARGMIN" for item in ranking)
-    metrics = {
-        *concepts,
-        *measures,
-        *contract.measures,
-        *(item.input for item in aggregations),
-        *(item.output for item in aggregations if item.output),
-    }
-    return SemanticSignature(
-        operations=frozenset(operations),
-        metrics=frozenset(item.casefold() for item in metrics),
-        tables=frozenset(item.casefold() for item in request.tables),
-        grain=frozenset(item.casefold() for item in (group_by or contract.grain)),
-        temporal=frozenset(item.casefold() for item in temporal),
-    )
-
-
-def history_is_useful(
-    signature: SemanticSignature,
-    request: ContextRequest,
-    plan: SemanticPlan | None = None,
-) -> bool:
-    """Use examples for semantic complexity, never merely because several tables are used."""
-    return bool(
-        signature.operations & _COMPLEX_OPERATIONS
-        or len(plan.aggregations if plan is not None else request.aggregations) > 1
-        or (plan.ranking if plan is not None else request.ranking)
-    )
-
-
-class CrossEncoderReranker(Protocol):
-    """Optional local experiment boundary; normal retrieval needs no extra dependency."""
-
-    def rerank(
-        self, question: str, candidates: list[HistoricalExample]
-    ) -> list[HistoricalExample]: ...
-
-
 class HistoricalQueryStore:
-    def __init__(
-        self, path: Path | None = None, reranker: CrossEncoderReranker | None = None
-    ) -> None:
+    def __init__(self, path: Path | None = None) -> None:
         self.records: list[dict[str, str]] = []
-        self.reranker = reranker
         if path and path.is_file():
             raw = json.loads(path.read_text(encoding="utf-8"))
             records = raw.get("records", raw) if isinstance(raw, dict) else raw
@@ -197,8 +134,6 @@ class HistoricalQueryStore:
             exclude_record_id=exclude_record_id,
         )
         semantic_ranked = scored[: max(top_k, semantic_pool)]
-        if self.reranker is not None and semantic_ranked:
-            semantic_ranked = self.reranker.rerank(question, semantic_ranked)
         if not semantic_ranked:
             return []
         selected = [semantic_ranked[0]]
@@ -307,21 +242,6 @@ class HistoricalQueryStore:
                     )
                 )
         return sorted(scored, key=lambda item: (-item.score, item.question)), query_signature
-
-
-def format_examples(examples: list[HistoricalExample]) -> str:
-    if not examples:
-        return ""
-    blocks = [
-        f"Historical pattern {index} (retrieval_score={item.score:.3f}):\n"
-        f"Question: {item.question}\nSQL pattern: {item.sql}"
-        for index, item in enumerate(examples, 1)
-    ]
-    return (
-        "\n\nHistorical examples are non-authoritative patterns. Never copy literals, filters, "
-        "or identifiers unless required by the current question and live schema.\n\n"
-        + "\n\n".join(blocks)
-    )
 
 
 def _bm25_scores(query: list[str], documents: list[list[str]]) -> list[float]:

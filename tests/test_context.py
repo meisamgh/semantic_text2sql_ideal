@@ -6,30 +6,13 @@ from semantic_text2sql.context import (
     failure_context_category,
     model_context_payload,
 )
-from semantic_text2sql.models import StructuralFormula
-from semantic_text2sql.semantic import apply_structural_formulas, plan_semantics, resolution_report
-
-
-def test_confidence_gate_skips_simple_resolved_question() -> None:
-    question = "How many books are there?"
-    report = resolution_report(question, plan_semantics(question))
-
-    assert report.status == "RESOLVED"
-    assert report.semantic_call_required is False
-
-
-def test_confidence_gate_escalates_unresolved_complex_metric() -> None:
-    question = "What is the average price per item for the top spending customer?"
-    report = resolution_report(question, plan_semantics(question))
-
-    assert report.status == "UNRESOLVED"
-    assert report.semantic_call_required is True
-    assert any(item.field == "formula" and item.critical for item in report.fields)
+from semantic_text2sql.formulas import apply_structural_formulas
+from semantic_text2sql.models import SemanticContract, StructuralFormula
 
 
 def test_context_plan_records_selected_dependencies(registry) -> None:  # type: ignore[no-untyped-def]
     schema = registry.inspect("shop")
-    contract = plan_semantics("Total order amount per customer")
+    contract = SemanticContract()
     plan = build_context_plan(schema, None, contract, "Total order amount per customer", None)
 
     assert set(plan.columns) == {"customers", "orders"}
@@ -43,7 +26,7 @@ def test_context_plan_records_selected_dependencies(registry) -> None:  # type: 
 def test_formula_node_emits_formula_and_physical_type_requirements(registry) -> None:  # type: ignore[no-untyped-def]
     schema = registry.inspect("shop")
     contract = apply_structural_formulas(
-        plan_semantics("orders where amount per customer is over 10"),
+        SemanticContract(),
         [
             StructuralFormula(
                 id="amount_ratio",
@@ -78,7 +61,7 @@ def test_single_table_context_includes_primary_key_and_grain_only(registry) -> N
         }
     )
     question = "How many customers are there?"
-    contract = plan_semantics(question)
+    contract = SemanticContract()
     plan = build_context_plan(schema, None, contract, question, None)
 
     payload = model_context_payload(plan, None, contract, None, question, "sqlite")
@@ -93,7 +76,7 @@ def test_single_table_context_includes_primary_key_and_grain_only(registry) -> N
 def test_multi_table_context_includes_key_uniqueness_and_fanout(registry) -> None:  # type: ignore[no-untyped-def]
     schema = registry.inspect("shop")
     question = "Show order amounts with their customer names."
-    contract = plan_semantics(question)
+    contract = SemanticContract()
     plan = build_context_plan(schema, None, contract, question, None)
 
     payload = model_context_payload(plan, None, contract, None, question, "sqlite")

@@ -178,30 +178,11 @@ class TokenUsage(StrictModel):
         return (self.input_tokens or 0) + (self.output_tokens or 0)
 
 
-class DerivedMetric(StrictModel):
-    name: str
-    function: Literal["count", "sum", "average", "min", "max"]
-    input: str
-    group_by: list[str] = Field(default_factory=list)
-
-
 class AggregationStage(StrictModel):
     name: str
     function: Literal["count", "sum", "average", "min", "max"]
     input: str
     group_by: list[str] = Field(default_factory=list)
-    output_grain: list[str] = Field(default_factory=list)
-
-
-class FormulaMetric(StrictModel):
-    name: str
-    input: str
-    partition_by: list[str] = Field(default_factory=list)
-    bindings: dict[str, str] = Field(default_factory=dict)
-    formula: str
-    denominator: str | None = None
-    multiplier: float = 1.0
-    zero_denominator: Literal["null", "zero", "error"] = "null"
     output_grain: list[str] = Field(default_factory=list)
 
 
@@ -345,38 +326,6 @@ class ContextManifest(StrictModel):
 ContextSelection = ContextManifest
 
 
-class SemanticPlan(StrictModel):
-    """Verified semantic intent produced after context grounding and before SQL generation."""
-
-    operations: list[
-        Literal[
-            "LOOKUP",
-            "FILTER",
-            "COUNT",
-            "SUM",
-            "AVERAGE",
-            "GROUP",
-            "RATIO",
-            "PERCENT_OF_TOTAL",
-            "PERCENT_CHANGE",
-            "DIFFERENCE",
-            "ARGMAX",
-            "ARGMIN",
-            "OTHER",
-        ]
-    ] = Field(default_factory=list, max_length=10)
-    outputs: list[str] = Field(default_factory=list, max_length=30)
-    filters: list[SemanticFilter] = Field(default_factory=list, max_length=30)
-    measures: list[str] = Field(default_factory=list, max_length=20)
-    aggregations: list[PlannerAggregation] = Field(default_factory=list, max_length=20)
-    final_operations: list[OutputOperation] = Field(default_factory=list, max_length=20)
-    group_by: list[str] = Field(default_factory=list, max_length=20)
-    ranking: list[PlannerRanking] = Field(default_factory=list, max_length=10)
-    temporal_operations: list[str] = Field(default_factory=list, max_length=20)
-    business_concepts: list[str] = Field(default_factory=list, max_length=20)
-    logical_steps: list[str] = Field(default_factory=list, max_length=20)
-
-
 class ContextRelationship(StrictModel):
     left_table: str
     right_table: str
@@ -448,26 +397,10 @@ class SemanticContract(StrictModel):
     rationale: list[str] = Field(default_factory=list)
     measures: list[str] = Field(default_factory=list)
     aggregation_stages: list[AggregationStage] = Field(default_factory=list)
-    derived_metrics: list[DerivedMetric] = Field(default_factory=list)
-    formula_metrics: list[FormulaMetric] = Field(default_factory=list)
     selectors: list[MetricSelector] = Field(default_factory=list)
     output_operations: list[OutputOperation] = Field(default_factory=list)
     named_outputs: list[str] = Field(default_factory=list)
     structural_formulas: list[StructuralFormula] = Field(default_factory=list)
-
-
-class FieldResolution(StrictModel):
-    field: str
-    status: Literal["RESOLVED", "AMBIGUOUS", "UNRESOLVED", "CONFLICT"]
-    confidence: float = Field(ge=0, le=1)
-    provenance: list[str] = Field(default_factory=list)
-    critical: bool = False
-
-
-class ResolutionReport(StrictModel):
-    status: Literal["RESOLVED", "AMBIGUOUS", "UNRESOLVED", "CONFLICT"]
-    fields: list[FieldResolution] = Field(default_factory=list)
-    semantic_call_required: bool = False
 
 
 class ContextTable(StrictModel):
@@ -522,11 +455,9 @@ class PipelineTelemetry(StrictModel):
     selected_model_context_tokens: int = Field(default=0, ge=0)
     pruned_tokens: int = Field(default=0, ge=0)
     pruning_percentage: float = Field(default=0, ge=0, le=100)
-    semantic_call_used: bool = False
     context_expansions: int = Field(default=0, ge=0, le=2)
     retrieved_context_categories: list[str] = Field(default_factory=list)
     generation_attempts: int = Field(default=0, ge=0, le=4)
-    semantic_call: TokenUsage = Field(default_factory=TokenUsage)
     planner_call_used: bool = False
     planner_call: TokenUsage = Field(default_factory=TokenUsage)
     generation_call: TokenUsage = Field(default_factory=TokenUsage)
@@ -552,21 +483,6 @@ class ContractDelta(StrictModel):
     operation: str
     instruction: str
     feedback_category: str | None = None
-
-
-class PreliminarySemanticIR(StrictModel):
-    outputs: list[str] = Field(default_factory=list, max_length=20)
-    entities: list[str] = Field(default_factory=list, max_length=20)
-    tables: list[str] = Field(default_factory=list, max_length=20)
-    required_columns: list[str] = Field(default_factory=list, max_length=50)
-    joins: list[str] = Field(default_factory=list, max_length=20)
-    filters: list[str] = Field(default_factory=list, max_length=30)
-    aggregation: Literal["count", "sum", "average", "min", "max"] | None = None
-    grain: list[str] = Field(default_factory=list, max_length=20)
-    order_by: list[str] = Field(default_factory=list, max_length=20)
-    limit: int | None = Field(default=None, ge=1, le=10_000)
-    ambiguities: list[str] = Field(default_factory=list, max_length=20)
-    confidence: float = Field(default=0.5, ge=0, le=1)
 
 
 class Attempt(StrictModel):
@@ -614,65 +530,10 @@ class GenerateRequest(StrictModel):
     business_context: str | None = Field(default=None, max_length=12_000)
     previous_sql: str | None = Field(default=None, max_length=20_000)
     optimization_required: bool = False
-    resolution_report: ResolutionReport | None = None
-    semantic_call_used: bool = False
-    semantic_token_usage: TokenUsage = Field(default_factory=TokenUsage)
     context_request: ContextRequest | None = None
     planner_call_used: bool = False
     planner_token_usage: TokenUsage = Field(default_factory=TokenUsage)
     historical_examples: list[HistoricalExample] = Field(default_factory=list, max_length=3)
-
-
-class WorkspaceInfo(StrictModel):
-    workspace_id: str
-    name: str
-    description: str
-    db_ids: list[str]
-    tables: list[str] = Field(default_factory=list)
-    terms: list[str] = Field(default_factory=list)
-    system: bool = True
-
-
-class WorkspaceMatch(StrictModel):
-    workspace_id: str
-    name: str
-    score: float = Field(ge=0)
-    reasons: list[str] = Field(default_factory=list)
-
-
-class IntentRequest(StrictModel):
-    db_id: str = Field(min_length=1, max_length=100)
-    question: str = Field(min_length=1, max_length=4_000)
-    evidence: str | None = Field(default=None, max_length=8_000)
-
-
-class IntentResponse(StrictModel):
-    original_question: str
-    enhanced_question: str
-    matches: list[WorkspaceMatch]
-    selected_workspace: str
-
-
-class InterpretRequest(IntentRequest):
-    model: str = Field(default="claude-opus-5", min_length=1, max_length=200)
-
-
-class TableProposalRequest(IntentRequest):
-    workspace_id: str | None = None
-    max_tables: int = Field(default=5, ge=1, le=10)
-
-
-class TableProposalResponse(StrictModel):
-    workspace_id: str
-    proposed_tables: list[str]
-    proposed_columns: dict[str, list[str]]
-    relationships: list[ForeignKeyInfo]
-    requires_ack: bool = True
-
-
-class QueryGPTGenerateRequest(GenerateRequest):
-    workspace_id: str
-    approved_tables: list[str] = Field(min_length=1, max_length=20)
 
 
 class ChatRequest(StrictModel):
@@ -772,19 +633,6 @@ class ChatResponse(StrictModel):
     timings_ms: dict[str, int] = Field(default_factory=dict)
 
 
-class EnsembleRequest(StrictModel):
-    db_id: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
-    question: str = Field(min_length=1, max_length=4_000)
-    evidence: str | None = Field(default=None, max_length=8_000)
-    dialect: Literal["sqlite", "postgres"] = "sqlite"
-    provider: ModelProvider = "ollama"
-    model: str = Field(default=DEFAULT_OLLAMA_MODEL, min_length=1, max_length=200)
-    max_attempts: int = Field(default=2, ge=1, le=3)
-    max_rows: int = Field(default=100, ge=1, le=500)
-    candidate_count: int = Field(default=3, ge=1, le=3)
-    historical_top_k: int = Field(default=3, ge=0, le=5)
-
-
 class GenerateResponse(StrictModel):
     db_id: str
     question: str
@@ -806,35 +654,10 @@ class GenerateResponse(StrictModel):
     model_error: str | None = Field(default=None, max_length=500)
     token_usage: TokenUsage = Field(default_factory=TokenUsage)
     optimization: OptimizationEvidence | None = None
-    resolution_report: ResolutionReport | None = None
     context_plan: ContextPlan | None = None
     model_context: dict[str, Any] | None = None
     context_request: ContextRequest | None = None
     telemetry: PipelineTelemetry = Field(default_factory=PipelineTelemetry)
-
-
-class ResultCluster(StrictModel):
-    fingerprint: str
-    candidate_indices: list[int]
-    size: int = Field(ge=1)
-
-
-class EnsembleResponse(StrictModel):
-    db_id: str
-    question: str
-    dialect: Literal["sqlite", "postgres"]
-    provider: ModelProvider
-    model: str
-    historical_examples: list[HistoricalExample] = Field(default_factory=list)
-    candidates: list[GenerateResponse]
-    clusters: list[ResultCluster] = Field(default_factory=list)
-    inspection_findings: dict[int, list[str]] = Field(default_factory=dict)
-    selected_candidate: int | None
-    sql: str | None
-    columns: list[str] = Field(default_factory=list)
-    rows: list[list[Any]] = Field(default_factory=list)
-    accepted: bool
-    selection_reason: str
 
 
 class CheckRequest(StrictModel):

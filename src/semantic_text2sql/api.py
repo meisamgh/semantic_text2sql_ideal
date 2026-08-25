@@ -30,6 +30,7 @@ from semantic_text2sql.conversation import (
     resolve_turn,
 )
 from semantic_text2sql.database import DatabaseRegistry
+from semantic_text2sql.formulas import apply_structural_formulas
 from semantic_text2sql.glossary import GlossaryStore
 from semantic_text2sql.historical import HistoricalQueryStore
 from semantic_text2sql.hybrid_retrieval import (
@@ -72,10 +73,6 @@ from semantic_text2sql.models import (
 )
 from semantic_text2sql.postgres import PostgresRegistry
 from semantic_text2sql.profiling import ProfileStore
-from semantic_text2sql.semantic import (
-    apply_structural_formulas,
-    resolution_report,
-)
 from semantic_text2sql.validator import validate_sql
 
 logger = logging.getLogger(__name__)
@@ -485,7 +482,6 @@ def create_app(
                 )
                 if validate_sql(item.sql, schema, dialect="sqlite").valid
             ][:2]
-        report = resolution_report(pending.resolved_question, contract)
         if context_request.tables:
             proposed_tables = context_request.tables
         planning_ms = round((perf_counter() - planning_started) * 1_000)
@@ -504,9 +500,6 @@ def create_app(
             business_context=generation_business_context,
             previous_sql=previous.last_sql if operation == "OPTIMIZE" and previous else None,
             optimization_required=operation == "OPTIMIZE",
-            resolution_report=report,
-            semantic_call_used=False,
-            semantic_token_usage=TokenUsage(),
             context_request=context_request,
             planner_call_used=planner_call_used,
             planner_token_usage=planner_usage,
