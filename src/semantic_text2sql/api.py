@@ -151,6 +151,12 @@ def create_app(
     )
     conversations = ConversationStore()
     chat_jobs: dict[str, dict[str, Any]] = {}
+
+    def set_session_stage(session_id: str, stage: str) -> None:
+        for job in chat_jobs.values():
+            if job.get("session_id") == session_id and job.get("status") == "running":
+                job["stage"] = stage
+
     chat_tasks: dict[str, asyncio.Task[None]] = {}
 
     @app.get("/api/health")
@@ -209,6 +215,7 @@ def create_app(
     @app.post("/api/chat", response_model=ChatResponse)
     async def chat(request: ChatRequest) -> ChatResponse:
         started = perf_counter()
+        set_session_stage(request.session_id, "conversation")
         previous = conversations.get(request.session_id)
         has_matching_state = previous is not None and previous.db_id == request.db_id
         conversation_started = perf_counter()
@@ -332,6 +339,7 @@ def create_app(
                 },
             )
         routing_started = perf_counter()
+        set_session_stage(request.session_id, "retrieval")
         schema = sqlite.inspect(request.db_id)
         database_profile = profiles.load("sqlite", request.db_id)
         retrieval_trace = None
@@ -383,6 +391,10 @@ def create_app(
             )
         routing_ms = round((perf_counter() - routing_started) * 1_000)
         planning_started = perf_counter()
+        set_session_stage(
+            request.session_id,
+            "context_selection" if request.context_mode == "model1" else "grounding",
+        )
         contract = (
             previous.semantic_contract
             if operation == "OPTIMIZE" and previous and previous.semantic_contract
@@ -446,6 +458,7 @@ def create_app(
         approved_concepts = glossaries.relevant_concept_ids(
             request.db_id, pending.resolved_question
         )
+        set_session_stage(request.session_id, "grounding")
         context_request = verify_context_request(
             context_request,
             schema,
@@ -480,6 +493,7 @@ def create_app(
             proposed_tables = context_request.tables
         planning_ms = round((perf_counter() - planning_started) * 1_000)
         generation_started = perf_counter()
+        set_session_stage(request.session_id, "generation_validation_execution")
         generation_request = GenerateRequest(
             db_id=request.db_id,
             question=pending.resolved_question,
@@ -576,7 +590,7 @@ def create_app(
     async def run_chat_job(job_id: str, request: ChatRequest) -> None:
         job = chat_jobs[job_id]
         job["status"] = "running"
-        job["stage"] = "interpreting_and_generating"
+        job["stage"] = "conversation"
         try:
             response = await chat(request)
             job.update(
@@ -595,6 +609,7 @@ def create_app(
         job_id = uuid4().hex
         chat_jobs[job_id] = {
             "job_id": job_id,
+            "session_id": request.session_id,
             "status": "queued",
             "stage": "queued",
             "started_at": perf_counter(),

@@ -85,6 +85,7 @@
         <div class="message-content">
           <div class="response-meta"></div>
           <p class="response-note"></p>
+          <section class="semantic-status" aria-label="Validation status"></section>
           <details class="attempts-panel">
             <summary class="attempts-summary">Validation attempts</summary>
             <div class="attempts-list"></div>
@@ -99,8 +100,11 @@
           </section>
           <details class="context-panel">
             <summary>Verified context sent to Model 2</summary>
-            <div class="context-summary"></div>
-            <pre><code class="context-json"></code></pre>
+            <div class="schema-visual"></div>
+            <details class="context-json-panel">
+              <summary>Raw context JSON</summary>
+              <pre><code class="context-json"></code></pre>
+            </details>
           </details>
           <details class="feedback-panel">
             <summary>Is this answer wrong?</summary>
@@ -125,6 +129,6 @@
         </div>
       </article>
     </template>
-    <script src="/static/app.js?v=validation-attempts-2" defer></script>
+    <script src="/static/app.js?v=pipeline-context-status-1" defer></script>
   </body>
 </html>

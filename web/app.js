@@ -131,7 +131,7 @@ function appendAssistant(body, elapsed) {
   const serverElapsed = timings.total == null ? `${elapsed.toFixed(1)}s` : `${(timings.total / 1000).toFixed(1)}s server`;
   const modelUnavailable = !accepted && generation.termination_reason === "model_error";
   const status = explanatory ? "NO NEW QUERY" : accepted
-    ? (generation.execution_status || "ACCEPTED")
+    ? (generation.execution_status === "ACCEPTED" ? "EXECUTED" : "SAFE SQL")
     : modelUnavailable ? "MODEL UNAVAILABLE" : "FAILED";
   const tokenBadge = tokenTotal == null ? "tokens unavailable" : `${tokenTotal.toLocaleString()} tokens`;
   const badges = [body.operation, status, serverElapsed, `${attempts.length} attempt${attempts.length === 1 ? "" : "s"}`, tokenBadge];
@@ -151,6 +151,7 @@ function appendAssistant(body, elapsed) {
     : "";
   const responseMessage = body.explanation || body.message || "";
   fragment.querySelector(".response-note").textContent = [responseMessage, failureSummary].filter(Boolean).join(" ");
+  renderSemanticStatus(fragment, generation, explanatory || modelUnavailable);
   if (Object.keys(timings).length) {
     fragment.querySelector(".response-note").title = `Routing ${timings.routing || 0} ms · Planning ${timings.planning || 0} ms · Generation/validation/execution ${timings.generation_validation_execution || 0} ms`;
   }
@@ -177,6 +178,32 @@ function appendAssistant(body, elapsed) {
     send(correction, category);
   });
   article?.scrollIntoView({ behavior: "smooth", block: "end" });
+}
+
+function renderSemanticStatus(fragment, generation, hidden) {
+  const container = fragment.querySelector(".semantic-status");
+  if (!container || hidden) {
+    if (container) container.hidden = true;
+    return;
+  }
+  const attempts = generation.attempts || [];
+  const safetyPassed = attempts.some((attempt) => attempt.validation?.valid === true);
+  const executionPassed = generation.accepted === true && generation.execution_status === "ACCEPTED";
+  const items = [
+    ["Safety", safetyPassed ? "Passed" : "Failed", safetyPassed ? "pass" : "fail"],
+    ["Execution", executionPassed ? "Succeeded" : "Not completed", executionPassed ? "pass" : "fail"],
+    ["Correctness", "Not measured", "unknown"],
+  ];
+  items.forEach(([label, value, stateName]) => {
+    const item = document.createElement("div");
+    item.className = `status-card status-${stateName}`;
+    const heading = document.createElement("strong");
+    heading.textContent = label;
+    const result = document.createElement("span");
+    result.textContent = value;
+    item.append(heading, result);
+    container.append(item);
+  });
 }
 
 function renderAttempts(fragment, attempts) {
@@ -228,8 +255,71 @@ function renderModelContext(fragment, body, generation) {
     panel.hidden = true;
     return;
   }
-  fragment.querySelector(".context-summary")?.remove();
+  renderSchemaVisual(fragment.querySelector(".schema-visual"), modelContext);
   fragment.querySelector(".context-json").textContent = JSON.stringify(modelContext, null, 2);
+}
+
+function renderSchemaVisual(container, modelContext) {
+  if (!container) return;
+  const tables = modelContext.tables || modelContext.execution_context?.tables || {};
+  const tableGrid = document.createElement("div");
+  tableGrid.className = "schema-table-grid";
+  Object.entries(tables).forEach(([tableName, tableData]) => {
+    const card = document.createElement("section");
+    card.className = "schema-table-card";
+    const heading = document.createElement("h4");
+    heading.textContent = tableName;
+    const grain = document.createElement("p");
+    grain.textContent = tableData.grain || "grain not profiled";
+    const list = document.createElement("ul");
+    const columns = tableData.columns || {};
+    const primaryKeys = new Set(tableData.primary_key || []);
+    const relationshipKeys = new Set(tableData.relationship_keys || []);
+    const entries = Array.isArray(columns)
+      ? columns.map((name) => [name, {}])
+      : Object.entries(columns);
+    entries.forEach(([columnName, metadata]) => {
+      const item = document.createElement("li");
+      const name = document.createElement("span");
+      name.textContent = columnName;
+      const tags = document.createElement("span");
+      tags.className = "column-tags";
+      const roles = new Set(metadata.key_roles || []);
+      if (primaryKeys.has(columnName) || roles.has("PRIMARY_KEY")) tags.append(makeTag("PK"));
+      if (relationshipKeys.has(columnName) || roles.has("FOREIGN_KEY")) tags.append(makeTag("FK"));
+      if (metadata.type) tags.append(makeTag(metadata.type));
+      if (metadata.format) tags.append(makeTag(metadata.format));
+      item.append(name, tags);
+      list.append(item);
+    });
+    card.append(heading, grain, list);
+    tableGrid.append(card);
+  });
+  container.append(tableGrid);
+
+  const relationships = modelContext.relationships || [];
+  if (relationships.length) {
+    const relationshipList = document.createElement("div");
+    relationshipList.className = "relationship-list";
+    relationships.forEach((relationship) => {
+      const item = document.createElement("div");
+      item.className = "relationship-item";
+      item.textContent = `${relationship.left}  →  ${relationship.right}`;
+      const details = [relationship.cardinality, relationship.fanout_risk ? "fanout risk" : null]
+        .filter(Boolean)
+        .join(" · ");
+      if (details) item.append(makeTag(details));
+      relationshipList.append(item);
+    });
+    container.append(relationshipList);
+  }
+}
+
+function makeTag(value) {
+  const tag = document.createElement("small");
+  tag.className = "schema-tag";
+  tag.textContent = value;
+  return tag;
 }
 
 function renderTable(container, columns, rows) {
@@ -255,10 +345,26 @@ function showError(message) {
   appendAssistant({ operation: "ERROR", message, generation: { accepted: false, attempts: [] } }, 0);
 }
 
-function appendProgress(provider, model) {
+const pipelineStages = [
+  ["conversation", "Question"],
+  ["retrieval", "Retrieval"],
+  ["context_selection", "Context"],
+  ["grounding", "Grounding"],
+  ["generation_validation_execution", "SQL + validation + execution"],
+];
+
+function appendProgress(provider, model, contextMode) {
   const article = document.createElement("article");
   article.className = "message assistant-message progress-message";
-  article.innerHTML = '<div class="avatar">Q</div><div class="message-content"><p class="progress-stage">Queued…</p><p class="progress-detail"></p></div>';
+  article.innerHTML = '<div class="avatar">Q</div><div class="message-content"><p class="progress-stage">Queued…</p><div class="pipeline-tracker"></div><p class="progress-detail"></p></div>';
+  const tracker = article.querySelector(".pipeline-tracker");
+  pipelineStages.forEach(([stage, label]) => {
+    if (stage === "context_selection" && contextMode === "retrieval") return;
+    const step = document.createElement("span");
+    step.dataset.stage = stage;
+    step.textContent = label;
+    tracker.append(step);
+  });
   article.querySelector(".progress-detail").textContent = `${provider} · ${model}`;
   $("#messages").append(article);
   article.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -273,14 +379,24 @@ async function waitForJob(jobId, progress) {
   while (true) {
     const job = await api(`/api/chat/jobs/${jobId}`);
     const seconds = ((job.elapsed_ms || 0) / 1000).toFixed(1);
-    const stage = job.status === "queued" ? "Queued…" : "Generating and validating SQL…";
-    progress.querySelector(".progress-stage").textContent = stage;
-    progress.querySelector(".progress-detail").textContent = `${seconds}s elapsed · ${job.stage}`;
+    updatePipeline(progress, job.stage, job.status);
+    const label = job.status === "queued" ? "Queued…" : "Building and executing your query…";
+    progress.querySelector(".progress-stage").textContent = label;
+    progress.querySelector(".progress-detail").textContent = `${seconds}s elapsed`;
     if (job.status === "completed") return job.response;
     if (job.status === "cancelled") throw new Error("Request cancelled.");
     if (job.status === "failed") throw new Error(job.error || "Chat job failed.");
     await wait(500);
   }
+}
+
+function updatePipeline(progress, currentStage, jobStatus) {
+  const activeIndex = pipelineStages.findIndex(([stage]) => stage === currentStage);
+  progress.querySelectorAll(".pipeline-tracker span").forEach((step) => {
+    const index = pipelineStages.findIndex(([stage]) => stage === step.dataset.stage);
+    step.classList.toggle("complete", jobStatus === "completed" || (activeIndex >= 0 && index < activeIndex));
+    step.classList.toggle("active", jobStatus !== "completed" && index === activeIndex);
+  });
 }
 
 async function send(message, feedbackCategory = null) {
@@ -291,7 +407,8 @@ async function send(message, feedbackCategory = null) {
   const [provider, model] = $("#sqlModelSelect").value.split("|");
   const [contextProvider, contextModel] = $("#contextModelSelect").value.split("|");
   const started = performance.now();
-  const progress = appendProgress(provider, model);
+  const contextMode = $("#contextModeSelect").value;
+  const progress = appendProgress(provider, model, contextMode);
   state.cancelled = false;
   $("#cancelButton").hidden = false;
   try {
@@ -304,9 +421,9 @@ async function send(message, feedbackCategory = null) {
         evidence: $("#evidenceInput").value.trim() || null,
         provider,
         model,
-        context_provider: $("#contextModeSelect").value === "model1" ? contextProvider : null,
-        context_model: $("#contextModeSelect").value === "model1" ? contextModel : null,
-        context_mode: $("#contextModeSelect").value,
+        context_provider: contextMode === "model1" ? contextProvider : null,
+        context_model: contextMode === "model1" ? contextModel : null,
+        context_mode: contextMode,
         execute: true,
         max_rows: 100,
         feedback_category: feedbackCategory,

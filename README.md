@@ -49,6 +49,12 @@ The web application exposes both context modes and separate selectors for the co
 generator. In `model1` mode, each stage can use a different configured provider/model. In
 `retrieval` mode, the context-model selector is disabled and the Model 1 call is skipped.
 
+During each request, the interface displays live progress across conversation resolution, schema
+retrieval, optional context selection, deterministic grounding, and SQL generation/validation/
+execution. Completed responses separate SQL safety, execution success, and unmeasured semantic
+correctness. The verified context is rendered as readable table, column, key, type, date-format, and
+relationship cards, with the exact raw JSON still available on demand.
+
 ## Model responsibilities
 
 ### Shared hybrid retrieval
