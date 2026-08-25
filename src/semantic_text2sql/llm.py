@@ -896,7 +896,12 @@ Rejected normalized structures:
     dialect_rules = (
         "Use PostgreSQL 15 syntax. Never use SQLite-only functions such as IIF or STRFTIME."
         if dialect == "postgres"
-        else "Use SQLite syntax. Never use PostgreSQL-only functions."
+        else (
+            "Use SQLite syntax. Never use PostgreSQL-only functions. In a compound query "
+            "(UNION/UNION ALL/INTERSECT/EXCEPT), do not put branch-level ORDER BY or LIMIT "
+            "directly before the compound operator; wrap each ranked branch in a subquery/CTE "
+            "or use window functions."
+        )
     )
     style_rules = {
         "reasoning": (

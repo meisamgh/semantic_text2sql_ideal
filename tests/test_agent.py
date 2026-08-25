@@ -10,7 +10,9 @@ from semantic_text2sql.models import (
     ModelProvider,
     SchemaInfo,
     StrategyHints,
+    ValidationResult,
 )
+from semantic_text2sql.validator import repair_context
 
 
 class FakeModel:
@@ -62,6 +64,20 @@ def test_database_error_is_returned_to_model_for_focused_repair(registry) -> Non
     assert result.attempts[0].validation.code == "DATABASE_ERROR"
     assert "DATABASE_ERROR" in (model.feedback[1] or "")
     assert result.rows == [[100.0], [50.0], [20.0]]
+
+
+def test_sqlite_compound_order_error_gets_structural_repair_guidance() -> None:
+    feedback = repair_context(
+        ValidationResult(
+            valid=False,
+            code="DATABASE_ERROR",
+            message="ORDER BY clause should come after UNION ALL not before",
+        )
+    )
+
+    assert "branch-level ORDER BY/LIMIT" in feedback
+    assert "subquery" in feedback
+    assert "Do not repeat" in feedback
 
 
 def test_write_statement_is_rejected_before_execution(registry) -> None:  # type: ignore[no-untyped-def]

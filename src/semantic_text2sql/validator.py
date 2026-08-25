@@ -90,7 +90,21 @@ def validate_sql(
 
 
 def repair_context(result: ValidationResult) -> str:
-    return (f"Validation code: {result.code}\nValidation message: {result.message}")[:12_000]
+    guidance = ""
+    if (
+        result.code == "DATABASE_ERROR"
+        and "ORDER BY clause should come after" in result.message
+        and "not before" in result.message
+    ):
+        guidance = (
+            "\nRequired structural repair: SQLite does not allow branch-level ORDER BY/LIMIT "
+            "directly before a compound operator. Wrap each ranked branch in its own subquery "
+            "or CTE, or replace the compound query with window-function ranking. Do not repeat "
+            "the rejected compound-query structure."
+        )
+    return (
+        f"Validation code: {result.code}\nValidation message: {result.message}{guidance}"
+    )[:12_000]
 
 
 def _failure(
