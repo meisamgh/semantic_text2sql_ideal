@@ -50,6 +50,16 @@ def test_web_chat_application_is_served() -> None:
     assert script.status_code == 200
     assert 'api("/api/chat"' in script.text
     assert "renderTokenAccounting" in script.text
+    assert "const label = item.model;" in script.text
+    assert "`${item.provider} · ${item.model}`" not in script.text
+
+    sql_position = page.text.index('class="sql-panel"')
+    result_position = page.text.index('class="result-panel"')
+    validation_position = page.text.index('class="semantic-status"')
+    attempts_position = page.text.index('class="attempts-panel"')
+    tokens_position = page.text.index('class="token-panel"')
+    assert sql_position < result_position < validation_position
+    assert validation_position < attempts_position < tokens_position
 
 
 def test_chat_request_accepts_independent_context_and_sql_models() -> None:
@@ -65,6 +75,40 @@ def test_chat_request_accepts_independent_context_and_sql_models() -> None:
 
     assert (request.context_provider, request.context_model) == ("ollama", "qwen3.5:9b")
     assert (request.provider, request.model) == ("agentrouter", "gpt-5.6-sol")
+
+
+def test_retrieval_and_model1_are_distinct_request_paths() -> None:
+    retrieval = ChatRequest(
+        session_id="retrieval-test",
+        db_id="books",
+        message="Count the books",
+        context_mode="retrieval",
+    )
+    model1 = ChatRequest(
+        session_id="model1-test",
+        db_id="books",
+        message="Count the books",
+        context_mode="model1",
+        context_provider="agentrouter",
+        context_model="gpt-5.6-sol",
+    )
+
+    assert retrieval.context_mode == "retrieval"
+    assert retrieval.context_provider is None
+    assert retrieval.context_model is None
+    assert model1.context_mode == "model1"
+    assert model1.context_provider == "agentrouter"
+    assert model1.context_model == "gpt-5.6-sol"
+
+
+def test_retrieval_is_the_api_default() -> None:
+    request = ChatRequest(
+        session_id="default-path-test",
+        db_id="books",
+        message="Count the books",
+    )
+
+    assert request.context_mode == "retrieval"
 
 
 def test_chat_job_reports_progress_and_completion() -> None:

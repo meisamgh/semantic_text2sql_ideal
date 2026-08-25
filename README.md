@@ -368,7 +368,6 @@ Important environment variables:
 | `TEXT2SQL_RETRIEVAL_COLUMNS` | Approximate column budget per table | `5` |
 | `TEXT2SQL_SCHEMA_RERANKER_ENABLED` | Enable LightGBM column reranking | `true` |
 | `TEXT2SQL_SCHEMA_RERANKER_MODEL` | Versioned LightGBM artifact | `models/schema_reranker/v1/model.txt` |
-| `TEXT2SQL_CONTEXT_PLANNER_ENABLED` | Enable Model 1 | `true` |
 | `TEXT2SQL_CONTEXT_MODEL` | Optional Model 1 override | selected model |
 | `TEXT2SQL_SQL_MODEL` | Optional Model 2 override | selected model |
 | `TEXT2SQL_HISTORY_ENABLED` | Enable historical examples | `false` |

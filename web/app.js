@@ -47,7 +47,7 @@ function fillSelect(selector, items, valueKey, labelKey, preferred) {
 }
 
 function modelLabel(item) {
-  const label = `${item.provider} · ${item.model}`;
+  const label = item.model;
   return item.configured ? label : `${label} — unavailable`;
 }
 
@@ -62,7 +62,7 @@ function fillContextSelect(models) {
   for (const item of models) {
     const option = document.createElement("option");
     option.value = `${item.provider}|${item.model}`;
-    option.textContent = `Model 1 · ${modelLabel(item)}`;
+    option.textContent = modelLabel(item);
     option.disabled = item.configured === false;
     if (item.unavailable_reason) option.title = item.unavailable_reason;
     select.append(option);

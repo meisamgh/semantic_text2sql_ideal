@@ -686,7 +686,7 @@ class ChatRequest(StrictModel):
     context_model: str | None = Field(default=None, min_length=1, max_length=200)
     execute: bool = True
     max_rows: int = Field(default=100, ge=1, le=500)
-    context_mode: Literal["model1", "retrieval"] = "model1"
+    context_mode: Literal["model1", "retrieval"] = "retrieval"
     feedback_category: (
         Literal[
             "wrong_result",

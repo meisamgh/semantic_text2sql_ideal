@@ -426,13 +426,10 @@ def create_app(
             )
         planner_usage = TokenUsage()
         planner_call_used = False
-        planner_enabled = (
-            request.context_mode == "model1"
-            and os.environ.get(
-                "TEXT2SQL_CONTEXT_PLANNER_ENABLED", "true" if agent is None else "false"
-            ).casefold()
-            == "true"
-        )
+        # The selected web/API route is authoritative. ``retrieval`` must never
+        # call Model 1, while ``model1`` must not silently collapse into the
+        # retrieval-only arm because a custom SQL agent was injected.
+        planner_enabled = request.context_mode == "model1"
         planner_provider = request.context_provider or request.provider
         planner_model = (
             request.context_model or os.environ.get("TEXT2SQL_CONTEXT_MODEL") or request.model
