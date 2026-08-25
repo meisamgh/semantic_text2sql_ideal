@@ -152,6 +152,7 @@ function appendAssistant(body, elapsed) {
   const responseMessage = body.explanation || body.message || "";
   fragment.querySelector(".response-note").textContent = [responseMessage, failureSummary].filter(Boolean).join(" ");
   renderSemanticStatus(fragment, generation, explanatory || modelUnavailable);
+  renderTokenAccounting(fragment, body, generation);
   if (Object.keys(timings).length) {
     fragment.querySelector(".response-note").title = `Routing ${timings.routing || 0} ms · Planning ${timings.planning || 0} ms · Generation/validation/execution ${timings.generation_validation_execution || 0} ms`;
   }
@@ -178,6 +179,77 @@ function appendAssistant(body, elapsed) {
     send(correction, category);
   });
   article?.scrollIntoView({ behavior: "smooth", block: "end" });
+}
+
+function usageTotal(usage) {
+  if (!usage || (usage.input_tokens == null && usage.output_tokens == null)) return null;
+  return (usage.input_tokens || 0) + (usage.output_tokens || 0);
+}
+
+function sumKnown(values) {
+  if (values.some((value) => value == null)) return null;
+  return values.reduce((total, value) => total + value, 0);
+}
+
+function renderTokenAccounting(fragment, body, generation) {
+  const panel = fragment.querySelector(".token-panel");
+  const grid = fragment.querySelector(".token-grid");
+  const note = fragment.querySelector(".token-note");
+  if (!panel || !grid || !note) return;
+
+  const attempts = generation.attempts || [];
+  const telemetry = generation.telemetry || {};
+  const total = usageTotal(body.token_usage || generation.token_usage);
+  const context = telemetry.planner_call_used ? usageTotal(telemetry.planner_call) : 0;
+  const attemptTotals = attempts.map((attempt) => usageTotal(attempt.token_usage));
+  const sql = attempts.length ? sumKnown(attemptTotals) : 0;
+  const discardedAttempts = generation.accepted ? attemptTotals.slice(0, -1) : attemptTotals;
+  const wasted = discardedAttempts.length ? sumKnown(discardedAttempts) : 0;
+  const conversation = total == null || context == null || sql == null
+    ? null
+    : Math.max(0, total - context - sql);
+  const cacheRead = body.token_usage?.cache_read_tokens ?? generation.token_usage?.cache_read_tokens ?? null;
+  const cacheCreation = body.token_usage?.cache_creation_tokens ?? generation.token_usage?.cache_creation_tokens ?? null;
+
+  const rows = [
+    ["Total provider tokens", total],
+    ["Conversation resolver", conversation],
+    ["Context model", context],
+    ["SQL attempts", sql],
+    ["Discarded-attempt tokens", wasted],
+    ["Model context estimate", telemetry.selected_model_context_tokens ?? null],
+    ["Tokens avoided by pruning", telemetry.pruned_tokens ?? null],
+    ["Cache read", cacheRead],
+    ["Cache creation", cacheCreation],
+  ];
+  rows.forEach(([label, value]) => {
+    const item = document.createElement("div");
+    if (label === "Discarded-attempt tokens") item.className = "token-waste";
+    const heading = document.createElement("strong");
+    heading.textContent = label;
+    const amount = document.createElement("span");
+    amount.textContent = value == null ? "Unavailable" : Number(value).toLocaleString();
+    item.append(heading, amount);
+    grid.append(item);
+  });
+
+  attempts.forEach((attempt, index) => {
+    const item = document.createElement("div");
+    const discarded = !generation.accepted || index < attempts.length - 1;
+    if (discarded) item.className = "token-waste";
+    const heading = document.createElement("strong");
+    heading.textContent = `Attempt ${attempt.number || index + 1}${discarded ? " · discarded" : " · selected"}`;
+    const amount = document.createElement("span");
+    const value = attemptTotals[index];
+    amount.textContent = value == null ? "Unavailable" : Number(value).toLocaleString();
+    item.append(heading, amount);
+    grid.append(item);
+  });
+
+  note.textContent = total == null
+    ? "This provider did not return token usage; unavailable values are not treated as zero."
+    : "Discarded-attempt tokens are the measurable retry waste. Context and conversation tokens are shown separately because they may be necessary rather than wasted.";
+  panel.open = (wasted || 0) > 0;
 }
 
 function renderSemanticStatus(fragment, generation, hidden) {

@@ -55,6 +55,11 @@ execution. Completed responses separate SQL safety, execution success, and unmea
 correctness. The verified context is rendered as readable table, column, key, type, date-format, and
 relationship cards, with the exact raw JSON still available on demand.
 
+Token accounting reports total provider usage, conversation-resolution usage, context-model usage,
+SQL-attempt usage, every individual attempt, cache usage, estimated model-context size, and tokens
+avoided through pruning. Tokens consumed by discarded SQL attempts are identified as measurable
+retry waste. Missing provider usage is displayed as unavailable and is never converted to zero.
+
 ## Model responsibilities
 
 ### Shared hybrid retrieval

@@ -45,8 +45,10 @@ def test_web_chat_application_is_served() -> None:
     assert 'id="chatForm"' in page.text
     assert 'id="contextModelSelect"' in page.text
     assert 'id="sqlModelSelect"' in page.text
+    assert 'class="token-panel"' in page.text
     assert script.status_code == 200
     assert 'api("/api/chat"' in script.text
+    assert "renderTokenAccounting" in script.text
 
 
 def test_chat_request_accepts_independent_context_and_sql_models() -> None:
