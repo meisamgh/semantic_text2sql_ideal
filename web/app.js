@@ -9,12 +9,18 @@ const postSafetyOptimizationCodes = new Set([
   "OPTIMIZATION_CHANGED_RESULT",
   "OPTIMIZATION_EQUIVALENCE_UNPROVEN",
 ]);
+const postSafetyCodes = new Set(["DATABASE_ERROR", ...postSafetyOptimizationCodes]);
 
 function attemptOutcome(attempt) {
   const validation = attempt.validation || {};
   if (validation.valid === true) return "passed";
   if (postSafetyOptimizationCodes.has(validation.code)) return "not_selected";
   return "failed";
+}
+
+function attemptPassedSafety(attempt) {
+  const validation = attempt.validation || {};
+  return validation.valid === true || postSafetyCodes.has(validation.code);
 }
 
 async function api(path, options = {}) {
@@ -282,7 +288,7 @@ function renderSemanticStatus(fragment, generation, hidden) {
     return;
   }
   const attempts = generation.attempts || [];
-  const safetyPassed = attempts.some((attempt) => attemptOutcome(attempt) !== "failed");
+  const safetyPassed = attempts.some((attempt) => attemptPassedSafety(attempt));
   const executionPassed = generation.accepted === true && generation.execution_status === "ACCEPTED";
   const items = [
     ["Safety", safetyPassed ? "Passed" : "Failed", safetyPassed ? "pass" : "fail"],

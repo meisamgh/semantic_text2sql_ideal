@@ -53,6 +53,8 @@ def test_web_chat_application_is_served() -> None:
     assert "const label = item.model;" in script.text
     assert "`${item.provider} · ${item.model}`" not in script.text
     assert '"OPTIMIZATION_NOT_FASTER"' in script.text
+    assert '"DATABASE_ERROR"' in script.text
+    assert "attemptPassedSafety" in script.text
     assert '"Equivalence"' in script.text
     assert '"Performance"' in script.text
     assert '"NOT SELECTED"' in script.text
