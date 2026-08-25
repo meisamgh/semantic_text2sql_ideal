@@ -23,9 +23,8 @@ async function initialize() {
     const preferredModel = models.find((item) => item.configured);
     fillSelect("#databaseSelect", databases.filter((item) => item.configured && item.dialect === "sqlite"), "db_id", "db_id", null);
     const preferred = preferredModel && `${preferredModel.provider}|${preferredModel.model}`;
-    fillSelect("#contextModelSelect", models, (item) => `${item.provider}|${item.model}`, modelLabel, preferred);
+    fillContextSelect(models);
     fillSelect("#sqlModelSelect", models, (item) => `${item.provider}|${item.model}`, modelLabel, preferred);
-    updateContextModelState();
     if (!preferredModel) showError("No model can serve queries right now. Hover an entry in the model list to see why.");
   } catch (error) {
     $("#healthStatus").lastChild.textContent = " Offline";
@@ -52,12 +51,23 @@ function modelLabel(item) {
   return item.configured ? label : `${label} — unavailable`;
 }
 
-function updateContextModelState() {
-  const retrievalOnly = $("#contextModeSelect").value === "retrieval";
-  $("#contextModelSelect").disabled = retrievalOnly;
+function fillContextSelect(models) {
+  const select = $("#contextModelSelect");
+  select.replaceChildren();
+  const retrieval = document.createElement("option");
+  retrieval.value = "retrieval";
+  retrieval.textContent = "Hybrid retrieval only";
+  retrieval.selected = true;
+  select.append(retrieval);
+  for (const item of models) {
+    const option = document.createElement("option");
+    option.value = `${item.provider}|${item.model}`;
+    option.textContent = `Model 1 · ${modelLabel(item)}`;
+    option.disabled = item.configured === false;
+    if (item.unavailable_reason) option.title = item.unavailable_reason;
+    select.append(option);
+  }
 }
-
-$("#contextModeSelect").addEventListener("change", updateContextModelState);
 
 function formatSqlForDisplay(sql) {
   if (!sql || sql === "No SQL was accepted.") return sql;
@@ -477,9 +487,12 @@ async function send(message, feedbackCategory = null) {
   $("#sendButton").disabled = true;
   appendUser(message.trim());
   const [provider, model] = $("#sqlModelSelect").value.split("|");
-  const [contextProvider, contextModel] = $("#contextModelSelect").value.split("|");
+  const contextSelection = $("#contextModelSelect").value;
+  const contextMode = contextSelection === "retrieval" ? "retrieval" : "model1";
+  const [contextProvider, contextModel] = contextMode === "model1"
+    ? contextSelection.split("|")
+    : [null, null];
   const started = performance.now();
-  const contextMode = $("#contextModeSelect").value;
   const progress = appendProgress(provider, model, contextMode);
   state.cancelled = false;
   $("#cancelButton").hidden = false;

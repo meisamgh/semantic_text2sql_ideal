@@ -45,9 +45,9 @@ Read-only execution
 Final SQL, result, context JSON, and attempt history
 ```
 
-The web application exposes both context modes and separate selectors for the context model and SQL
-generator. In `model1` mode, each stage can use a different configured provider/model. In
-`retrieval` mode, the context-model selector is disabled and the Model 1 call is skipped.
+The web application has a **Context method** selector and a separate **SQL generator** selector.
+Choose `Hybrid retrieval only` to bypass Model 1, or choose any configured model to use it for
+context selection. The SQL generator is selected independently.
 
 During each request, the interface displays live progress across conversation resolution, schema
 retrieval, optional context selection, deterministic grounding, and SQL generation/validation/
