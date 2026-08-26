@@ -11,9 +11,10 @@ from semantic_text2sql.llm import (
     AgentRouterModel,
     GroqSQLModel,
     ModelError,
+    _prompt,
     ollama_model_status,
 )
-from semantic_text2sql.models import SchemaInfo, StrategyHints, TokenUsage
+from semantic_text2sql.models import ColumnInfo, SchemaInfo, StrategyHints, TableInfo, TokenUsage
 
 
 def _call(model: AgentRouterClaudeModel) -> tuple[str, int, TokenUsage]:
@@ -26,7 +27,13 @@ def _call(model: AgentRouterClaudeModel) -> tuple[str, int, TokenUsage]:
             schema=SchemaInfo(db_id="books", tables=[]),
             strategy=StrategyHints(mode="exact"),
             dialect="sqlite",
-            profile_context="No cached value profiles available.",
+            profile_context=json.dumps(
+                {
+                    "question": "List books",
+                    "dialect": "sqlite",
+                    "tables": {"books": {"columns": {"title": {"type": "TEXT"}}}},
+                }
+            ),
             previous_sql=None,
             feedback=None,
             rejected_shapes=[],
@@ -67,6 +74,134 @@ def test_agentrouter_uses_anthropic_messages_contract() -> None:
     assert "CORRECTNESS-FIRST EFFICIENCY RULES" in prompt
     assert "never use SELECT * unless" in prompt
     assert "prefer EXISTS" in prompt
+    assert "Retrieved live" not in prompt
+    assert "Strategy hint:" not in prompt
+    assert "storage_type" not in prompt
+    assert "observed_format" not in prompt
+    assert "METRIC DEPENDENCY RULES" not in prompt
+    assert "APPROVED FORMULAS:" not in prompt
+
+
+def test_prompt_adds_formula_guidance_only_when_context_contains_a_formula() -> None:
+    context = json.dumps(
+        {
+            "question": "Show unit price",
+            "dialect": "sqlite",
+            "tables": {
+                "transactions": {
+                    "columns": {
+                        "price": {"type": "REAL"},
+                        "amount": {"type": "INTEGER"},
+                    }
+                }
+            },
+            "approved_formulas": [
+                {
+                    "id": "unit_price",
+                    "operator": "DIVIDE",
+                    "arguments": ["transactions.price", "transactions.amount"],
+                    "zero_safe": True,
+                }
+            ],
+        }
+    )
+
+    prompt = _prompt(
+        "Show unit price",
+        None,
+        SchemaInfo(db_id="shop", tables=[]),
+        StrategyHints(mode="exact"),
+        "sqlite",
+        context,
+        None,
+        None,
+        [],
+        "reasoning",
+    )
+
+    assert "APPROVED FORMULAS:" in prompt
+    assert "zero-safe DIVIDE(a,b)" in prompt
+
+
+def test_prompt_builds_compact_schema_fallback_for_invalid_context() -> None:
+    schema = SchemaInfo(
+        db_id="books",
+        tables=[
+            TableInfo(
+                name="books",
+                create_sql="CREATE TABLE books (id INTEGER PRIMARY KEY, title TEXT)",
+                columns=[
+                    ColumnInfo(name="id", data_type="INTEGER", primary_key=True),
+                    ColumnInfo(name="title", data_type="TEXT"),
+                ],
+            )
+        ],
+    )
+
+    prompt = _prompt(
+        "List books",
+        None,
+        schema,
+        StrategyHints(mode="exact"),
+        "sqlite",
+        "No verified context available.",
+        None,
+        None,
+        [],
+        "reasoning",
+    )
+
+    assert '"books"' in prompt
+    assert '"title":{"type":"TEXT"}' in prompt
+    assert "Retrieved live" not in prompt
+
+
+def test_optimization_uses_dedicated_prompt_and_excludes_generation_context() -> None:
+    context = json.dumps(
+        {
+            "question": "List customers",
+            "dialect": "sqlite",
+            "tables": {
+                "customers": {
+                    "primary_key": ["customer_id"],
+                    "columns": {"customer_id": {"type": "INTEGER"}},
+                }
+            },
+            "business_context": "Customer-specific glossary prose",
+            "historical_examples": [
+                {"question": "Old example", "sql": "SELECT * FROM old_customers"}
+            ],
+        }
+    )
+
+    prompt = _prompt(
+        "Optimize the previous query",
+        "Unused evidence",
+        SchemaInfo(db_id="shop", tables=[]),
+        StrategyHints(mode="exact"),
+        "sqlite",
+        context,
+        "SELECT customer_id FROM customers",
+        (
+            "Optimize the previously accepted SQL without changing its columns, row semantics, "
+            "filters, aggregation, ordering, or result values. The replacement must be "
+            "result-equivalent and measurably faster.\nOriginal EXPLAIN plan:\nSCAN customers"
+        ),
+        ["unused-fingerprint"],
+        "reasoning",
+    )
+
+    assert prompt.startswith("You are a SQL query optimizer.")
+    assert "ACCEPTED_SQL:\nSELECT customer_id FROM customers" in prompt
+    assert "ORIGINAL_EXPLAIN:\nSCAN customers" in prompt
+    assert '"customers"' in prompt
+    assert "Return the accepted SQL unchanged" in prompt
+    assert "Question:" not in prompt
+    assert "CORRECTNESS-FIRST EFFICIENCY RULES" not in prompt
+    assert "HISTORICAL EXAMPLES" not in prompt
+    assert "old_customers" not in prompt
+    assert "Customer-specific glossary prose" not in prompt
+    assert "unused-fingerprint" not in prompt
 
 
 def test_agentrouter_fails_without_environment_key() -> None:

@@ -142,13 +142,15 @@ The web interface exposes this object under **Verified context sent to Model 2**
 
 ### Model 2: SQL generator
 
-Model 2 receives the question, dialect, selected live schema, verified context, optional trusted
-evidence, and focused repair information after a failure. It generates correctness-first efficient
-SQL: only required projections, early semantics-preserving filters, no unnecessary joins/CTEs/
-`DISTINCT`/repeated scans, `EXISTS` for filter-only relationships when appropriate, and safe
-pre-aggregation when a many-side join would multiply measures. These preferences never override
-the required outputs, filters, formulas, grain, ordering, or result semantics. It returns one SQL
-statement only:
+Model 2 receives the question, dialect, one authoritative verified-context object, optional trusted
+evidence, and focused repair information after a failure. The selected schema is not repeated in a
+second raw-schema section. Formula instructions appear only when the verified context contains an
+approved formula, and historical-example instructions appear only when an example was actually
+retrieved. Model 2 generates correctness-first efficient SQL: only required projections, early
+semantics-preserving filters, no unnecessary joins/CTEs/`DISTINCT`/repeated scans, `EXISTS` for
+filter-only relationships when appropriate, and safe pre-aggregation when a many-side join would
+multiply measures. These preferences never override the required outputs, filters, formulas, grain,
+ordering, or result semantics. It returns one SQL statement only:
 
 ```sql
 SELECT COUNT(*) AS customer_count
@@ -156,6 +158,19 @@ FROM customers;
 ```
 
 It does not return a semantic-plan JSON object, Markdown, commentary, or multiple alternatives.
+
+### Dedicated optimization prompt
+
+An `OPTIMIZE` conversation turn does not reuse the SQL-generation prompt. After the conservative
+SQLGlot simplifier is tried, the selected SQL model receives a narrow optimizer prompt containing
+only the accepted SQL, dialect, referenced tables/columns/relationships, approved formulas when
+present, and the original `EXPLAIN` plan. The original question, historical examples, glossary
+prose, generation strategies, and repair fingerprints are excluded so the optimizer cannot
+reinterpret the request.
+
+The optimizer must return the accepted SQL unchanged when no safe improvement exists. A rewrite is
+selected only after SQL safety validation, exact non-truncated result equivalence, and the existing
+measured-performance gate. Otherwise the previously accepted SQL remains the final query.
 
 ## Spider Model 1 A/B benchmark
 

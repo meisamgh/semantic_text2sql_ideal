@@ -857,32 +857,31 @@ def _prompt(
     rejected_shapes: list[str],
     generation_style: Literal["reasoning", "icl", "alternative"],
 ) -> str:
-    tables = "\n".join(
-        f"{table.name}("
-        + ", ".join(
-            f"{column.name} {column.data_type}" + (" PRIMARY KEY" if column.primary_key else "")
-            for column in table.columns
-        )
-        + ")"
-        for table in schema.tables
+    verified_context, context_payload = _verified_or_fallback_context(
+        profile_context,
+        schema,
+        question,
+        dialect,
     )
+    dialect_rules = _dialect_rules(dialect)
+    if previous_sql and _is_optimization_feedback(feedback):
+        return _optimization_prompt(
+            previous_sql,
+            dialect,
+            dialect_rules,
+            context_payload,
+            feedback,
+        )
     repair = ""
     if previous_sql or feedback:
-        optimization = bool(feedback and feedback.startswith("Optimize the previously accepted"))
-        heading = "OPTIMIZATION REQUEST" if optimization else "REPAIR REQUIRED"
-        sql_label = "Accepted SQL" if optimization else "Rejected SQL"
         instruction = (
-            "Rewrite only when the plan can be improved. Preserve exact semantics and output."
-            if optimization
-            else (
-                "Correct the cited error using the live schema. Produce a structurally different "
-                "query. Never repeat a rejected SQL structure or invent a replacement identifier."
-            )
+            "Correct the cited error using the live schema. Produce a structurally different "
+            "query. Never repeat a rejected SQL structure or invent a replacement identifier."
         )
         repair = f"""
 
-{heading}
-{sql_label}:
+REPAIR REQUIRED
+Rejected SQL:
 {previous_sql or "None"}
 
 Deterministic context:
@@ -893,81 +892,59 @@ Rejected normalized structures:
 
 {instruction}
 """
-    dialect_rules = (
-        "Use PostgreSQL 15 syntax. Never use SQLite-only functions such as IIF or STRFTIME."
-        if dialect == "postgres"
-        else (
-            "Use SQLite syntax. Never use PostgreSQL-only functions. In a compound query "
-            "(UNION/UNION ALL/INTERSECT/EXCEPT), do not put branch-level ORDER BY or LIMIT "
-            "directly before the compound operator; wrap each ranked branch in a subquery/CTE "
-            "or use window functions."
-        )
-    )
     style_rules = {
         "reasoning": (
-            "Derive the query from the requested output grain, joins, filters, aggregation, "
+            "Derive the query from the requested outputs, filters, grain, joins, aggregation, "
             "and ordering."
         ),
-        "icl": "Compile the authoritative semantic contract directly into SQL.",
+        "icl": "Use any supplied historical example only as an advisory SQL pattern.",
         "alternative": (
             "Seek a semantically equivalent but structurally different solution and re-check "
             "date, NULL, DISTINCT, and aggregation choices."
         ),
     }[generation_style]
+    formula_rules = ""
+    if context_payload.get("approved_formulas"):
+        formula_rules = """
+
+APPROVED FORMULAS:
+- Compile every relevant formula in VERIFIED_CONTEXT exactly from its listed operator and
+  arguments; do not substitute a plausible raw column.
+- In SQLite, zero-safe DIVIDE(a,b) means CAST(a AS REAL) / NULLIF(b, 0).
+"""
+    historical_rules = ""
+    if context_payload.get("historical_examples"):
+        historical_rules = """
+
+HISTORICAL EXAMPLES:
+- Examples in VERIFIED_CONTEXT are advisory patterns only. They never override the current
+  question, trusted evidence, selected schema, relationships, physical formats, or formulas.
+"""
     return f"""You are Model 2, the SQL reasoner and generator. Return exactly one safe {dialect}
 SELECT or WITH...SELECT statement. Return SQL only: no JSON, markdown, comments, explanation, or
 alternative queries.
-The original question and trusted evidence are authoritative. Use only identifiers in the live
-schema. Verify table ownership for every column and use only listed relationships. CTE output
-aliases are allowed when they are defined by that CTE. {dialect_rules}
-Candidate strategy: {style_rules}
+The question and trusted evidence are authoritative. Use only tables, columns, and relationships
+in VERIFIED_CONTEXT; aliases created inside the SQL are allowed. {dialect_rules}
+Generation approach: {style_rules}
 
 CORRECTNESS-FIRST EFFICIENCY RULES:
-- First satisfy the exact requested outputs, filters, metric definitions, grain, ordering, and
-  result semantics. Never trade correctness for an apparently faster query.
-- Project only columns required for outputs, filters, joins, formulas, grouping, and ordering;
-  never use SELECT * unless the question explicitly requests every column.
-- Apply selective filters as early as semantics safely allow.
-- Avoid unnecessary joins, CTEs, DISTINCT operations, repeated scans, and sorting.
+- Preserve the requested outputs, filters, formulas, grain, ordering, and result semantics.
+- Project only required columns; never use SELECT * unless every column is explicitly requested.
+- Apply selective filters early when semantics allow, and avoid unnecessary joins, CTEs,
+  DISTINCT operations, repeated scans, and sorting.
 - When a related table is needed only to test eligibility, prefer EXISTS if it preserves the
-  requested output grain and avoids fanout.
-- When joining a many-side relation would multiply a measure, pre-aggregate that relation at the
-  required join grain when doing so preserves the question's semantics.
-- Prefer direct range predicates over wrapping indexed or partition-like filter columns in
-  functions when the verified physical format supports an equivalent direct predicate.
+  requested grain; pre-aggregate a many-side table before joining when necessary to prevent
+  measure multiplication. DISTINCT is not a general fanout repair.
+- Prefer a direct range predicate when the verified physical format supports an equivalent one.
 
-PHYSICAL STORAGE RULES ARE AUTHORITATIVE:
-- Choose SQL functions from storage_type, observed_format, and safe_operations—not semantic_type.
-- semantic_type describes business meaning only; it does not imply native database storage.
-- For observed_format=YYYYMM, use the listed SUBSTR operations. Never use STRFTIME, date(), or
-  datetime coercion on that column.
-- If a required physical operation is unclear, do not invent a conversion.
-
-METRIC DEPENDENCY RULES ARE AUTHORITATIVE:
-- Infer the requested analytical operation from the question and compile its complete metric
-  dependency chain directly into SQL.
-- Never replace the input measure, aggregation function, grain, selection metric, partition, or
-  final operation with a plausible alternative.
-- Give each intermediate aggregation, derived metric, and final operation a clear SQL projection
-  alias so deterministic lineage validation remains inspectable.
-- Approved formulas in VerifiedContext override lexical guesses. Compile them literally; never
-  replace them with a raw input column or an
-  algebraic simplification. In SQLite, zero-safe DIVIDE(a,b) means
-  CAST(a AS REAL) / NULLIF(b, 0).
-
-The strategy hint is advisory. Exact relational filters remain authoritative. Do not use vector or
-Levenshtein functions unless they exist in the live schema and the question explicitly requires
-semantic or fuzzy matching. Otherwise use conservative exact SQL predicates.
-
-JOIN CARDINALITY RULE:
-- For a cached ONE_TO_MANY relationship, joining child rows can repeat parent-side measures.
-- Aggregate the child side first, or use EXISTS when child columns are used only for filtering.
-- DISTINCT is not a general repair for a grain-changing join.
-
-TEXT AND CATEGORICAL EXAMPLE RULE:
-- example_values are safe observed database examples for grounding spelling, case, and storage form.
-- They are not an exhaustive allowed-value list. Preserve explicit user literals when compatible;
-  do not invent a mapping that the question or examples do not support.
+VERIFIED CONTEXT RULES:
+- `type` is the physical database type. If `format` is present, it is the authoritative stored
+  representation and SQL operations must be compatible with it.
+- For SQLite format `YYYYMM`, use SUBSTR(column, 1, 4) for year and SUBSTR(column, 5, 2) for month;
+  do not apply STRFTIME, date(), or datetime() to that value.
+- `example_values` show observed spelling, case, and storage form; they are not an exhaustive list.
+- Preserve compatible explicit user literals. Do not invent a value mapping or physical conversion.
+{formula_rules}{historical_rules}
 
 Question:
 {question}
@@ -975,13 +952,108 @@ Question:
 Trusted evidence:
 {evidence or "None"}
 
-Strategy hint:
-{strategy.model_dump_json(indent=2)}
-
-Retrieved live {dialect} schema (table retrieval first, then columns):
-{tables}
-
-VERIFIED CONTEXT (grounded schema, keys, grain, relationships, glossary, and conditional metadata):
-{profile_context}
+VERIFIED_CONTEXT:
+{verified_context}
 {repair}
+"""
+
+
+def _verified_or_fallback_context(
+    profile_context: str,
+    schema: SchemaInfo,
+    question: str,
+    dialect: Literal["sqlite", "postgres"],
+) -> tuple[str, dict[str, object]]:
+    """Use the authoritative context once; synthesize a compact fallback for direct callers."""
+    try:
+        parsed = json.loads(profile_context)
+    except (TypeError, ValueError):
+        parsed = None
+    if isinstance(parsed, dict) and isinstance(parsed.get("tables"), dict):
+        return profile_context.strip(), cast(dict[str, object], parsed)
+
+    fallback: dict[str, object] = {
+        "question": question,
+        "dialect": dialect,
+        "tables": {
+            table.name: {
+                "primary_key": [column.name for column in table.columns if column.primary_key],
+                "columns": {
+                    column.name: {"type": column.data_type} for column in table.columns
+                },
+            }
+            for table in schema.tables
+        },
+        "relationships": [
+            {
+                "left": f"{item.from_table}.{item.from_column}",
+                "right": f"{item.to_table}.{item.to_column}",
+            }
+            for item in schema.relationships
+        ],
+    }
+    return json.dumps(fallback, separators=(",", ":")), fallback
+
+
+def _is_optimization_feedback(feedback: str | None) -> bool:
+    return bool(feedback and feedback.startswith("Optimize the previously accepted SQL"))
+
+
+def _dialect_rules(dialect: Literal["sqlite", "postgres"]) -> str:
+    if dialect == "postgres":
+        return "Use PostgreSQL 15 syntax. Never use SQLite-only functions such as IIF or STRFTIME."
+    return (
+        "Use SQLite syntax. Never use PostgreSQL-only functions. In a compound query "
+        "(UNION/UNION ALL/INTERSECT/EXCEPT), do not put branch-level ORDER BY or LIMIT "
+        "directly before the compound operator; wrap each ranked branch in a subquery/CTE "
+        "or use window functions."
+    )
+
+
+def _optimization_prompt(
+    accepted_sql: str,
+    dialect: Literal["sqlite", "postgres"],
+    dialect_rules: str,
+    context_payload: dict[str, object],
+    feedback: str | None,
+) -> str:
+    """Build a narrow optimizer prompt that cannot reinterpret the user's question."""
+    optimizer_context = {
+        key: context_payload[key]
+        for key in ("tables", "relationships", "approved_formulas")
+        if context_payload.get(key)
+    }
+    explain_marker = "Original EXPLAIN plan:\n"
+    explain_plan = "Unavailable"
+    if feedback and explain_marker in feedback:
+        explain_plan = feedback.split(explain_marker, 1)[1].strip() or "Unavailable"
+    return f"""You are a SQL query optimizer. Optimize the accepted {dialect} SQL only when a
+meaningful physical or structural improvement is possible. Return exactly one SQL statement.
+Return SQL only: no JSON, markdown, comments, explanation, alternatives, or surrounding text.
+Return the accepted SQL unchanged when no safe improvement exists. {dialect_rules}
+
+INVARIANTS:
+- Preserve output column count, names, order, result rows, result values, and meaningful ordering.
+- Preserve every filter, formula, aggregation, grouping level, grain, ranking, and LIMIT.
+- Use only tables, columns, and relationships in REFERENCED_CONTEXT; SQL aliases are allowed.
+- Do not add DISTINCT to conceal join fanout or remove required NULL/zero-division handling.
+
+PREFERRED IMPROVEMENTS:
+- Remove unnecessary CTEs, subqueries, repeated scans, sorting, and projections.
+- Apply selective filters earlier when doing so preserves exact results.
+- Use EXISTS for filter-only relationships when it preserves output and grain.
+- Pre-aggregate a many-side table only when it preserves exact results and prevents fanout.
+- Prefer index-friendly predicates when compatible with the verified physical type and format.
+
+DIALECT:
+{dialect}
+
+ACCEPTED_SQL:
+{accepted_sql}
+
+REFERENCED_CONTEXT:
+{json.dumps(optimizer_context, separators=(",", ":"))}
+
+ORIGINAL_EXPLAIN:
+{explain_plan}
 """
