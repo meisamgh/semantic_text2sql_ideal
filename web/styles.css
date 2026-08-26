@@ -57,18 +57,15 @@ details textarea { margin-top: 10px; resize: vertical; }
 .badge { padding: 4px 8px; border-radius: 99px; background: #e4eee8; color: var(--green); font-size: 11px; font-weight: 700; }
 .badge.error { background: #f6ded9; color: var(--danger); }
 .response-note { color: var(--muted); font-size: 13px; }
-.semantic-status { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 12px 0; }
-.status-card { display: grid; gap: 4px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
-.status-card strong { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
-.status-card span { color: var(--ink); font-size: 12px; font-weight: 750; }
-.status-card::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #9aa39e; }
-.status-card.status-pass::before { background: var(--green-2); box-shadow: 0 0 0 3px rgba(35,106,81,.1); }
-.status-card.status-fail::before { background: var(--danger); box-shadow: 0 0 0 3px rgba(164,63,53,.1); }
-.status-card.status-unknown::before { background: #c5923d; box-shadow: 0 0 0 3px rgba(197,146,61,.1); }
 .sql-panel, .result-panel, .context-panel, .attempts-panel, .token-panel { overflow: hidden; margin-top: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); box-shadow: var(--shadow); }
 .panel-header { display: flex; justify-content: space-between; align-items: center; min-height: 40px; padding: 0 14px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .09em; }
 .copy-button { border: 0; background: transparent; color: var(--green-2); font-size: 12px; font-weight: 700; }
 pre { margin: 0; padding: 16px; overflow-x: auto; background: #17231e; color: #dff3e8; font: 12px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.sql-keyword { color: #8fc7ff; font-weight: 750; }
+.sql-function { color: #ffd479; }
+.sql-string { color: #9ee493; }
+.sql-number { color: #ffad7d; }
+.sql-comment { color: #82958c; font-style: italic; }
 .table-wrap { overflow: auto; max-height: 390px; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { padding: 11px 14px; border-bottom: 1px solid #ebe7db; text-align: left; white-space: nowrap; }
@@ -150,7 +147,6 @@ th { position: sticky; top: 0; background: #f1eee5; color: var(--muted); font-si
   .composer { left: 12px; right: 12px; bottom: 10px; }
   .user-message .bubble { max-width: 88%; }
   .feedback-form { grid-template-columns: 1fr; }
-  .semantic-status { grid-template-columns: 1fr; }
   .token-grid { grid-template-columns: 1fr; }
   .schema-table-grid { grid-template-columns: 1fr; }
   .correction-button { min-height: 40px; }

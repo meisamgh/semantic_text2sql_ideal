@@ -143,7 +143,12 @@ The web interface exposes this object under **Verified context sent to Model 2**
 ### Model 2: SQL generator
 
 Model 2 receives the question, dialect, selected live schema, verified context, optional trusted
-evidence, and focused repair information after a failure. It returns one SQL statement only:
+evidence, and focused repair information after a failure. It generates correctness-first efficient
+SQL: only required projections, early semantics-preserving filters, no unnecessary joins/CTEs/
+`DISTINCT`/repeated scans, `EXISTS` for filter-only relationships when appropriate, and safe
+pre-aggregation when a many-side join would multiply measures. These preferences never override
+the required outputs, filters, formulas, grain, ordering, or result semantics. It returns one SQL
+statement only:
 
 ```sql
 SELECT COUNT(*) AS customer_count

@@ -63,6 +63,10 @@ def test_agentrouter_uses_anthropic_messages_contract() -> None:
     assert captured["path"] == "/v1/messages"
     assert captured["key"] == "test-key"
     assert captured["body"]["model"] == "claude-opus-5"  # type: ignore[index]
+    prompt = captured["body"]["messages"][0]["content"]  # type: ignore[index]
+    assert "CORRECTNESS-FIRST EFFICIENCY RULES" in prompt
+    assert "never use SELECT * unless" in prompt
+    assert "prefer EXISTS" in prompt
 
 
 def test_agentrouter_fails_without_environment_key() -> None:

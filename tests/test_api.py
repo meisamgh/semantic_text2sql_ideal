@@ -53,19 +53,15 @@ def test_web_chat_application_is_served() -> None:
     assert "const label = item.model;" in script.text
     assert "`${item.provider} · ${item.model}`" not in script.text
     assert '"OPTIMIZATION_NOT_FASTER"' in script.text
-    assert '"DATABASE_ERROR"' in script.text
-    assert "attemptPassedSafety" in script.text
-    assert '"Equivalence"' in script.text
-    assert '"Performance"' in script.text
+    assert 'class="semantic-status"' not in page.text
+    assert "renderHighlightedSql" in script.text
     assert '"NOT SELECTED"' in script.text
 
     sql_position = page.text.index('class="sql-panel"')
     result_position = page.text.index('class="result-panel"')
-    validation_position = page.text.index('class="semantic-status"')
     attempts_position = page.text.index('class="attempts-panel"')
     tokens_position = page.text.index('class="token-panel"')
-    assert sql_position < result_position < validation_position
-    assert validation_position < attempts_position < tokens_position
+    assert sql_position < result_position < attempts_position < tokens_position
 
 
 def test_chat_request_accepts_independent_context_and_sql_models() -> None:

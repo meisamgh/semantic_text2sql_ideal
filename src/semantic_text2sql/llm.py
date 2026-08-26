@@ -922,6 +922,20 @@ schema. Verify table ownership for every column and use only listed relationship
 aliases are allowed when they are defined by that CTE. {dialect_rules}
 Candidate strategy: {style_rules}
 
+CORRECTNESS-FIRST EFFICIENCY RULES:
+- First satisfy the exact requested outputs, filters, metric definitions, grain, ordering, and
+  result semantics. Never trade correctness for an apparently faster query.
+- Project only columns required for outputs, filters, joins, formulas, grouping, and ordering;
+  never use SELECT * unless the question explicitly requests every column.
+- Apply selective filters as early as semantics safely allow.
+- Avoid unnecessary joins, CTEs, DISTINCT operations, repeated scans, and sorting.
+- When a related table is needed only to test eligibility, prefer EXISTS if it preserves the
+  requested output grain and avoids fanout.
+- When joining a many-side relation would multiply a measure, pre-aggregate that relation at the
+  required join grain when doing so preserves the question's semantics.
+- Prefer direct range predicates over wrapping indexed or partition-like filter columns in
+  functions when the verified physical format supports an equivalent direct predicate.
+
 PHYSICAL STORAGE RULES ARE AUTHORITATIVE:
 - Choose SQL functions from storage_type, observed_format, and safe_operations—not semantic_type.
 - semantic_type describes business meaning only; it does not imply native database storage.

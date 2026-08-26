@@ -486,7 +486,7 @@ def create_app(
             proposed_tables = context_request.tables
         planning_ms = round((perf_counter() - planning_started) * 1_000)
         generation_started = perf_counter()
-        set_session_stage(request.session_id, "generation_validation_execution")
+        set_session_stage(request.session_id, "generation")
         generation_request = GenerateRequest(
             db_id=request.db_id,
             question=pending.resolved_question,
@@ -505,7 +505,10 @@ def create_app(
             planner_token_usage=planner_usage,
             historical_examples=historical_examples,
         )
-        generated = await active_agent.generate(generation_request)
+        generated = await active_agent.generate(
+            generation_request,
+            progress=lambda stage: set_session_stage(request.session_id, stage),
+        )
         generation_ms = round((perf_counter() - generation_started) * 1_000)
         historical_attempted = (
             os.environ.get("TEXT2SQL_HISTORY_ENABLED", "false").casefold() == "true"

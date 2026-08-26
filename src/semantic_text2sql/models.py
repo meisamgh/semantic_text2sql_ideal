@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
+
+from semantic_text2sql.sql_formatting import format_sql_for_display
 
 DEFAULT_OLLAMA_MODEL = "qwen3.5:9b"
 GROQ_QWEN_MODEL = "qwen/qwen3.6-27b"
@@ -495,7 +497,10 @@ class Attempt(StrictModel):
 
 
 class OptimizationEvidence(StrictModel):
-    status: Literal["optimized", "equivalent_not_faster", "rejected"]
+    optimizer: Literal["sqlglot", "model2"] = "model2"
+    status: Literal[
+        "optimized", "equivalent_not_faster", "no_structural_change", "rejected"
+    ]
     baseline_explain: list[str] = Field(default_factory=list)
     candidate_explain: list[str] = Field(default_factory=list)
     baseline_timings_ms: list[float] = Field(default_factory=list)
@@ -643,6 +648,13 @@ class GenerateResponse(StrictModel):
     schema_selection: SchemaSelection | None = None
     semantic_contract: SemanticContract | None = None
     sql: str | None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def formatted_sql(self) -> str | None:
+        """Pretty SQL for presentation; ``sql`` remains the executed statement."""
+        return format_sql_for_display(self.sql, self.dialect)
+
     accepted: bool
     execution_status: Literal["NOT_EXECUTED", "EXECUTABLE", "ACCEPTED"] = "NOT_EXECUTED"
     attempts: list[Attempt] = Field(default_factory=list, max_length=4)

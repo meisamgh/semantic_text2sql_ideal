@@ -9,18 +9,12 @@ const postSafetyOptimizationCodes = new Set([
   "OPTIMIZATION_CHANGED_RESULT",
   "OPTIMIZATION_EQUIVALENCE_UNPROVEN",
 ]);
-const postSafetyCodes = new Set(["DATABASE_ERROR", ...postSafetyOptimizationCodes]);
 
 function attemptOutcome(attempt) {
   const validation = attempt.validation || {};
   if (validation.valid === true) return "passed";
   if (postSafetyOptimizationCodes.has(validation.code)) return "not_selected";
   return "failed";
-}
-
-function attemptPassedSafety(attempt) {
-  const validation = attempt.validation || {};
-  return validation.valid === true || postSafetyCodes.has(validation.code);
 }
 
 async function api(path, options = {}) {
@@ -132,6 +126,41 @@ function formatSqlForDisplay(sql) {
   return formatted;
 }
 
+const sqlKeywords = new Set([
+  "ALL", "AND", "AS", "ASC", "BETWEEN", "BY", "CASE", "CAST", "CROSS", "DESC",
+  "DISTINCT", "ELSE", "END", "EXCEPT", "EXISTS", "FROM", "FULL", "GROUP", "HAVING",
+  "IN", "INNER", "INTERSECT", "IS", "JOIN", "LEFT", "LIKE", "LIMIT", "NOT", "NULL",
+  "OFFSET", "ON", "OR", "ORDER", "OUTER", "OVER", "PARTITION", "RIGHT", "SELECT", "THEN",
+  "UNION", "WHEN", "WHERE", "WINDOW", "WITH",
+]);
+
+const sqlFunctions = new Set([
+  "AVG", "COALESCE", "COUNT", "DATE", "DATETIME", "IIF", "MAX", "MIN", "NULLIF",
+  "ROUND", "ROW_NUMBER", "STRFTIME", "SUBSTR", "SUM", "TOTAL",
+]);
+
+function renderHighlightedSql(element, sql) {
+  element.replaceChildren();
+  const tokens = sql.match(/--[^\n]*|\/\*[\s\S]*?\*\/|'(?:''|[^'])*'|"(?:""|[^"])*"|`(?:``|[^`])*`|\b\d+(?:\.\d+)?\b|\b[A-Za-z_][A-Za-z0-9_$]*\b|[^A-Za-z0-9_]+/g) || [sql];
+  tokens.forEach((token) => {
+    let className = "";
+    const upper = token.toUpperCase();
+    if (token.startsWith("--") || token.startsWith("/*")) className = "sql-comment";
+    else if (token.startsWith("'") || token.startsWith('"') || token.startsWith("`")) className = "sql-string";
+    else if (/^\d/.test(token)) className = "sql-number";
+    else if (sqlKeywords.has(upper)) className = "sql-keyword";
+    else if (sqlFunctions.has(upper)) className = "sql-function";
+    if (!className) {
+      element.append(document.createTextNode(token));
+      return;
+    }
+    const span = document.createElement("span");
+    span.className = className;
+    span.textContent = token;
+    element.append(span);
+  });
+}
+
 function appendUser(message) {
   $("#emptyState").hidden = true;
   const article = document.createElement("article");
@@ -180,7 +209,6 @@ function appendAssistant(body, elapsed) {
     : "";
   const responseMessage = body.explanation || body.message || "";
   fragment.querySelector(".response-note").textContent = [responseMessage, failureSummary].filter(Boolean).join(" ");
-  renderSemanticStatus(fragment, generation, explanatory || modelUnavailable);
   renderTokenAccounting(fragment, body, generation);
   if (Object.keys(timings).length) {
     fragment.querySelector(".response-note").title = `Routing ${timings.routing || 0} ms · Planning ${timings.planning || 0} ms · Generation/validation/execution ${timings.generation_validation_execution || 0} ms`;
@@ -191,7 +219,8 @@ function appendAssistant(body, elapsed) {
   }
   renderAttempts(fragment, attempts);
   const sql = generation.sql || "No SQL was accepted.";
-  fragment.querySelector("code").textContent = formatSqlForDisplay(sql);
+  const displaySql = generation.formatted_sql || formatSqlForDisplay(sql);
+  renderHighlightedSql(fragment.querySelector("code"), displaySql);
   fragment.querySelector(".copy-button").addEventListener("click", (event) => {
     navigator.clipboard.writeText(sql);
     event.currentTarget.textContent = "Copied";
@@ -281,46 +310,6 @@ function renderTokenAccounting(fragment, body, generation) {
   panel.open = (wasted || 0) > 0;
 }
 
-function renderSemanticStatus(fragment, generation, hidden) {
-  const container = fragment.querySelector(".semantic-status");
-  if (!container || hidden) {
-    if (container) container.hidden = true;
-    return;
-  }
-  const attempts = generation.attempts || [];
-  const safetyPassed = attempts.some((attempt) => attemptPassedSafety(attempt));
-  const executionPassed = generation.accepted === true && generation.execution_status === "ACCEPTED";
-  const items = [
-    ["Safety", safetyPassed ? "Passed" : "Failed", safetyPassed ? "pass" : "fail"],
-    ["Execution", executionPassed ? "Succeeded" : "Not completed", executionPassed ? "pass" : "fail"],
-  ];
-  const optimization = generation.optimization || null;
-  if (optimization) {
-    const equivalent = optimization.result_equivalent === true;
-    items.push([
-      "Equivalence",
-      equivalent ? "Passed" : "Not proven",
-      equivalent ? "pass" : "unknown",
-    ]);
-    items.push([
-      "Performance",
-      optimization.status === "optimized" ? "Improved" : "Not faster",
-      optimization.status === "optimized" ? "pass" : "unknown",
-    ]);
-  }
-  items.push(["Correctness", "Not measured", "unknown"]);
-  items.forEach(([label, value, stateName]) => {
-    const item = document.createElement("div");
-    item.className = `status-card status-${stateName}`;
-    const heading = document.createElement("strong");
-    heading.textContent = label;
-    const result = document.createElement("span");
-    result.textContent = value;
-    item.append(heading, result);
-    container.append(item);
-  });
-}
-
 function renderAttempts(fragment, attempts) {
   const panel = fragment.querySelector(".attempts-panel");
   const list = fragment.querySelector(".attempts-list");
@@ -360,7 +349,7 @@ function renderAttempts(fragment, attempts) {
       const sql = document.createElement("pre");
       const sqlCode = document.createElement("code");
       sqlCode.className = "language-sql";
-      sqlCode.textContent = formatSqlForDisplay(attempt.sql);
+      renderHighlightedSql(sqlCode, formatSqlForDisplay(attempt.sql));
       sql.append(sqlCode);
       item.append(sql);
     }
@@ -471,7 +460,8 @@ const pipelineStages = [
   ["retrieval", "Retrieval"],
   ["context_selection", "Context"],
   ["grounding", "Grounding"],
-  ["generation_validation_execution", "SQL + validation + execution"],
+  ["generation", "Generate SQL"],
+  ["validation", "Validate"],
 ];
 
 function appendProgress(provider, model, contextMode) {
@@ -512,7 +502,12 @@ async function waitForJob(jobId, progress) {
 }
 
 function updatePipeline(progress, currentStage, jobStatus) {
-  const activeIndex = pipelineStages.findIndex(([stage]) => stage === currentStage);
+  // Optimization and execution still run internally, but the compact user-facing
+  // path intentionally ends at validation.
+  const visibleStage = ["optimization", "execution"].includes(currentStage)
+    ? "validation"
+    : currentStage;
+  const activeIndex = pipelineStages.findIndex(([stage]) => stage === visibleStage);
   progress.querySelectorAll(".pipeline-tracker span").forEach((step) => {
     const index = pipelineStages.findIndex(([stage]) => stage === step.dataset.stage);
     step.classList.toggle("complete", jobStatus === "completed" || (activeIndex >= 0 && index < activeIndex));

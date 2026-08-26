@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import hashlib
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from statistics import median
 from time import perf_counter_ns
 
 from sqlglot import exp, parse_one
 from sqlglot.errors import ParseError
+from sqlglot.optimizer.simplify import simplify
 
 from semantic_text2sql.context import (
     MAX_CONTEXT_EXPANSIONS,
@@ -89,7 +90,12 @@ class TextToSQLAgent:
             truncated=truncated,
         )
 
-    async def generate(self, request: GenerateRequest) -> GenerateResponse:
+    async def generate(
+        self,
+        request: GenerateRequest,
+        *,
+        progress: Callable[[str], None] | None = None,
+    ) -> GenerateResponse:
         strategy = route_question(request.question)
         semantic_contract = request.semantic_contract or SemanticContract()
         try:
@@ -214,7 +220,64 @@ class TextToSQLAgent:
         executed_columns: list[str] = []
         executed_rows: list[list[object]] = []
         executed_truncated = False
-        for number in range(1, request.max_attempts + 1):
+
+        # In explicit optimization mode, try a deterministic SQLGlot rewrite before
+        # spending another model call. Formatting-only changes are ignored. The rewrite
+        # is accepted only through the same equivalence and measured-performance gates
+        # used for model-generated optimization candidates.
+        if (
+            request.optimization_required
+            and request.previous_sql
+            and baseline_validation is not None
+            and baseline_validation.valid
+        ):
+            sqlglot_candidate = _sqlglot_optimization_candidate(
+                request.previous_sql, dialect=request.dialect
+            )
+            if sqlglot_candidate and normalize_sql(
+                sqlglot_candidate, dialect=request.dialect
+            ) != normalize_sql(request.previous_sql, dialect=request.dialect):
+                validation = validate_sql(sqlglot_candidate, schema, dialect=request.dialect)
+                if validation.valid:
+                    try:
+                        validation = _validate_result_equivalence(
+                            database,
+                            request.db_id,
+                            request.previous_sql,
+                            sqlglot_candidate,
+                            validation,
+                            max_rows=max(request.max_rows, 1_000),
+                        )
+                        if validation.valid:
+                            optimization_evidence = _benchmark_optimization(
+                                database,
+                                request.db_id,
+                                request.previous_sql,
+                                sqlglot_candidate,
+                                baseline_validation.explain_plan,
+                                validation.explain_plan,
+                                max_rows=max(request.max_rows, 1_000),
+                            ).model_copy(update={"optimizer": "sqlglot"})
+                            if optimization_evidence.status == "optimized":
+                                final_sql = sqlglot_candidate
+                                if request.execute:
+                                    (
+                                        executed_columns,
+                                        executed_rows,
+                                        executed_truncated,
+                                    ) = database.execute(
+                                        request.db_id,
+                                        final_sql,
+                                        max_rows=request.max_rows,
+                                    )
+                    except DatabaseError:
+                        # A deterministic candidate is optional. The bounded Model 2
+                        # optimizer remains the fallback when it cannot be evaluated.
+                        pass
+
+        for number in range(1, request.max_attempts + 1) if final_sql is None else ():
+            if progress:
+                progress("generation")
             try:
                 generated = await self.model.generate(
                     model=request.model,
@@ -239,6 +302,8 @@ class TextToSQLAgent:
             sql = clean_model_sql(raw_sql)
             normalized = normalize_sql(sql, dialect=request.dialect)
             fingerprint = hashlib.sha256(normalized.encode()).hexdigest()
+            if progress:
+                progress("validation")
             validation = validate_sql(sql, schema, dialect=request.dialect)
             if validation.valid:
                 validation = validation.model_copy(
@@ -280,7 +345,76 @@ class TextToSQLAgent:
                             ),
                         }
                     )
+
+            if validation.valid and not request.optimization_required:
+                if progress:
+                    progress("optimization")
+                sqlglot_candidate = _sqlglot_optimization_candidate(
+                    sql, dialect=request.dialect
+                )
+                if not sqlglot_candidate or normalize_sql(
+                    sqlglot_candidate, dialect=request.dialect
+                ) == normalize_sql(sql, dialect=request.dialect):
+                    optimization_evidence = OptimizationEvidence(
+                        optimizer="sqlglot",
+                        status="no_structural_change",
+                        result_equivalent=True,
+                        selected_sql="baseline",
+                    )
+                elif request.execute:
+                    candidate_validation = validate_sql(
+                        sqlglot_candidate, schema, dialect=request.dialect
+                    )
+                    try:
+                        if candidate_validation.valid:
+                            candidate_validation = _validate_result_equivalence(
+                                database,
+                                request.db_id,
+                                sql,
+                                sqlglot_candidate,
+                                candidate_validation,
+                                max_rows=max(request.max_rows, 1_000),
+                            )
+                        if candidate_validation.valid:
+                            candidate_evidence = _benchmark_optimization(
+                                database,
+                                request.db_id,
+                                sql,
+                                sqlglot_candidate,
+                                validation.explain_plan,
+                                candidate_validation.explain_plan,
+                                max_rows=max(request.max_rows, 1_000),
+                            ).model_copy(update={"optimizer": "sqlglot"})
+                            optimization_evidence = candidate_evidence
+                            if candidate_evidence.status == "optimized":
+                                sql = sqlglot_candidate
+                                normalized = normalize_sql(sql, dialect=request.dialect)
+                                fingerprint = hashlib.sha256(normalized.encode()).hexdigest()
+                                validation = candidate_validation
+                        else:
+                            optimization_evidence = OptimizationEvidence(
+                                optimizer="sqlglot",
+                                status="rejected",
+                                result_equivalent=False,
+                                selected_sql="baseline",
+                            )
+                    except DatabaseError:
+                        optimization_evidence = OptimizationEvidence(
+                            optimizer="sqlglot",
+                            status="rejected",
+                            result_equivalent=False,
+                            selected_sql="baseline",
+                        )
+                else:
+                    optimization_evidence = OptimizationEvidence(
+                        optimizer="sqlglot",
+                        status="rejected",
+                        result_equivalent=False,
+                        selected_sql="baseline",
+                    )
             if validation.valid and request.execute:
+                if progress:
+                    progress("execution")
                 try:
                     executed_columns, executed_rows, executed_truncated = database.execute(
                         request.db_id, sql, max_rows=request.max_rows
@@ -565,6 +699,21 @@ def _validate_result_equivalence(
             }
         )
     return validation
+
+
+def _sqlglot_optimization_candidate(sql: str, *, dialect: str) -> str | None:
+    """Return a conservative deterministic rewrite, or ``None`` when parsing fails.
+
+    SQLGlot's full optimizer performs identifier qualification and dialect-sensitive
+    rewrites that are inappropriate without a complete catalog. ``simplify`` provides
+    the safe first stage here: constant/boolean simplification while preserving names,
+    joins, projections, grouping, and query grain.
+    """
+    try:
+        expression = parse_one(sql, read=dialect)
+        return str(simplify(expression).sql(dialect=dialect, pretty=True))
+    except (ParseError, ValueError):
+        return None
 
 
 def _benchmark_optimization(
