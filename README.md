@@ -7,6 +7,10 @@ grounding, the SQL model, validation, and execution.
 The project is inspired by public Text-to-SQL patterns, including Uber QueryGPT, but does not copy
 private prompts, schemas, code, or data.
 
+<p align="center">
+  <img src="docs/semantic_text2sql_architecture.svg" alt="Semantic Text-to-SQL architecture" width="720" />
+</p>
+
 ## Current architecture
 
 ```text
