@@ -1,113 +1,98 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="800" height="1200" viewBox="0 0 800 1200">
-  <defs>
-    <style>
-      .title{font:700 26px Inter,Arial,sans-serif;fill:#111827}.sub{font:18px Inter,Arial,sans-serif;fill:#475569}.small{font:16px Inter,Arial,sans-serif;fill:#334155}.n{font:700 18px Inter,Arial,sans-serif;fill:#fff}.arrow{stroke:#475569;stroke-width:3;fill:none;marker-end:url(#m)}.dash{stroke:#64748b;stroke-width:2.5;fill:none;stroke-dasharray:8 8;marker-end:url(#m)}.repair{stroke:#ef4444;stroke-width:2.5;fill:none;stroke-dasharray:8 8;marker-end:url(#mr)}.opt{stroke:#f59e0b;stroke-width:2.5;fill:none;stroke-dasharray:8 8;marker-end:url(#mo)}
-    </style>
-    <marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker>
-    <marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#ef4444"/></marker>
-    <marker id="mo" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#f59e0b"/></marker>
-    <linearGradient id="blue" x1="0" x2="1"><stop stop-color="#f7fbff"/><stop offset="1" stop-color="#eef6ff"/></linearGradient>
-    <linearGradient id="cyan" x1="0" x2="1"><stop stop-color="#f5feff"/><stop offset="1" stop-color="#eefcfc"/></linearGradient>
-    <linearGradient id="purple" x1="0" x2="1"><stop stop-color="#fbf9ff"/><stop offset="1" stop-color="#f6f0ff"/></linearGradient>
-    <linearGradient id="green" x1="0" x2="1"><stop stop-color="#f7fff8"/><stop offset="1" stop-color="#effaf2"/></linearGradient>
-  </defs>
-  <rect width="800" height="1200" fill="#ffffff"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="1460" viewBox="0 0 920 1460">
+<defs>
+<style>
+.t{font:700 25px Inter,Arial,sans-serif;fill:#111827}.s{font:16px Inter,Arial,sans-serif;fill:#475569}.xs{font:13px Inter,Arial,sans-serif;fill:#64748b}.n{font:700 16px Inter,Arial,sans-serif;fill:#fff}.brand{font:700 13px Inter,Arial,sans-serif}.a{stroke:#475569;stroke-width:3;fill:none;marker-end:url(#m)}.d{stroke:#64748b;stroke-width:2.3;fill:none;stroke-dasharray:7 7;marker-end:url(#m)}.r{stroke:#ef4444;stroke-width:2.5;fill:none;stroke-dasharray:7 7;marker-end:url(#mr)}.o{stroke:#f59e0b;stroke-width:2.5;fill:none;stroke-dasharray:7 7;marker-end:url(#mo)}
+</style>
+<marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#475569"/></marker>
+<marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#ef4444"/></marker>
+<marker id="mo" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#f59e0b"/></marker>
+<linearGradient id="b" x1="0" x2="1"><stop stop-color="#f8fbff"/><stop offset="1" stop-color="#eef6ff"/></linearGradient>
+<linearGradient id="c" x1="0" x2="1"><stop stop-color="#f5feff"/><stop offset="1" stop-color="#edfafa"/></linearGradient>
+<linearGradient id="p" x1="0" x2="1"><stop stop-color="#fcfaff"/><stop offset="1" stop-color="#f4efff"/></linearGradient>
+<linearGradient id="g" x1="0" x2="1"><stop stop-color="#f8fff9"/><stop offset="1" stop-color="#eef9f1"/></linearGradient>
+<symbol id="chat" viewBox="0 0 40 40"><rect x="3" y="6" width="34" height="24" rx="7" fill="#3b82f6"/><path d="M11 29l-2 8 10-7" fill="#3b82f6"/><circle cx="13" cy="18" r="2.7" fill="#fff"/><circle cx="20" cy="18" r="2.7" fill="#fff"/><circle cx="27" cy="18" r="2.7" fill="#fff"/></symbol>
+<symbol id="db" viewBox="0 0 40 40"><ellipse cx="20" cy="9" rx="14" ry="5" fill="#1d63c8"/><rect x="6" y="9" width="28" height="21" fill="#1d63c8"/><ellipse cx="20" cy="30" rx="14" ry="5" fill="#174f9f"/><path d="M6 18c0 3 6 5 14 5s14-2 14-5" fill="none" stroke="#fff" stroke-width="2"/></symbol>
+<symbol id="book" viewBox="0 0 40 40"><path d="M4 8q10-5 16 1v25q-7-5-16-1zM20 9q7-6 16-1v25q-9-4-16 1z" fill="none" stroke="#16853d" stroke-width="3"/></symbol>
+<symbol id="hist" viewBox="0 0 40 40"><path d="M8 18a13 13 0 1 1 5 12" fill="none" stroke="#56358c" stroke-width="3"/><path d="M7 10v10h10" fill="none" stroke="#56358c" stroke-width="3"/><path d="M21 13v8l6 4" fill="none" stroke="#56358c" stroke-width="3"/></symbol>
+<symbol id="evidence" viewBox="0 0 40 40"><path d="M8 4h18l7 7v25H8z" fill="none" stroke="#0f766e" stroke-width="3"/><path d="M26 4v9h7" fill="none" stroke="#0f766e" stroke-width="3"/><path d="M13 23l5 5 10-12" fill="none" stroke="#0f766e" stroke-width="3"/></symbol>
+<symbol id="state" viewBox="0 0 40 40"><circle cx="20" cy="20" r="14" fill="none" stroke="#7c3aed" stroke-width="3"/><path d="M20 11v10l7 4" fill="none" stroke="#7c3aed" stroke-width="3"/></symbol>
+<symbol id="search" viewBox="0 0 40 40"><circle cx="17" cy="17" r="11" fill="none" stroke="#1d63c8" stroke-width="4"/><line x1="25" y1="25" x2="36" y2="36" stroke="#1d63c8" stroke-width="4"/></symbol>
+<symbol id="embed" viewBox="0 0 40 40"><circle cx="20" cy="8" r="4" fill="#254b83"/><circle cx="8" cy="22" r="4" fill="#254b83"/><circle cx="32" cy="22" r="4" fill="#254b83"/><circle cx="20" cy="34" r="4" fill="#254b83"/><path d="M18 12L10 19M22 12l8 7M11 25l7 6M29 25l-7 6" stroke="#254b83" stroke-width="2"/></symbol>
+<symbol id="values" viewBox="0 0 40 40"><ellipse cx="20" cy="9" rx="13" ry="5" fill="none" stroke="#334155" stroke-width="3"/><path d="M7 9v22c0 3 6 5 13 5s13-2 13-5V9" fill="none" stroke="#334155" stroke-width="3"/><path d="M7 20c0 3 6 5 13 5s13-2 13-5" fill="none" stroke="#334155" stroke-width="2"/></symbol>
+<symbol id="target" viewBox="0 0 40 40"><circle cx="20" cy="20" r="16" fill="none" stroke="#1d63c8" stroke-width="3"/><circle cx="20" cy="20" r="9" fill="none" stroke="#1d63c8" stroke-width="3"/><circle cx="20" cy="20" r="3" fill="#1d63c8"/><path d="M21 13L34 3M29 3h5v5" stroke="#1d63c8" stroke-width="3" fill="none"/></symbol>
+<symbol id="bars" viewBox="0 0 40 40"><rect x="6" y="24" width="5" height="11" rx="2" fill="#31558b"/><rect x="17" y="15" width="5" height="20" rx="2" fill="#31558b"/><rect x="28" y="7" width="5" height="28" rx="2" fill="#31558b"/></symbol>
+<symbol id="tree" viewBox="0 0 40 40"><circle cx="20" cy="7" r="4" fill="#31558b"/><circle cx="8" cy="31" r="4" fill="#31558b"/><circle cx="20" cy="31" r="4" fill="#31558b"/><circle cx="32" cy="31" r="4" fill="#31558b"/><path d="M20 11v9M8 27v-7h24v7M20 20v7" stroke="#31558b" stroke-width="2" fill="none"/></symbol>
+<symbol id="table" viewBox="0 0 40 40"><rect x="4" y="5" width="32" height="30" rx="3" fill="none" stroke="#227c88" stroke-width="3"/><path d="M4 15h32M4 25h32M15 5v30M26 5v30" stroke="#227c88" stroke-width="2"/></symbol>
+<symbol id="key" viewBox="0 0 40 40"><circle cx="12" cy="14" r="7" fill="none" stroke="#227c88" stroke-width="3"/><path d="M17 19l16 16M26 28l5-5M21 23l5-5" stroke="#227c88" stroke-width="3"/></symbol>
+<symbol id="grain" viewBox="0 0 40 40"><path d="M20 5L35 13 20 21 5 13zM5 21l15 8 15-8M5 29l15 8 15-8" fill="none" stroke="#227c88" stroke-width="3"/></symbol>
+<symbol id="type" viewBox="0 0 40 40"><path d="M7 8h26M20 8v25M12 33h16" stroke="#227c88" stroke-width="3" fill="none"/><circle cx="31" cy="27" r="4" fill="#227c88"/></symbol>
+<symbol id="date" viewBox="0 0 40 40"><rect x="5" y="9" width="30" height="27" rx="4" fill="none" stroke="#227c88" stroke-width="3"/><path d="M5 17h30M12 4v9M28 4v9" stroke="#227c88" stroke-width="3"/><circle cx="14" cy="24" r="2" fill="#227c88"/><circle cx="22" cy="24" r="2" fill="#227c88"/><circle cx="30" cy="24" r="2" fill="#227c88"/></symbol>
+<symbol id="formula" viewBox="0 0 40 40"><text x="4" y="30" font-family="Georgia,serif" font-size="30" font-style="italic" fill="#227c88">ƒx</text></symbol>
+<symbol id="card" viewBox="0 0 40 40"><circle cx="12" cy="20" r="7" fill="none" stroke="#227c88" stroke-width="3"/><circle cx="28" cy="20" r="7" fill="none" stroke="#227c88" stroke-width="3"/><path d="M19 20h2" stroke="#227c88" stroke-width="3"/><text x="8" y="24" font-family="Arial" font-size="9" fill="#227c88">1</text><text x="24" y="24" font-family="Arial" font-size="9" fill="#227c88">N</text></symbol>
+<symbol id="fanout" viewBox="0 0 40 40"><circle cx="8" cy="20" r="4" fill="#227c88"/><circle cx="32" cy="8" r="4" fill="#227c88"/><circle cx="32" cy="20" r="4" fill="#227c88"/><circle cx="32" cy="32" r="4" fill="#227c88"/><path d="M12 20h8M20 20l9-10M20 20h8M20 20l9 10" stroke="#227c88" stroke-width="2"/></symbol>
+<symbol id="concept" viewBox="0 0 40 40"><path d="M20 4a12 12 0 0 0-7 22v5h14v-5a12 12 0 0 0-7-22z" fill="none" stroke="#227c88" stroke-width="3"/><path d="M14 35h12" stroke="#227c88" stroke-width="3"/></symbol>
+<symbol id="gpt" viewBox="0 0 40 40"><circle cx="20" cy="20" r="16" fill="#111827"/><g fill="none" stroke="#fff" stroke-width="2"><circle cx="20" cy="12" r="6"/><circle cx="27" cy="16" r="6"/><circle cx="27" cy="24" r="6"/><circle cx="20" cy="28" r="6"/><circle cx="13" cy="24" r="6"/><circle cx="13" cy="16" r="6"/></g></symbol>
+<symbol id="claude" viewBox="0 0 40 40"><circle cx="20" cy="20" r="16" fill="#f4eee8"/><g stroke="#d97745" stroke-width="3" stroke-linecap="round"><path d="M20 7v26M7 20h26M11 11l18 18M29 11L11 29"/></g></symbol>
+<symbol id="qwen" viewBox="0 0 40 40"><rect x="4" y="4" width="32" height="32" rx="10" fill="#7657d9"/><circle cx="19" cy="19" r="9" fill="none" stroke="#fff" stroke-width="3"/><path d="M25 25l7 7" stroke="#fff" stroke-width="3"/></symbol>
+<symbol id="shield" viewBox="0 0 40 40"><path d="M20 4l14 5v10c0 11-7 17-14 21C13 36 6 30 6 19V9z" fill="#46b963" stroke="#268342" stroke-width="2"/><path d="M12 20l6 6 11-14" stroke="#fff" stroke-width="4" fill="none"/></symbol>
+<symbol id="lock" viewBox="0 0 40 40"><rect x="9" y="17" width="22" height="19" rx="4" fill="#334155"/><path d="M14 17v-6a6 6 0 0 1 12 0v6" fill="none" stroke="#334155" stroke-width="3"/><circle cx="20" cy="27" r="2" fill="#fff"/></symbol>
+<symbol id="repair" viewBox="0 0 40 40"><path d="M29 5a9 9 0 0 0-9 11L7 29a4 4 0 1 0 5 5l13-13A9 9 0 0 0 35 10l-6 6-5-5z" fill="#dc2626"/></symbol>
+<symbol id="bolt" viewBox="0 0 40 40"><path d="M23 3L8 23h10l-3 14 17-22H22z" fill="#f59e0b"/></symbol>
+<symbol id="result" viewBox="0 0 40 40"><circle cx="20" cy="20" r="16" fill="#2f9a4f"/><path d="M11 20l6 6 12-14" fill="none" stroke="#fff" stroke-width="4"/></symbol>
+</defs>
+<rect width="920" height="1460" fill="#fff"/>
 
-  <rect x="18" y="138" width="126" height="102" rx="15" fill="#f5faff" stroke="#8fc5ff" stroke-width="2"/>
-  <ellipse cx="62" cy="167" rx="22" ry="9" fill="#1d63c8"/><rect x="40" y="167" width="44" height="31" fill="#1d63c8"/><ellipse cx="62" cy="198" rx="22" ry="9" fill="#174f9f"/><ellipse cx="62" cy="181" rx="22" ry="8" fill="none" stroke="#fff" stroke-width="2"/>
-  <text x="81" y="224" text-anchor="middle" class="small">Schema</text>
+<!-- side sources -->
+<g transform="translate(18 170)"><rect width="130" height="92" rx="15" fill="#f5faff" stroke="#8fc5ff" stroke-width="2"/><use href="#db" x="45" y="12" width="40" height="40"/><text x="65" y="76" text-anchor="middle" class="s">Schema</text></g>
+<g transform="translate(18 276)"><rect width="130" height="92" rx="15" fill="#f7fff7" stroke="#86c87b" stroke-width="2"/><use href="#book" x="45" y="12" width="40" height="40"/><text x="65" y="76" text-anchor="middle" class="s">Glossary</text></g>
+<g transform="translate(18 382)"><rect width="130" height="92" rx="15" fill="#f4fffd" stroke="#7dd3c7" stroke-width="2"/><use href="#evidence" x="45" y="12" width="40" height="40"/><text x="65" y="76" text-anchor="middle" class="s">Evidence</text></g>
+<g transform="translate(772 38)"><rect width="130" height="92" rx="15" fill="#fbf9ff" stroke="#b7a4df" stroke-width="2"/><use href="#state" x="45" y="12" width="40" height="40"/><text x="65" y="76" text-anchor="middle" class="s">State</text></g>
+<g transform="translate(772 228)"><rect width="130" height="92" rx="15" fill="#fbf9ff" stroke="#b7a4df" stroke-width="2"/><use href="#hist" x="45" y="12" width="40" height="40"/><text x="65" y="76" text-anchor="middle" class="s">History</text></g>
 
-  <rect x="18" y="254" width="126" height="102" rx="15" fill="#f7fff7" stroke="#86c87b" stroke-width="2"/>
-  <path d="M41 281 Q58 274 68 282 V316 Q57 309 41 315Z M68 282 Q80 274 96 281 V315 Q82 309 68 316Z" fill="none" stroke="#16853d" stroke-width="3"/>
-  <text x="81" y="340" text-anchor="middle" class="small">Glossary</text>
+<!-- 1 resolve -->
+<g><rect x="190" y="22" width="540" height="94" rx="18" fill="url(#b)" stroke="#3b82f6" stroke-width="2"/><circle cx="220" cy="50" r="18" fill="#1763c6"/><text x="220" y="56" text-anchor="middle" class="n">1</text><use href="#chat" x="268" y="47" width="40" height="40"/><text x="460" y="76" text-anchor="middle" class="t">Resolve</text></g>
+<path d="M772 84H734" class="d"/><path d="M460 116V145" class="a"/>
 
-  <rect x="662" y="175" width="120" height="106" rx="15" fill="#fbf9ff" stroke="#b7a4df" stroke-width="2"/>
-  <path d="M700 216 a22 22 0 1 1 8 17" fill="none" stroke="#56358c" stroke-width="4"/><path d="M695 204 l-2 14 14-2" fill="none" stroke="#56358c" stroke-width="4"/>
-  <text x="722" y="264" text-anchor="middle" class="small">History</text>
+<!-- 2 retrieve -->
+<g><rect x="190" y="146" width="540" height="154" rx="18" fill="url(#b)" stroke="#65a7ff" stroke-width="2"/><circle cx="220" cy="175" r="18" fill="#1763c6"/><text x="220" y="181" text-anchor="middle" class="n">2</text><text x="460" y="190" text-anchor="middle" class="t">Retrieve</text><use href="#search" x="280" y="214" width="40" height="40"/><text x="300" y="279" text-anchor="middle" class="s">BM25</text><use href="#embed" x="440" y="214" width="40" height="40"/><text x="460" y="279" text-anchor="middle" class="s">Dense</text><use href="#values" x="600" y="214" width="40" height="40"/><text x="620" y="279" text-anchor="middle" class="s">Values</text></g>
+<path d="M148 216H187" class="d"/><path d="M148 322H166V235H187" class="d"/><path d="M148 428H174V253H187" class="d"/><path d="M772 274H734" class="d"/><path d="M460 300V329" class="a"/>
 
-  <g>
-    <rect x="180" y="20" width="440" height="92" rx="18" fill="url(#blue)" stroke="#3b82f6" stroke-width="2"/>
-    <circle cx="210" cy="48" r="18" fill="#1763c6"/><text x="210" y="55" text-anchor="middle" class="n">1</text>
-    <rect x="250" y="41" width="54" height="36" rx="9" fill="#3b82f6"/><path d="M262 75 l-4 13 14-11" fill="#3b82f6"/><circle cx="265" cy="59" r="4" fill="#fff"/><circle cx="277" cy="59" r="4" fill="#fff"/><circle cx="289" cy="59" r="4" fill="#fff"/>
-    <text x="390" y="78" text-anchor="middle" class="title">Resolve</text>
-  </g>
-  <path d="M400 112 V139" class="arrow"/>
+<!-- 3 rank -->
+<g><rect x="190" y="330" width="540" height="126" rx="18" fill="url(#b)" stroke="#65a7ff" stroke-width="2"/><circle cx="220" cy="359" r="18" fill="#1763c6"/><text x="220" y="365" text-anchor="middle" class="n">3</text><use href="#target" x="280" y="366" width="40" height="40"/><text x="460" y="373" text-anchor="middle" class="t">Rank</text><use href="#bars" x="402" y="395" width="36" height="36"/><text x="445" y="424" class="s">RRF</text><use href="#tree" x="535" y="395" width="36" height="36"/><text x="578" y="424" class="s">LightGBM</text></g>
+<path d="M460 456V485" class="a"/>
 
-  <g>
-    <rect x="180" y="140" width="440" height="144" rx="18" fill="url(#blue)" stroke="#65a7ff" stroke-width="2"/>
-    <circle cx="210" cy="169" r="18" fill="#1763c6"/><text x="210" y="176" text-anchor="middle" class="n">2</text>
-    <text x="400" y="184" text-anchor="middle" class="title">Retrieve</text>
-    <circle cx="285" cy="224" r="17" fill="none" stroke="#1d63c8" stroke-width="5"/><line x1="298" y1="237" x2="312" y2="251" stroke="#1d63c8" stroke-width="5"/>
-    <text x="290" y="270" text-anchor="middle" class="small">BM25</text>
-    <circle cx="400" cy="220" r="6" fill="#254b83"/><circle cx="375" cy="235" r="6" fill="#254b83"/><circle cx="425" cy="235" r="6" fill="#254b83"/><circle cx="400" cy="250" r="6" fill="#254b83"/><line x1="400" y1="226" x2="400" y2="244" stroke="#254b83" stroke-width="2"/><line x1="394" y1="224" x2="380" y2="232" stroke="#254b83" stroke-width="2"/><line x1="406" y1="224" x2="420" y2="232" stroke="#254b83" stroke-width="2"/>
-    <text x="400" y="270" text-anchor="middle" class="small">Embeddings</text>
-    <ellipse cx="520" cy="218" rx="20" ry="8" fill="none" stroke="#334155" stroke-width="3"/><path d="M500 218 v28 c0 5 9 8 20 8s20-3 20-8v-28" fill="none" stroke="#334155" stroke-width="3"/><path d="M500 232 c0 5 9 8 20 8s20-3 20-8" fill="none" stroke="#334155" stroke-width="2"/>
-    <text x="520" y="270" text-anchor="middle" class="small">Values</text>
-  </g>
-  <path d="M144 189 H177" class="dash"/><path d="M144 305 H160 V232 H177" class="dash"/><path d="M662 228 H623" class="dash"/>
-  <path d="M400 284 V311" class="arrow"/>
+<!-- 4 optional selector -->
+<g><rect x="190" y="486" width="540" height="136" rx="18" fill="url(#p)" stroke="#9b7cf3" stroke-width="2" stroke-dasharray="7 5"/><circle cx="220" cy="515" r="18" fill="#6d44d8"/><text x="220" y="521" text-anchor="middle" class="n">4</text><text x="460" y="528" text-anchor="middle" class="t">Select</text><text x="460" y="552" text-anchor="middle" class="xs">optional context model</text>
+<g transform="translate(294 565)"><use href="#gpt" width="38" height="38"/><text x="19" y="55" text-anchor="middle" class="brand" fill="#111827">GPT</text></g>
+<g transform="translate(441 565)"><use href="#claude" width="38" height="38"/><text x="19" y="55" text-anchor="middle" class="brand" fill="#d97745">Claude</text></g>
+<g transform="translate(588 565)"><use href="#qwen" width="38" height="38"/><text x="19" y="55" text-anchor="middle" class="brand" fill="#7657d9">Qwen</text></g></g>
+<g transform="translate(772 494)"><rect width="130" height="88" rx="15" fill="#f8fbff" stroke="#8fc5ff" stroke-width="2"/><use href="#target" x="45" y="10" width="40" height="40"/><text x="65" y="72" text-anchor="middle" class="xs">Retrieval-only</text></g>
+<path d="M730 393H838V490" class="d"/><path d="M772 538H734" class="d"/><path d="M460 622V651" class="a"/>
 
-  <g>
-    <rect x="180" y="312" width="440" height="120" rx="18" fill="url(#blue)" stroke="#65a7ff" stroke-width="2"/>
-    <circle cx="210" cy="341" r="18" fill="#1763c6"/><text x="210" y="348" text-anchor="middle" class="n">3</text>
-    <circle cx="285" cy="372" r="27" fill="none" stroke="#1d63c8" stroke-width="4"/><circle cx="285" cy="372" r="15" fill="none" stroke="#1d63c8" stroke-width="4"/><circle cx="285" cy="372" r="5" fill="#1d63c8"/><path d="M285 350 l22-22 m-6 1 h10 v10" stroke="#1d63c8" stroke-width="4" fill="none"/>
-    <text x="400" y="354" text-anchor="middle" class="title">Rank</text>
-    <text x="386" y="406" text-anchor="middle" class="sub">RRF</text><text x="500" y="406" text-anchor="middle" class="sub">LightGBM</text>
-  </g>
-  <path d="M400 432 V459" class="arrow"/>
+<!-- 5 ground -->
+<g><rect x="190" y="652" width="540" height="196" rx="18" fill="url(#c)" stroke="#38b9c3" stroke-width="2"/><circle cx="220" cy="681" r="18" fill="#0b9aaa"/><text x="220" y="687" text-anchor="middle" class="n">5</text><text x="460" y="696" text-anchor="middle" class="t">Ground</text>
+<g transform="translate(260 720)"><use href="#table" width="34" height="34"/><text x="17" y="53" text-anchor="middle" class="xs">Schema</text></g><g transform="translate(355 720)"><use href="#key" width="34" height="34"/><text x="17" y="53" text-anchor="middle" class="xs">Keys</text></g><g transform="translate(450 720)"><use href="#grain" width="34" height="34"/><text x="17" y="53" text-anchor="middle" class="xs">Grain</text></g><g transform="translate(545 720)"><use href="#type" width="34" height="34"/><text x="17" y="53" text-anchor="middle" class="xs">Types</text></g><g transform="translate(640 720)"><use href="#date" width="34" height="34"/><text x="17" y="53" text-anchor="middle" class="xs">Dates</text></g>
+<g transform="translate(308 792)"><use href="#card" width="34" height="34"/><text x="17" y="53" text-anchor="middle" class="xs">Cardinality</text></g><g transform="translate(425 792)"><use href="#fanout" width="34" height="34"/><text x="17" y="53" text-anchor="middle" class="xs">Fanout</text></g><g transform="translate(542 792)"><use href="#formula" width="34" height="34"/><text x="17" y="53" text-anchor="middle" class="xs">Formula</text></g><g transform="translate(646 792)"><use href="#concept" width="34" height="34"/><text x="17" y="53" text-anchor="middle" class="xs">Concepts</text></g></g>
+<path d="M460 848V877" class="a"/>
 
-  <rect x="650" y="448" width="132" height="94" rx="15" fill="#fbf9ff" stroke="#9b7cf3" stroke-width="2" stroke-dasharray="6 5"/>
-  <text x="716" y="486" text-anchor="middle" class="title" style="font-size:21px;fill:#5b36a5">Model 1</text><text x="716" y="518" text-anchor="middle" class="small">Optional</text>
-  <path d="M620 372 H716 V444" class="dash"/><path d="M650 518 H622" class="dash"/>
+<!-- 6 generate -->
+<g><rect x="190" y="878" width="540" height="146" rx="18" fill="url(#p)" stroke="#9b7cf3" stroke-width="2"/><circle cx="220" cy="907" r="18" fill="#6d44d8"/><text x="220" y="913" text-anchor="middle" class="n">6</text><text x="460" y="920" text-anchor="middle" class="t">Generate</text><text x="460" y="945" text-anchor="middle" class="xs">SQL model</text><g transform="translate(294 958)"><use href="#gpt" width="38" height="38"/><text x="19" y="55" text-anchor="middle" class="brand" fill="#111827">GPT</text></g><g transform="translate(441 958)"><use href="#claude" width="38" height="38"/><text x="19" y="55" text-anchor="middle" class="brand" fill="#d97745">Claude</text></g><g transform="translate(588 958)"><use href="#qwen" width="38" height="38"/><text x="19" y="55" text-anchor="middle" class="brand" fill="#7657d9">Qwen</text></g></g>
+<path d="M460 1024V1053" class="a"/>
 
-  <g>
-    <rect x="180" y="460" width="440" height="128" rx="18" fill="url(#cyan)" stroke="#38b9c3" stroke-width="2"/>
-    <circle cx="210" cy="489" r="18" fill="#0b9aaa"/><text x="210" y="496" text-anchor="middle" class="n">4</text>
-    <path d="M252 509 h17 v-13 a9 9 0 1 1 14 0 v13 h16 v17 h-12 a9 9 0 1 1 0 14 h12 v17 h-47 v-17 h12 a9 9 0 1 0 0-14 h-12z" fill="#37a8a6" stroke="#217d7c" stroke-width="2"/>
-    <text x="400" y="505" text-anchor="middle" class="title">Ground</text>
-    <text x="320" y="559" text-anchor="middle" class="small">Schema</text><text x="390" y="559" text-anchor="middle" class="small">Keys</text><text x="455" y="559" text-anchor="middle" class="small">Grain</text><text x="535" y="559" text-anchor="middle" class="small">Formula</text>
-  </g>
-  <path d="M400 588 V615" class="arrow"/>
+<!-- 7 validate -->
+<g><rect x="190" y="1054" width="540" height="104" rx="18" fill="url(#g)" stroke="#54b874" stroke-width="2"/><circle cx="220" cy="1083" r="18" fill="#2f9a4f"/><text x="220" y="1089" text-anchor="middle" class="n">7</text><use href="#shield" x="275" y="1074" width="42" height="42"/><text x="445" y="1098" text-anchor="middle" class="t">Validate</text><use href="#search" x="545" y="1076" width="36" height="36"/><text x="598" y="1103" class="s">SQLGlot</text></g>
+<path d="M460 1158V1187" class="a"/>
 
-  <g>
-    <rect x="180" y="616" width="440" height="104" rx="18" fill="url(#purple)" stroke="#9b7cf3" stroke-width="2"/>
-    <circle cx="210" cy="645" r="18" fill="#6d44d8"/><text x="210" y="652" text-anchor="middle" class="n">5</text>
-    <line x1="263" y1="686" x2="296" y2="650" stroke="#6d44d8" stroke-width="9" stroke-linecap="round"/><path d="M304 643 l5 9 10 2-8 7 2 10-9-5-9 5 2-10-8-7 10-2z" fill="#7c56df"/>
-    <text x="400" y="659" text-anchor="middle" class="title">Generate</text><text x="400" y="697" text-anchor="middle" class="sub">Model 2</text>
-  </g>
-  <path d="M400 720 V747" class="arrow"/>
+<!-- 8 execute -->
+<g><rect x="190" y="1188" width="540" height="104" rx="18" fill="url(#b)" stroke="#65a7ff" stroke-width="2"/><circle cx="220" cy="1217" r="18" fill="#1763c6"/><text x="220" y="1223" text-anchor="middle" class="n">8</text><use href="#db" x="285" y="1208" width="40" height="40"/><text x="440" y="1232" text-anchor="middle" class="t">Execute</text><use href="#lock" x="545" y="1208" width="40" height="40"/><text x="600" y="1235" class="s">Read-only</text></g>
+<path d="M460 1292V1321" class="a"/>
 
-  <g>
-    <rect x="180" y="748" width="440" height="102" rx="18" fill="url(#green)" stroke="#54b874" stroke-width="2"/>
-    <circle cx="210" cy="777" r="18" fill="#2f9a4f"/><text x="210" y="784" text-anchor="middle" class="n">6</text>
-    <path d="M266 775 l24-8 24 8 v18 c0 19-13 30-24 35-11-5-24-16-24-35z" fill="#46b963" stroke="#268342" stroke-width="2"/><path d="M279 795 l8 8 15-18" fill="none" stroke="#fff" stroke-width="5"/>
-    <text x="420" y="792" text-anchor="middle" class="title">Validate</text><text x="420" y="827" text-anchor="middle" class="sub">SQLGlot</text>
-  </g>
-  <path d="M400 850 V877" class="arrow"/>
+<!-- 9 result -->
+<g><rect x="190" y="1322" width="540" height="104" rx="18" fill="url(#g)" stroke="#54b874" stroke-width="2"/><circle cx="220" cy="1351" r="18" fill="#2f9a4f"/><text x="220" y="1357" text-anchor="middle" class="n">9</text><use href="#result" x="285" y="1341" width="42" height="42"/><text x="450" y="1364" text-anchor="middle" class="t">Result</text><use href="#table" x="575" y="1341" width="38" height="38"/><text x="630" y="1367" class="s">Answer</text></g>
 
-  <g>
-    <rect x="180" y="878" width="440" height="102" rx="18" fill="url(#blue)" stroke="#65a7ff" stroke-width="2"/>
-    <circle cx="210" cy="907" r="18" fill="#1763c6"/><text x="210" y="914" text-anchor="middle" class="n">7</text>
-    <ellipse cx="285" cy="914" rx="23" ry="8" fill="#1d63c8"/><rect x="262" y="914" width="46" height="30" fill="#1d63c8"/><ellipse cx="285" cy="944" rx="23" ry="8" fill="#174f9f"/>
-    <rect x="303" y="931" width="18" height="19" rx="3" fill="#334155"/><path d="M307 932 v-7 a5 5 0 0 1 10 0 v7" fill="none" stroke="#334155" stroke-width="3"/>
-    <text x="430" y="921" text-anchor="middle" class="title">Execute</text><text x="430" y="957" text-anchor="middle" class="sub">Read-only</text>
-  </g>
-  <path d="M400 980 V1007" class="arrow"/>
+<!-- repair -->
+<g transform="translate(18 1080)"><rect width="142" height="100" rx="15" fill="#fff7f7" stroke="#ef4444" stroke-width="2"/><use href="#repair" x="18" y="18" width="38" height="38"/><text x="82" y="42" class="t" style="font-size:20px">Repair</text><text x="70" y="76" text-anchor="middle" class="xs">failure · max 3</text></g><path d="M190 1112H154V951H187" class="r"/>
 
-  <g>
-    <rect x="180" y="1008" width="440" height="104" rx="18" fill="url(#green)" stroke="#54b874" stroke-width="2"/>
-    <circle cx="210" cy="1037" r="18" fill="#2f9a4f"/><text x="210" y="1044" text-anchor="middle" class="n">8</text>
-    <circle cx="285" cy="1060" r="25" fill="#2f9a4f" stroke="#1f7e3d" stroke-width="2"/><path d="M272 1060 l9 9 18-21" fill="none" stroke="#fff" stroke-width="5"/>
-    <text x="430" y="1054" text-anchor="middle" class="title">Result</text><text x="430" y="1090" text-anchor="middle" class="sub">Answer</text>
-  </g>
-
-  <rect x="20" y="800" width="136" height="94" rx="15" fill="#fff7f7" stroke="#ef4444" stroke-width="2"/>
-  <text x="88" y="838" text-anchor="middle" class="title" style="font-size:21px">Repair</text><text x="88" y="871" text-anchor="middle" class="small">On failure</text>
-  <path d="M180 810 H118 V650 H177" class="repair"/>
-
-  <rect x="650" y="928" width="132" height="94" rx="15" fill="#fffaf2" stroke="#f59e0b" stroke-width="2"/>
-  <text x="716" y="966" text-anchor="middle" class="title" style="font-size:20px">Optimize</text><text x="716" y="999" text-anchor="middle" class="small">On request</text>
-  <path d="M620 928 H646" class="opt"/><path d="M716 1022 V1060 H623" class="opt"/>
-
-  <text x="400" y="1160" text-anchor="middle" class="small" style="fill:#64748b">Hybrid retrieval • deterministic grounding • bounded generation • read-only execution</text>
+<!-- optimize -->
+<g transform="translate(760 1185)"><rect width="144" height="112" rx="15" fill="#fffaf2" stroke="#f59e0b" stroke-width="2"/><use href="#bolt" x="14" y="14" width="38" height="38"/><text x="82" y="39" class="t" style="font-size:20px">Optimize</text><g transform="translate(22 58)"><use href="#gpt" width="24" height="24"/></g><g transform="translate(58 58)"><use href="#claude" width="24" height="24"/></g><g transform="translate(94 58)"><use href="#qwen" width="24" height="24"/></g><text x="72" y="103" text-anchor="middle" class="xs">on request</text></g><path d="M730 1239H756" class="o"/><path d="M832 1297V1374H734" class="o"/>
 </svg>
