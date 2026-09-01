@@ -4,8 +4,7 @@ A v5-derived, local-first Text-to-SQL application for measuring the incremental 
 Model 1 context selector. Both experimental arms share hybrid retrieval, ML reranking, deterministic
 grounding, the SQL model, validation, and execution.
 
-The project is inspired by public Text-to-SQL patterns, including Uber QueryGPT, but does not copy
-private prompts, schemas, code, or data.
+
 
 <p align="center">
   <img src="docs/semantic_text2sql_architecture.svg" alt="Semantic Text-to-SQL architecture" width="720" />
