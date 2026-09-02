@@ -96,6 +96,8 @@ def test_web_chat_application_is_served() -> None:
     assert '"OPTIMIZATION_NOT_FASTER"' in script.text
     assert 'class="semantic-status"' not in page.text
     assert "renderHighlightedSql" in script.text
+    assert "renderSqlTokens" in script.text
+    assert "sql-line-number" in script.text
     assert '"NOT SELECTED"' in script.text
 
     sql_position = page.text.index('class="sql-panel"')

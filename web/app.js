@@ -141,7 +141,22 @@ const sqlFunctions = new Set([
 
 function renderHighlightedSql(element, sql) {
   element.replaceChildren();
-  const tokens = sql.match(/--[^\n]*|\/\*[\s\S]*?\*\/|'(?:''|[^'])*'|"(?:""|[^"])*"|`(?:``|[^`])*`|\b\d+(?:\.\d+)?\b|\b[A-Za-z_][A-Za-z0-9_$]*\b|[^A-Za-z0-9_]+/g) || [sql];
+  String(sql || "").split("\n").forEach((line, index) => {
+    const row = document.createElement("span");
+    row.className = "sql-line";
+    const number = document.createElement("span");
+    number.className = "sql-line-number";
+    number.textContent = String(index + 1);
+    const content = document.createElement("span");
+    content.className = "sql-line-content";
+    renderSqlTokens(content, line || " ");
+    row.append(number, content);
+    element.append(row);
+  });
+}
+
+function renderSqlTokens(element, sql) {
+  const tokens = sql.match(/--[^\n]*|\/\*.*?\*\/|'(?:''|[^'])*'|"(?:""|[^"])*"|`(?:``|[^`])*`|\b\d+(?:\.\d+)?\b|\b[A-Za-z_][A-Za-z0-9_$]*\b|[^A-Za-z0-9_]+/g) || [sql];
   tokens.forEach((token) => {
     let className = "";
     const upper = token.toUpperCase();

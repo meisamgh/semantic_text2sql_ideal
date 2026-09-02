@@ -67,11 +67,15 @@ details textarea { margin-top: 10px; resize: vertical; }
 .panel-header { display: flex; justify-content: space-between; align-items: center; min-height: 40px; padding: 0 14px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .09em; }
 .copy-button { padding: 5px 9px; border: 1px solid var(--line); border-radius: 7px; background: #f5f2e9; color: var(--green-2); font-size: 11px; font-weight: 750; }
 .copy-button:hover { border-color: var(--green-2); background: #edf4ef; }
-pre { margin: 0; padding: 16px; overflow-x: auto; background: #17231e; color: #dff3e8; font: 12px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; }
-.sql-keyword { color: #8fc7ff; font-weight: 750; }
-.sql-function { color: #ffd479; }
-.sql-string { color: #9ee493; }
-.sql-number { color: #ffad7d; }
+pre { margin: 0; padding: 16px; overflow-x: auto; background: #13201b; color: #dff3e8; font: 12px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 2; }
+code.language-sql { display: block; min-width: max-content; counter-reset: sql-line; }
+.sql-line { display: grid; grid-template-columns: 34px minmax(0, 1fr); min-height: 20px; }
+.sql-line-number { margin-right: 14px; color: #63776d; text-align: right; user-select: none; }
+.sql-line-content { white-space: pre; }
+.sql-keyword { color: #74b9ff; font-weight: 800; }
+.sql-function { color: #ffd166; font-weight: 700; }
+.sql-string { color: #8de0a6; }
+.sql-number { color: #ff9f7f; }
 .sql-comment { color: #82958c; font-style: italic; }
 .table-wrap { overflow: auto; max-height: 410px; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
