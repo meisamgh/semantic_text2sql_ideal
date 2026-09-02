@@ -28,10 +28,39 @@ Operation = Literal[
     "COMPARE",
     "CORRECTION",
     "EXPLAIN",
+    "EXPLAIN_SQL",
+    "EXPLAIN_RESULT",
+    "EXPLAIN_INTERPRETATION",
+    "EXPLAIN_CONTEXT",
+    "EXPLAIN_FAILURE",
     "RESET_CONTEXT",
 ]
+EXPLANATION_OPERATIONS = frozenset(
+    {
+        "EXPLAIN",
+        "EXPLAIN_SQL",
+        "EXPLAIN_RESULT",
+        "EXPLAIN_INTERPRETATION",
+        "EXPLAIN_CONTEXT",
+        "EXPLAIN_FAILURE",
+    }
+)
+STATE_REQUIRED_OPERATIONS = frozenset(
+    {
+        "REFINE",
+        "OPTIMIZE",
+        "ADD_FILTER",
+        "REMOVE_FILTER",
+        "CHANGE_METRIC",
+        "CHANGE_GRAIN",
+        "COMPARE",
+        "CORRECTION",
+        *EXPLANATION_OPERATIONS,
+    }
+)
 _FOLLOWUP = re.compile(
-    r"\b(now|also|only|instead|same|those|them|it|previous|again|what about|how about)\b",
+    r"\b(now|also|only|instead|same|this|that|these|those|them|it|previous|again|"
+    r"what about|how about)\b",
     re.I,
 )
 _EXPLICIT_FOLLOWUP_START = re.compile(
@@ -82,17 +111,18 @@ def classify_operation(
     value = " ".join(message.casefold().split())
     if re.search(r"\b(reset|start over|start again|clear context|new conversation)\b", value):
         return "RESET_CONTEXT"
-    if not has_state:
-        return "NEW_QUERY"
     if feedback_category or _CORRECTION.search(value):
         return "CORRECTION"
-    if re.search(r"^(?:why|explain|how did you|show provenance|which tables)\b", value):
-        return "EXPLAIN"
+    explanation = _classify_explanation(value)
+    if explanation is not None:
+        return explanation
     if re.search(r"\b(optimi[sz]e|more efficient|improve performance|faster query)\b", value):
         return "OPTIMIZE"
+    if not has_state:
+        return "NEW_QUERY"
     if _EXPLICIT_FOLLOWUP_START.search(value):
         pass
-    elif _STANDALONE_START.search(value) or not _FOLLOWUP.search(value):
+    elif not _FOLLOWUP.search(value):
         return "NEW_QUERY"
     if re.search(r"\b(remove|without|exclude|drop)\b", value):
         return "REMOVE_FILTER"
@@ -118,11 +148,13 @@ def requires_model_interpretation(
         return False
     if _CORRECTION.search(value):
         return False
-    if re.search(r"^(?:why|explain|how did you|show provenance|which tables)\b", value):
+    if _classify_explanation(value) is not None:
         return False
     if re.search(r"\b(optimi[sz]e|more efficient|improve performance|faster query)\b", value):
         return False
-    return not (_EXPLICIT_FOLLOWUP_START.search(value) or _STANDALONE_START.search(value))
+    if _EXPLICIT_FOLLOWUP_START.search(value):
+        return False
+    return not (_STANDALONE_START.search(value) and not _FOLLOWUP.search(value))
 
 
 async def interpret_turn_detailed(
@@ -137,10 +169,11 @@ async def interpret_turn_detailed(
     prompt = f"""Classify one message in a conversational text-to-SQL application.
 Return exactly one JSON object:
 {{"operation":"CORRECTION","depends_on_previous":true,
-"resolved_instruction":"...","correction_type":null,"confidence":0.0}}
+"resolved_instruction":"...","correction_type":null,"target":null,"confidence":0.0}}
 
 Allowed operation values: NEW_QUERY, REFINE, OPTIMIZE, ADD_FILTER, REMOVE_FILTER,
-CHANGE_METRIC, CHANGE_GRAIN, COMPARE, CORRECTION, EXPLAIN, RESET_CONTEXT.
+CHANGE_METRIC, CHANGE_GRAIN, COMPARE, CORRECTION, EXPLAIN_SQL, EXPLAIN_RESULT,
+EXPLAIN_INTERPRETATION, EXPLAIN_CONTEXT, EXPLAIN_FAILURE, RESET_CONTEXT.
 
 Rules:
 - This call must not generate SQL.
@@ -148,9 +181,18 @@ Rules:
 - CORRECTION means the user says the previous interpretation/result/SQL is wrong or supplies
   a solution that should repair it.
 - REFINE and the ADD/REMOVE/CHANGE operations modify the previous accepted request.
+- EXPLAIN_SQL asks how or why the accepted SQL uses a join, CTE, filter, aggregation, ordering,
+  DISTINCT, window function, or other SQL construct.
+- EXPLAIN_RESULT asks why the executed result has particular values, rows, NULLs, duplicates,
+  missing rows, or an empty result.
+- EXPLAIN_INTERPRETATION asks how the analytical request was understood.
+- EXPLAIN_CONTEXT asks which tables, columns, relationships, glossary facts, or metadata were used.
+- EXPLAIN_FAILURE asks why generation, validation, model access, or execution failed.
 - If the message contains SQL as a proposed fix, preserve it verbatim in resolved_instruction
   and classify it as CORRECTION.
 - resolved_instruction must state the user's request clearly without inventing requirements.
+- target should identify the requested aspect when clear, for example JOIN_STRATEGY, RESULT_ROWS,
+  INTERPRETATION, CONTEXT, FAILURE, or PERFORMANCE; otherwise use null.
 - depends_on_previous must be false only for NEW_QUERY or RESET_CONTEXT.
 
 Previous root question: {previous.root_question}
@@ -205,7 +247,7 @@ def resolve_turn(
             turn_count=1,
         )
         return "NEW_QUERY", state
-    if operation == "EXPLAIN":
+    if operation in EXPLANATION_OPERATIONS:
         return operation, previous
     correction_type = feedback_category or (interpreted.correction_type if interpreted else None)
     correction = (
@@ -237,3 +279,56 @@ def resolve_turn(
             "contract_deltas": [*previous.contract_deltas, delta],
         }
     )
+
+
+def _classify_explanation(value: str) -> Operation | None:
+    if not re.search(
+        r"^(?:(?:can|could|would) you (?:please )?|please )?(?:tell me )?"
+        r"(?:why|explain|how did you|how was|show provenance|which tables|which columns|"
+        r"what does (?:this|the) (?:query|sql) do)\b",
+        value,
+    ):
+        return None
+    if re.search(r"\b(fail(?:ed|ure)?|error|rejected|unavailable|timeout|did not run)\b", value):
+        return "EXPLAIN_FAILURE"
+    if re.search(
+        r"\b(result|rows?|values?|null|empty|duplicate|missing|returned|calculated)\b",
+        value,
+    ):
+        return "EXPLAIN_RESULT"
+    if re.search(r"\b(interpret|understand|meaning|assume|assumption|request)\b", value):
+        return "EXPLAIN_INTERPRETATION"
+    if re.search(
+        r"\b(tables?|columns?|schema|context|metadata|glossary|relationship|provenance)\b",
+        value,
+    ):
+        return "EXPLAIN_CONTEXT"
+    return "EXPLAIN_SQL"
+
+
+def intent_target(message: str, operation: Operation) -> str | None:
+    """Attach a compact, non-semantic focus label for downstream explanation prompts."""
+    value = message.casefold()
+    if operation == "OPTIMIZE":
+        return "PERFORMANCE"
+    if operation == "EXPLAIN_FAILURE":
+        return "FAILURE"
+    if operation == "EXPLAIN_RESULT":
+        return "RESULT_ROWS"
+    if operation == "EXPLAIN_INTERPRETATION":
+        return "INTERPRETATION"
+    if operation == "EXPLAIN_CONTEXT":
+        return "CONTEXT"
+    if operation == "EXPLAIN_SQL":
+        if "join" in value:
+            return "JOIN_STRATEGY"
+        if "distinct" in value:
+            return "DISTINCT"
+        if "group" in value or "aggregation" in value:
+            return "AGGREGATION"
+        if "filter" in value or "where" in value:
+            return "FILTER"
+        if "order" in value or "limit" in value or "top" in value:
+            return "ORDERING"
+        return "SQL_STRUCTURE"
+    return None

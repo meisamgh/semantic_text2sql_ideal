@@ -177,7 +177,7 @@ function appendAssistant(body, elapsed) {
   const article = fragment.querySelector("article");
   const generation = body.generation || {};
   const accepted = generation.accepted === true;
-  const explanatory = body.operation === "EXPLAIN";
+  const explanatory = body.operation === "EXPLAIN" || body.operation?.startsWith("EXPLAIN_");
   const attempts = generation.attempts || [];
   const usage = body.token_usage || generation.token_usage || {};
   const tokenTotal = usage.input_tokens == null && usage.output_tokens == null
@@ -220,7 +220,7 @@ function appendAssistant(body, elapsed) {
   renderAttempts(fragment, attempts);
   const sql = generation.sql || "No SQL was accepted.";
   const displaySql = generation.formatted_sql || formatSqlForDisplay(sql);
-  renderHighlightedSql(fragment.querySelector("code"), displaySql);
+  renderHighlightedSql(fragment.querySelector(".sql-panel code"), displaySql);
   fragment.querySelector(".copy-button").addEventListener("click", (event) => {
     navigator.clipboard.writeText(sql);
     event.currentTarget.textContent = "Copied";
@@ -537,7 +537,6 @@ async function send(message, feedbackCategory = null) {
         session_id: sessionId,
         db_id: $("#databaseSelect").value,
         message: message.trim(),
-        evidence: $("#evidenceInput").value.trim() || null,
         provider,
         model,
         context_provider: contextMode === "model1" ? contextProvider : null,

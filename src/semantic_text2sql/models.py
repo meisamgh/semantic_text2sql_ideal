@@ -582,6 +582,12 @@ class ConversationState(StrictModel):
     semantic_contract: SemanticContract | None = None
     approved_tables: list[str] = Field(default_factory=list)
     last_sql: str | None = None
+    last_columns: list[str] = Field(default_factory=list)
+    last_row_count: int | None = Field(default=None, ge=0)
+    last_truncated: bool = False
+    last_model_context: dict[str, Any] = Field(default_factory=dict)
+    last_failure: str | None = None
+    last_failed_sql: str | None = None
     turn_count: int = Field(default=0, ge=0)
     corrections: list[str] = Field(default_factory=list, max_length=30)
     contract_deltas: list[ContractDelta] = Field(default_factory=list, max_length=30)
@@ -599,11 +605,17 @@ class TurnInterpretation(StrictModel):
         "COMPARE",
         "CORRECTION",
         "EXPLAIN",
+        "EXPLAIN_SQL",
+        "EXPLAIN_RESULT",
+        "EXPLAIN_INTERPRETATION",
+        "EXPLAIN_CONTEXT",
+        "EXPLAIN_FAILURE",
         "RESET_CONTEXT",
     ]
     depends_on_previous: bool
     resolved_instruction: str = Field(min_length=1, max_length=4_000)
     correction_type: str | None = Field(default=None, max_length=100)
+    target: str | None = Field(default=None, max_length=100)
     confidence: float = Field(ge=0, le=1)
     source: Literal["rules", "model", "fallback"] = "model"
     provider: ModelProvider | None = None
@@ -623,6 +635,11 @@ class ChatResponse(StrictModel):
         "COMPARE",
         "CORRECTION",
         "EXPLAIN",
+        "EXPLAIN_SQL",
+        "EXPLAIN_RESULT",
+        "EXPLAIN_INTERPRETATION",
+        "EXPLAIN_CONTEXT",
+        "EXPLAIN_FAILURE",
         "RESET_CONTEXT",
     ]
     resolved_question: str

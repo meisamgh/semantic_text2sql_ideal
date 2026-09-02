@@ -15,7 +15,10 @@ User question
     |
     v
 Conversation resolver
+    +-- EXPLAIN_* --> SQLGlot fact extraction --> grounded explanation
+    +-- OPTIMIZE  --> dedicated optimizer prompt --> equivalence/performance gate
     |
+    +-- NEW_QUERY / follow-up / correction
     v
 BM25 + dense embeddings + profiled value matching
     |  RRF fusion + optional LightGBM column reranking
@@ -51,10 +54,11 @@ Choose `Hybrid retrieval only` to bypass Model 1, or choose any configured model
 context selection. The SQL generator is selected independently.
 
 During each request, the interface displays live progress across conversation resolution, schema
-retrieval, optional context selection, deterministic grounding, and SQL generation/validation/
-execution. Completed responses separate SQL safety, execution success, and unmeasured semantic
-correctness. The verified context is rendered as readable table, column, key, type, date-format, and
-relationship cards, with the exact raw JSON still available on demand.
+retrieval, optional context selection, deterministic grounding, and SQL generation/validation.
+The verified context is rendered as readable table, column, key, type, date-format, and relationship
+cards, with the exact raw JSON still available on demand. Generated and rejected SQL is formatted
+for display and syntax-coloured in the browser; the original validated statement remains the value
+used for copying, optimization checks, and execution.
 
 Token accounting reports total provider usage, conversation-resolution usage, context-model usage,
 SQL-attempt usage, every individual attempt, cache usage, estimated model-context size, and tokens
@@ -62,6 +66,36 @@ avoided through pruning. Tokens consumed by discarded SQL attempts are identifie
 retry waste. Missing provider usage is displayed as unavailable and is never converted to zero.
 
 ## Model responsibilities
+
+### Conversation and grounded explanation
+
+Clear messages are routed deterministically. Ambiguous stateful turns use the client-selected model
+only to classify and rewrite the instruction, never to generate SQL. Explanation intents are split
+into SQL structure, result, interpretation, context, and failure. They require matching conversation
+state; an explanation or optimization request without a previous query produces a clarification
+instead of being misclassified as a new analytical question.
+
+For an explanation, SQLGlot first extracts tables, joins, predicates, outputs, grouping, ordering,
+limits, CTEs, and `DISTINCT` from the accepted SQL. A dedicated prompt gives the selected model only
+those verified facts, compact relationship context, the recorded result summary, and the client's
+specific question. The model may explain mechanical behavior and identify uncertainty, but it may
+not generate, change, optimize, or execute SQL. A deterministic evidence-only explanation is used
+if the model is unavailable or its response contradicts an explicit parsed SQL structure.
+
+The session retains the last accepted question, resolved request, SQL, result columns, row count,
+truncation flag, verified Model 2 context, and most recent failure details. This supports several
+follow-up explanation questions about the same accepted query. Explanation responses themselves are
+not appended to a full transcript, so references such as "explain your second point" may be
+ambiguous; users should name the SQL element or result behavior they want explained. Explanation
+turns do not generate, modify, optimize, or execute SQL and do not replace the accepted query state.
+
+Current explanation operations are:
+
+- `EXPLAIN_SQL`: joins, CTEs, filters, grouping, ordering, limits, and other SQL structure
+- `EXPLAIN_RESULT`: returned rows, values, `NULL`s, duplicates, missing rows, or empty results
+- `EXPLAIN_INTERPRETATION`: how the analytical request was understood
+- `EXPLAIN_CONTEXT`: selected tables, columns, relationships, glossary facts, and metadata
+- `EXPLAIN_FAILURE`: generation, model-access, validation, or database failures
 
 ### Shared hybrid retrieval
 
@@ -171,6 +205,33 @@ reinterpret the request.
 The optimizer must return the accepted SQL unchanged when no safe improvement exists. A rewrite is
 selected only after SQL safety validation, exact non-truncated result equivalence, and the existing
 measured-performance gate. Otherwise the previously accepted SQL remains the final query.
+
+## Autonomous analytics layer
+
+Phases 1 and 2 of a separate `autonomous_analytics` package are implemented. They do not create
+another SQL generator. Their fixed boundary is:
+
+```text
+Analytics agent decides what to investigate
+        -> existing Text-to-SQL and deterministic analytics establish what is true
+        -> analytics agent interprets verified evidence
+```
+
+The current foundation includes strict Pydantic contracts for KPI definitions, expected metric
+relationships and lags, stakeholder priority, observations, snapshots, evidence, hypotheses,
+investigation state, and resource budgets. `KPIRegistry` validates unique names and cross-metric
+references. `DeterministicSnapshotBuilder` calculates period changes, rolling statistics, robust
+z-score, EWMA forecast deviation, trend slope/strength, a simple change-point score, target
+deviation, completeness, and a bounded anomaly score without using an LLM.
+
+Phase 2 extracts the non-conversation orchestration used by `/api/chat` into `TextToSQLService`.
+Both the route and `TextToSQLTool.ask()` use that same retrieval, grounding, validation, bounded
+repair, and read-only execution path. The tool converts successful queries and structured failures
+into bounded, reproducible Evidence and can charge an InvestigationState SQL budget.
+
+The Investigator loop, Scout, scheduling, notification, and stakeholder reporting are deliberately
+not claimed as implemented yet. See
+[`docs/AUTONOMOUS_ANALYTICS_IMPLEMENTATION.md`](docs/AUTONOMOUS_ANALYTICS_IMPLEMENTATION.md).
 
 ## Spider Model 1 A/B benchmark
 
@@ -365,7 +426,8 @@ curl -X POST http://127.0.0.1:8000/api/chat \
 
 Conversation state is process-local. Failed turns preserve the last accepted state. The web UI
 supports follow-ups, corrections, explanation, optimization, cancellation, SQL copying, result
-tables, token usage, exact Model 2 context, and validation-attempt inspection.
+tables, syntax-coloured SQL, token usage, exact Model 2 context, and validation-attempt inspection.
+Restarting the API clears conversation state.
 
 ## Configuration
 
@@ -374,6 +436,8 @@ Important environment variables:
 | Variable | Purpose | Default |
 |---|---|---|
 | `TEXT2SQL_DATABASE_ROOT` | SQLite database root | `data` |
+| `TEXT2SQL_POSTGRES_DATABASES` | JSON allowlist mapping database IDs to PostgreSQL DSNs | unset |
+| `POSTGRES_BOOKS_DSN` | Legacy DSN for the `books_postgres` example | unset |
 | `TEXT2SQL_PROFILE_ROOT` | Offline profile root | `profiles` |
 | `TEXT2SQL_GLOSSARY_ROOT` | Approved glossary root | `data/business_glossaries` |
 | `OLLAMA_BASE_URL` | Ollama endpoint | `http://127.0.0.1:11434` |
@@ -395,9 +459,10 @@ Important environment variables:
 ## Verification
 
 ```bash
-uv run ruff format --check src
-uv run ruff check src
-uv run mypy src/semantic_text2sql
+uv run pytest -q
+uv run ruff check src tests
+uv run mypy src
+git diff --check
 ```
 
 Do not compare these numbers with old v3/v4/v5 runs unless the question indices, database files,
@@ -408,7 +473,9 @@ provider/model, prompt, execution limits, and result-equivalence rules are ident
 - `.env`, virtual environments, generated profiles, and local runtime files are ignored by Git.
 - API keys remain server-side.
 - SQL is parsed and restricted to one read-only query before execution.
-- SQLite uses query-only connections; PostgreSQL uses read-only transactions.
+- SQLite uses query-only connections. PostgreSQL starts every connection with `SET TRANSACTION READ
+  ONLY`, applies statement/lock/idle-transaction timeouts, and rolls back after use. Database IDs are
+  resolved from the configured server-side allowlist; callers cannot supply DSNs.
 - Rows and retry attempts are bounded.
 - The bundled `books.sqlite` is demonstration data, not a production database.
 
@@ -418,6 +485,7 @@ provider/model, prompt, execution limits, and result-equivalence rules are ident
 src/semantic_text2sql/
   api.py              FastAPI and web endpoints
   conversation.py     turn classification and session state
+  explanation.py      SQLGlot fact extraction and grounded explanation prompt
   context_planner.py  Model 1 bounded context selection
   context.py          deterministic context assembly
   hybrid_retrieval.py BM25, dense, value matching, RRF, ML reranking, bridge expansion
@@ -427,6 +495,11 @@ src/semantic_text2sql/
   llm.py              Ollama, AgentRouter, and Groq adapters plus Model 2 prompt
   validator.py        SQLGlot syntax and read-only safety checks
   agent.py            bounded repair and read-only execution
+src/autonomous_analytics/
+  models/             KPI, evidence, hypothesis, budget, and investigation contracts
+  metrics/            governed KPI registry and deterministic snapshot builder
+docs/
+  AUTONOMOUS_ANALYTICS_IMPLEMENTATION.md
 web/
   index.html
   app.js

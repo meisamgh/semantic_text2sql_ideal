@@ -94,10 +94,31 @@ class UncertainTurnModel:
         )
 
 
+class ExplanationModel:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    async def complete_detailed(self, model: str, prompt: str):  # type: ignore[no-untyped-def]
+        self.calls.append((model, prompt))
+        return (
+            "The query joins orders to customers to apply the country filter.",
+            TokenUsage(input_tokens=20, output_tokens=12),
+        )
+
+
 def test_classifier_detects_correction_and_explanation() -> None:
     assert classify_operation("That's wrong. Only paying customers", True) == "CORRECTION"
     assert classify_operation("Use only paying customers", True, "missing_filter") == "CORRECTION"
-    assert classify_operation("Why did you use the orders table?", True) == "EXPLAIN"
+    assert classify_operation("Why did you use the orders table?", True) == "EXPLAIN_CONTEXT"
+    assert classify_operation("Why did you use LEFT JOIN?", True) == "EXPLAIN_SQL"
+    assert classify_operation("Can you explain why LEFT JOIN was used?", True) == "EXPLAIN_SQL"
+    assert classify_operation("What does this query do?", True) == "EXPLAIN_SQL"
+    assert classify_operation("Why are there duplicate rows?", True) == "EXPLAIN_RESULT"
+    assert classify_operation("Why did the query fail?", True) == "EXPLAIN_FAILURE"
+    assert (
+        classify_operation("Explain how you interpreted my request", True)
+        == "EXPLAIN_INTERPRETATION"
+    )
     assert classify_operation("Optimize it", True) == "OPTIMIZE"
     assert requires_model_interpretation(
         "You need to calculate average per customer before selecting the minimum", True
@@ -144,6 +165,7 @@ def test_ambiguous_turn_uses_client_selected_model(registry, monkeypatch) -> Non
             "Calculate the average per customer before selecting the minimum."
         ),
         "correction_type": "wrong_aggregation",
+        "target": None,
         "confidence": 0.96,
         "source": "model",
         "provider": "ollama",
@@ -184,7 +206,16 @@ def test_low_confidence_turn_asks_for_clarification(registry, monkeypatch) -> No
 def test_chat_preserves_adds_removes_and_resets_context(registry, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setenv("TEXT2SQL_DATABASE_ROOT", str(registry.root))
     monkeypatch.setenv("TEXT2SQL_GLOSSARY_ROOT", str(registry.root / "glossaries"))
-    client = TestClient(create_app(TextToSQLAgent(registry, ConversationModel())))
+    explanation_model = ExplanationModel()
+    client = TestClient(
+        create_app(
+            TextToSQLAgent(registry, ConversationModel()),
+            conversation_completers={
+                "ollama": explanation_model,
+                "agentrouter": explanation_model,
+            },
+        )
+    )
     base = {
         "session_id": "conversation-1",
         "db_id": "shop",
@@ -248,8 +279,38 @@ def test_chat_preserves_adds_removes_and_resets_context(registry, monkeypatch) -
     )
     assert optimized["generation"]["optimization"]["status"] == "equivalent_not_faster"
     assert optimized["generation"]["optimization"]["selected_sql"] == "baseline"
-    assert explanation["operation"] == "EXPLAIN"
+    assert explanation["operation"] == "EXPLAIN_CONTEXT"
     assert explanation["generation"] is None
-    assert "aggregation=None" in explanation["explanation"]
+    assert explanation["explanation"] == (
+        "The query joins orders to customers to apply the country filter."
+    )
+    assert "VERIFIED_SQL_FACTS" in explanation_model.calls[0][1]
+    assert explanation["token_usage"]["input_tokens"] == 20
     assert reset["operation"] == "RESET_CONTEXT"
     assert reset["state"] is None
+
+
+def test_stateful_action_without_previous_query_requests_clarification(
+    registry, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("TEXT2SQL_DATABASE_ROOT", str(registry.root))
+    client = TestClient(create_app(TextToSQLAgent(registry, ConversationModel())))
+    base = {
+        "session_id": "missing-state",
+        "db_id": "shop",
+        "provider": "ollama",
+        "model": "test-model",
+        "execute": True,
+    }
+
+    optimize = client.post("/api/chat", json={**base, "message": "Optimize it"}).json()
+    explain = client.post(
+        "/api/chat", json={**base, "message": "Why did you use LEFT JOIN?"}
+    ).json()
+
+    assert optimize["operation"] == "OPTIMIZE"
+    assert optimize["clarification_required"] is True
+    assert "previous accepted query" in optimize["message"]
+    assert explain["operation"] == "EXPLAIN_SQL"
+    assert explain["clarification_required"] is True
+    assert "previous query" in explain["message"]

@@ -10,6 +10,7 @@ from semantic_text2sql.models import ChatRequest
 
 def test_database_catalog_reports_both_dialects(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.delenv("POSTGRES_BOOKS_DSN", raising=False)
+    monkeypatch.delenv("TEXT2SQL_POSTGRES_DATABASES", raising=False)
 
     response = TestClient(create_app()).get("/api/databases")
 
@@ -18,6 +19,42 @@ def test_database_catalog_reports_both_dialects(monkeypatch) -> None:  # type: i
         {"db_id": "books", "dialect": "sqlite", "configured": True},
         {"db_id": "books_postgres", "dialect": "postgres", "configured": False},
     ]
+
+
+def test_analytics_capabilities_are_compact_and_do_not_expose_credentials() -> None:
+    response = TestClient(create_app()).get("/api/databases/books/analytics-capabilities")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["db_id"] == "books"
+    assert payload["dialect"] == "sqlite"
+    assert payload["tables"]
+    assert set(payload) == {
+        "db_id",
+        "dialect",
+        "tables",
+        "business_entities",
+        "measures",
+        "dimensions",
+        "time_columns",
+        "available_kpis",
+    }
+    assert "dsn" not in response.text.casefold()
+    assert "password" not in response.text.casefold()
+
+
+def test_database_catalog_uses_postgres_allowlist_without_exposing_dsns(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.delenv("POSTGRES_BOOKS_DSN", raising=False)
+    monkeypatch.setenv(
+        "TEXT2SQL_POSTGRES_DATABASES",
+        '{"business":"postgresql://reader:secret@database/business"}',
+    )
+
+    response = TestClient(create_app()).get("/api/databases")
+
+    assert response.status_code == 200
+    assert {"db_id": "business", "dialect": "postgres", "configured": True} in response.json()
+    assert "secret" not in response.text
 
 
 def test_health_endpoint() -> None:

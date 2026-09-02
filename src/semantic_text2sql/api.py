@@ -15,29 +15,24 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from semantic_text2sql.agent import TextToSQLAgent
-from semantic_text2sql.context_planner import (
-    fallback_context_request,
-    plan_context_detailed,
-    reconcile_context_contract,
-    selection_to_context_request,
-    verify_context_request,
-)
 from semantic_text2sql.conversation import (
+    EXPLANATION_OPERATIONS,
+    STATE_REQUIRED_OPERATIONS,
     ConversationStore,
     classify_operation,
+    intent_target,
     interpret_turn_detailed,
     requires_model_interpretation,
     resolve_turn,
 )
 from semantic_text2sql.database import DatabaseRegistry
-from semantic_text2sql.formulas import apply_structural_formulas
+from semantic_text2sql.explanation import deterministic_explanation, explain_turn_detailed
 from semantic_text2sql.glossary import GlossaryStore
 from semantic_text2sql.historical import HistoricalQueryStore
 from semantic_text2sql.hybrid_retrieval import (
     FastEmbedEncoder,
     HybridSchemaRetriever,
     LightGBMSchemaReranker,
-    metadata_requests,
 )
 from semantic_text2sql.llm import (
     CLAUDE_CODE_EXECUTABLE,
@@ -58,22 +53,17 @@ from semantic_text2sql.models import (
     ChatResponse,
     CheckRequest,
     CheckResponse,
-    ContextRequest,
     ConversationState,
     DatabaseOption,
-    GenerateRequest,
     GenerateResponse,
-    HistoricalExample,
     ModelOption,
     ModelProvider,
-    PlannerMetadataRequirement,
-    SemanticContract,
     TokenUsage,
     TurnInterpretation,
 )
-from semantic_text2sql.postgres import PostgresRegistry
+from semantic_text2sql.postgres import PostgresRegistry, postgres_databases_from_environment
 from semantic_text2sql.profiling import ProfileStore
-from semantic_text2sql.validator import validate_sql
+from semantic_text2sql.service import TextToSQLService
 
 logger = logging.getLogger(__name__)
 
@@ -82,8 +72,8 @@ def create_app(
     agent: TextToSQLAgent | None = None,
     conversation_completers: dict[str, Any] | None = None,
 ) -> FastAPI:
-    postgres_dsn = os.environ.get("POSTGRES_BOOKS_DSN")
-    postgres = PostgresRegistry({"books_postgres": postgres_dsn}) if postgres_dsn else None
+    postgres_databases = postgres_databases_from_environment()
+    postgres = PostgresRegistry(postgres_databases) if postgres_databases else None
     sqlite = DatabaseRegistry(Path(os.environ.get("TEXT2SQL_DATABASE_ROOT", "data")))
     profiles = ProfileStore(Path(os.environ.get("TEXT2SQL_PROFILE_ROOT", "profiles")))
     glossaries = GlossaryStore(
@@ -146,6 +136,16 @@ def create_app(
         reranker=reranker,
         reranker_pool=int(os.environ.get("TEXT2SQL_SCHEMA_RERANKER_POOL", "30")),
     )
+    question_service = TextToSQLService(
+        database=sqlite,
+        postgres=postgres,
+        profiles=profiles,
+        glossaries=glossaries,
+        history=history,
+        retriever=hybrid_retriever,
+        agent=active_agent,
+        context_completers=cast(dict[ModelProvider, Any], turn_completers),
+    )
     conversations = ConversationStore()
     chat_jobs: dict[str, dict[str, Any]] = {}
 
@@ -196,14 +196,89 @@ def create_app(
             DatabaseOption(db_id=db_id, dialect="sqlite", configured=True)
             for db_id in sqlite.list_ids()
         ]
-        options.append(
-            DatabaseOption(
-                db_id="books_postgres",
-                dialect="postgres",
-                configured=postgres is not None,
+        if postgres is not None:
+            options.extend(
+                DatabaseOption(db_id=db_id, dialect="postgres", configured=True)
+                for db_id in postgres.configured_ids()
             )
-        )
+        elif not postgres_databases:
+            options.append(
+                DatabaseOption(db_id="books_postgres", dialect="postgres", configured=False)
+            )
         return options
+
+    @app.get("/api/databases/{db_id}/analytics-capabilities")
+    async def analytics_capabilities(db_id: str) -> dict[str, Any]:
+        """Expose a compact, read-only analytical capability summary."""
+        if db_id in sqlite.list_ids():
+            dialect = "sqlite"
+            schema = sqlite.inspect(db_id)
+        elif postgres is not None and db_id in postgres.configured_ids():
+            dialect = "postgres"
+            schema = postgres.inspect(db_id)
+        else:
+            raise HTTPException(status_code=404, detail="Database was not found or configured.")
+
+        profile = profiles.load(dialect, db_id)
+        profile_by_column = (
+            {(item.table, item.column): item for item in profile.columns} if profile else {}
+        )
+        measures: list[dict[str, Any]] = []
+        dimensions: list[dict[str, Any]] = []
+        time_columns: list[dict[str, Any]] = []
+        business_entities: set[str] = set()
+        numeric_types = {"integer", "real", "numeric", "decimal", "float", "double"}
+        for table in schema.tables:
+            business_entities.add(table.name)
+            for column in table.columns:
+                column_profile = profile_by_column.get((table.name, column.name))
+                semantic_type = column_profile.semantic_type if column_profile else None
+                field = {
+                    "name": column.name,
+                    "table": table.name,
+                    "data_type": column.data_type,
+                    "semantic_type": semantic_type,
+                    "description": column.description,
+                }
+                physical_type = column.data_type.casefold().split("(", 1)[0]
+                if semantic_type in {"date", "datetime"} or any(
+                    token in column.name.casefold() for token in ("date", "time", "month", "year")
+                ):
+                    time_columns.append(field)
+                elif semantic_type == "numeric" or any(
+                    numeric_type in physical_type for numeric_type in numeric_types
+                ):
+                    if not column.primary_key and semantic_type != "identifier":
+                        measures.append(field)
+                elif semantic_type not in {"secret", "email", "phone", "postal_address"}:
+                    dimensions.append(field)
+
+        glossary = glossaries.load(db_id)
+        available_kpis = []
+        if glossary is not None:
+            for term in glossary.terms:
+                if term.formula or term.structural_formula:
+                    available_kpis.append(
+                        {
+                            "name": term.term,
+                            "description": term.definition,
+                            "synonyms": term.synonyms,
+                            "columns": term.columns,
+                            "source": "glossary",
+                        }
+                    )
+                if term.core:
+                    business_entities.add(term.term)
+        return {
+            "db_id": db_id,
+            "dialect": dialect,
+            "tables": [table.name for table in schema.tables],
+            "business_entities": sorted(business_entities),
+            "measures": measures[:200],
+            "dimensions": dimensions[:200],
+            "time_columns": time_columns[:100],
+            "available_kpis": available_kpis[:100],
+        }
 
     @app.post("/api/check", response_model=CheckResponse)
     async def check(request: CheckRequest) -> CheckResponse:
@@ -242,6 +317,7 @@ def create_app(
                     depends_on_previous=fallback_operation not in {"NEW_QUERY", "RESET_CONTEXT"},
                     resolved_instruction=request.message,
                     correction_type=request.feedback_category,
+                    target=intent_target(request.message, fallback_operation),
                     confidence=0.0,
                     source="fallback",
                     provider=request.provider,
@@ -258,10 +334,28 @@ def create_app(
                 depends_on_previous=rule_operation not in {"NEW_QUERY", "RESET_CONTEXT"},
                 resolved_instruction=request.message,
                 correction_type=request.feedback_category,
+                target=intent_target(request.message, rule_operation),
                 confidence=1.0,
                 source="rules",
             )
         conversation_ms = round((perf_counter() - conversation_started) * 1_000)
+        if interpretation.operation in STATE_REQUIRED_OPERATIONS and not has_matching_state:
+            clarification = _missing_state_message(interpretation.operation)
+            return ChatResponse(
+                session_id=request.session_id,
+                operation=interpretation.operation,
+                resolved_question=request.message,
+                conversation_interpretation=interpretation,
+                state=previous,
+                message=clarification,
+                clarification_required=True,
+                clarification_question=clarification,
+                token_usage=conversation_usage,
+                timings_ms={
+                    "conversation_interpretation": conversation_ms,
+                    "total": round((perf_counter() - started) * 1_000),
+                },
+            )
         if interpretation.source in {"model", "fallback"} and interpretation.confidence < 0.65:
             clarification = (
                 "Should I modify the previous query, or treat your message as a new question?"
@@ -305,238 +399,75 @@ def create_app(
                 },
             )
         assert pending is not None
-        if operation == "EXPLAIN":
-            contract = pending.semantic_contract
-            explanation = (
-                "The last accepted query interpreted the request with "
-                f"aggregation={contract.aggregation if contract else None}, "
-                f"grain={contract.grain if contract else []}, "
-                f"filters={contract.proposed_filters if contract else []}, and "
-                f"tables={pending.approved_tables}."
-            )
+        if operation in EXPLANATION_OPERATIONS:
+            explanation_started = perf_counter()
+            explanation_usage = TokenUsage()
+            try:
+                explanation, explanation_usage = await explain_turn_detailed(
+                    turn_completers[request.provider],
+                    model=request.model,
+                    operation=operation,
+                    client_message=request.message,
+                    state=pending,
+                    dialect="sqlite",
+                )
+            except (ModelError, ValueError):
+                explanation = deterministic_explanation(operation, pending, "sqlite")
             return ChatResponse(
                 session_id=request.session_id,
-                operation="EXPLAIN",
+                operation=operation,
                 resolved_question=pending.resolved_question,
                 conversation_interpretation=interpretation,
                 state=pending,
-                message="Explained the last accepted query without generating new SQL.",
+                message="Explained the previous query without generating or changing SQL.",
                 explanation=explanation,
                 provenance=[
-                    "current question and trusted evidence",
-                    "business glossary",
-                    "live schema and PK/FK relationships",
-                    "semantic contract",
-                    "SQLGlot read-only safety validation",
+                    "accepted SQL",
+                    "SQLGlot-extracted SQL facts",
+                    "verified schema and relationship context",
+                    "recorded result or failure metadata",
                 ],
-                token_usage=conversation_usage,
+                token_usage=_add_usage(conversation_usage, explanation_usage),
                 timings_ms={
                     "conversation_interpretation": conversation_ms,
+                    "explanation": round((perf_counter() - explanation_started) * 1_000),
                     "total": round((perf_counter() - started) * 1_000),
                 },
             )
-        routing_started = perf_counter()
-        set_session_stage(request.session_id, "retrieval")
-        schema = sqlite.inspect(request.db_id)
-        database_profile = profiles.load("sqlite", request.db_id)
-        retrieval_trace = None
-        if operation == "OPTIMIZE" and previous and previous.approved_tables:
-            proposed_tables = previous.approved_tables
-            planner_schema = schema.model_copy(
-                update={
-                    "tables": [table for table in schema.tables if table.name in proposed_tables],
-                    "relationships": [
-                        item
-                        for item in schema.relationships
-                        if item.from_table in proposed_tables and item.to_table in proposed_tables
-                    ],
-                }
-            )
-            context_request = fallback_context_request(
-                previous.semantic_contract or SemanticContract()
-            )
-        else:
-            historical_schema_evidence = history.schema_evidence(
-                pending.resolved_question,
-                request.db_id,
-                schema,
-                top_k=3,
-                min_score=float(os.environ.get("TEXT2SQL_HISTORY_ML_MIN_SCORE", "0.65")),
-            )
-            planner_schema, retrieval_selection, retrieval_trace = hybrid_retriever.retrieve(
-                pending.resolved_question,
-                request.evidence,
-                schema,
-                database_profile,
-                glossaries.load(request.db_id),
-                historical_schema_evidence,
-            )
-            proposed_tables = retrieval_selection.tables
-            metadata = metadata_requests(
-                pending.resolved_question, planner_schema, database_profile
-            )
-            context_request = ContextRequest(
-                tables=retrieval_selection.tables,
-                columns=retrieval_selection.columns,
-                business_concepts=sorted(
-                    glossaries.relevant_concept_ids(request.db_id, pending.resolved_question)
-                ),
-                metadata_requirements=[
-                    PlannerMetadataRequirement(kind=cast(Any, kind), targets=[target])
-                    for kind, target in metadata
-                ],
-            )
-        routing_ms = round((perf_counter() - routing_started) * 1_000)
-        planning_started = perf_counter()
-        set_session_stage(
-            request.session_id,
-            "context_selection" if request.context_mode == "model1" else "grounding",
-        )
-        contract = (
-            previous.semantic_contract
-            if operation == "OPTIMIZE" and previous and previous.semantic_contract
-            else SemanticContract()
-        )
-        contract = apply_structural_formulas(
-            contract,
-            glossaries.structural_formulas(request.db_id, pending.resolved_question),
-        )
-        candidate_names = set(proposed_tables)
-        candidate_relationships = [
-            {
-                "left": f"{item.from_table}.{item.from_column}",
-                "right": f"{item.to_table}.{item.to_column}",
-                "state": "VERIFIED_FK",
-            }
-            for item in schema.relationships
-            if item.from_table in candidate_names and item.to_table in candidate_names
-        ]
-        if database_profile is not None:
-            candidate_relationships.extend(
-                {
-                    "left": f"{item.parent_table}.{item.parent_column}",
-                    "right": f"{item.child_table}.{item.child_column}",
-                    "state": "INFERRED_KEY_RELATIONSHIP" if item.inferred else "VERIFIED_FK",
-                }
-                for item in database_profile.relationships
-                if item.parent_table in candidate_names and item.child_table in candidate_names
-            )
-        planner_usage = TokenUsage()
-        planner_call_used = False
-        # The selected web/API route is authoritative. ``retrieval`` must never
-        # call Model 1, while ``model1`` must not silently collapse into the
-        # retrieval-only arm because a custom SQL agent was injected.
-        planner_enabled = request.context_mode == "model1"
-        planner_provider = request.context_provider or request.provider
-        planner_model = (
-            request.context_model or os.environ.get("TEXT2SQL_CONTEXT_MODEL") or request.model
-        )
-        if planner_enabled and operation != "OPTIMIZE":
-            try:
-                selection, planner_usage = await plan_context_detailed(
-                    turn_completers[planner_provider],
-                    planner_model,
-                    pending.resolved_question,
-                    request.evidence,
-                    planner_schema,
-                    glossaries.load(request.db_id),
-                    previous.semantic_contract
-                    if previous is not None and operation != "NEW_QUERY"
-                    else None,
-                    candidate_relationships,
-                )
-                context_request = selection_to_context_request(selection)
-                planner_call_used = True
-            except (ModelError, ValueError):
-                pass
-        approved_concepts = glossaries.relevant_concept_ids(
-            request.db_id, pending.resolved_question
-        )
-        set_session_stage(request.session_id, "grounding")
-        context_request = verify_context_request(
-            context_request,
-            schema,
-            contract,
-            database_profile,
-            approved_concepts,
-        )
-        logger.info("verified_context_request=%s", context_request.model_dump_json())
-        contract = reconcile_context_contract(contract, context_request)
-        generation_business_context = (
-            glossaries.retrieve(request.db_id, pending.resolved_question, top_k=5)
-            if context_request.business_concepts
-            else None
-        )
-        historical_examples: list[HistoricalExample] = []
-        if os.environ.get("TEXT2SQL_HISTORY_ENABLED", "false").casefold() == "true":
-            historical_examples = [
-                item
-                for item in history.search(
-                    pending.resolved_question,
-                    request.db_id,
-                    top_k=2,
-                    min_score=float(os.environ.get("TEXT2SQL_HISTORY_MIN_SCORE", "0.85")),
-                    bm25_pool=20,
-                    semantic_pool=5,
-                    candidate_tables=set(context_request.tables),
-                )
-                if validate_sql(item.sql, schema, dialect="sqlite").valid
-            ][:2]
-        if context_request.tables:
-            proposed_tables = context_request.tables
-        planning_ms = round((perf_counter() - planning_started) * 1_000)
-        generation_started = perf_counter()
-        set_session_stage(request.session_id, "generation")
-        generation_request = GenerateRequest(
-            db_id=request.db_id,
+        execution = await question_service.execute_question(
             question=pending.resolved_question,
+            db_id=request.db_id,
             evidence=request.evidence,
             provider=request.provider,
-            model=os.environ.get("TEXT2SQL_SQL_MODEL") or request.model,
+            model=request.model,
+            context_mode=request.context_mode,
+            context_provider=request.context_provider,
+            context_model=request.context_model,
             execute=request.execute,
             max_rows=request.max_rows,
-            approved_tables=proposed_tables,
-            semantic_contract=contract,
-            business_context=generation_business_context,
+            semantic_contract=(
+                previous.semantic_contract
+                if operation == "OPTIMIZE" and previous and previous.semantic_contract
+                else None
+            ),
+            previous_intent=(
+                previous.semantic_contract
+                if operation != "NEW_QUERY" and previous and previous.semantic_contract
+                else None
+            ),
             previous_sql=previous.last_sql if operation == "OPTIMIZE" and previous else None,
+            previous_approved_tables=(
+                previous.approved_tables if operation == "OPTIMIZE" and previous else None
+            ),
             optimization_required=operation == "OPTIMIZE",
-            context_request=context_request,
-            planner_call_used=planner_call_used,
-            planner_token_usage=planner_usage,
-            historical_examples=historical_examples,
-        )
-        generated = await active_agent.generate(
-            generation_request,
             progress=lambda stage: set_session_stage(request.session_id, stage),
         )
-        generation_ms = round((perf_counter() - generation_started) * 1_000)
-        historical_attempted = (
-            os.environ.get("TEXT2SQL_HISTORY_ENABLED", "false").casefold() == "true"
-        )
-        generated = generated.model_copy(
-            update={
-                "telemetry": generated.telemetry.model_copy(
-                    update={
-                        "model1_latency_ms": planning_ms,
-                        "ab_context_mode": request.context_mode,
-                        "retrieval": retrieval_trace,
-                        "selected_table_count": len(context_request.tables),
-                        "selected_column_count": sum(
-                            len(columns) for columns in context_request.columns.values()
-                        ),
-                        "metadata_request_count": len(context_request.metadata_requirements),
-                        "historical_attempted": historical_attempted,
-                        "historical_candidates_retrieved": (
-                            len(historical_examples) if historical_attempted else None
-                        ),
-                        "historical_examples_admitted": len(historical_examples),
-                        "historical_similarity_scores": [
-                            item.score for item in historical_examples
-                        ],
-                    }
-                )
-            }
-        )
+        generated = execution.generated
+        proposed_tables = execution.approved_tables
+        planner_usage = execution.planner_usage
+        routing_ms = execution.routing_ms
+        planning_ms = execution.planning_ms
+        generation_ms = execution.generation_ms
         response_state: ConversationState | None
         if generated.accepted:
             pending = pending.model_copy(
@@ -544,14 +475,27 @@ def create_app(
                     "semantic_contract": generated.semantic_contract,
                     "approved_tables": proposed_tables,
                     "last_sql": generated.sql,
+                    "last_columns": generated.columns,
+                    "last_row_count": generated.row_count,
+                    "last_truncated": generated.truncated,
+                    "last_model_context": generated.model_context or {},
+                    "last_failure": None,
+                    "last_failed_sql": None,
                 }
             )
             conversations.put(pending)
             response_state = pending
             message = _conversational_answer(operation, generated)
         else:
-            response_state = previous
             message = _failure_message(generated)
+            failure_state = (previous or pending).model_copy(
+                update={
+                    "last_failure": message,
+                    "last_failed_sql": generated.attempts[-1].sql if generated.attempts else None,
+                }
+            )
+            conversations.put(failure_state)
+            response_state = failure_state
         return ChatResponse(
             session_id=request.session_id,
             operation=operation,
@@ -668,6 +612,18 @@ def _add_known(first: int | None, second: int | None) -> int | None:
     if first is None and second is None:
         return None
     return (first or 0) + (second or 0)
+
+
+def _missing_state_message(operation: str) -> str:
+    if operation == "OPTIMIZE":
+        return "I do not have a previous accepted query to optimize. Run a query first."
+    if operation == "EXPLAIN_FAILURE":
+        return "I do not have a recorded query failure to explain in this conversation."
+    if operation in EXPLANATION_OPERATIONS:
+        return "I do not have a previous query or result to explain. Run a query first."
+    if operation == "CORRECTION":
+        return "I do not have a previous request to correct. Ask the complete question first."
+    return "Should I treat this as a new analytical question?"
 
 
 def _conversational_answer(operation: str, generated: GenerateResponse) -> str:

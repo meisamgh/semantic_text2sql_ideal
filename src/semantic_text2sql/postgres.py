@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -174,6 +176,36 @@ class PostgresRegistry:
         except (psycopg.Error, DatabaseError) as exc:
             raise DatabaseError("SQL_EXECUTION_FAILED", str(exc)) from exc
         return columns, [_json_row(row) for row in rows[:max_rows]], len(rows) > max_rows
+
+
+def postgres_databases_from_environment() -> dict[str, str]:
+    """Load the PostgreSQL allowlist without embedding credentials in source code.
+
+    ``TEXT2SQL_POSTGRES_DATABASES`` is a JSON object mapping public database IDs to
+    DSNs. The legacy books variable remains supported for existing installations.
+    """
+
+    databases: dict[str, str] = {}
+    configured = os.environ.get("TEXT2SQL_POSTGRES_DATABASES")
+    if configured:
+        try:
+            raw = json.loads(configured)
+        except json.JSONDecodeError as exc:
+            raise ValueError("TEXT2SQL_POSTGRES_DATABASES must be valid JSON") from exc
+        if not isinstance(raw, dict) or not all(
+            isinstance(db_id, str) and isinstance(dsn, str) for db_id, dsn in raw.items()
+        ):
+            raise ValueError("TEXT2SQL_POSTGRES_DATABASES must map database IDs to DSNs")
+        for db_id, dsn in raw.items():
+            if not db_id or any(not (char.isalnum() or char in "_-") for char in db_id):
+                raise ValueError(f"Unsupported PostgreSQL database ID: {db_id!r}")
+            if not dsn:
+                raise ValueError(f"PostgreSQL DSN is empty for database ID {db_id!r}")
+            databases[db_id] = dsn
+    legacy_books_dsn = os.environ.get("POSTGRES_BOOKS_DSN")
+    if legacy_books_dsn:
+        databases.setdefault("books_postgres", legacy_books_dsn)
+    return databases
 
 
 def _json_row(row: tuple[Any, ...]) -> list[Any]:

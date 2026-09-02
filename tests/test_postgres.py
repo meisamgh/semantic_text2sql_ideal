@@ -6,7 +6,7 @@ import pytest
 
 from semantic_text2sql.database import DatabaseError
 from semantic_text2sql.models import SchemaInfo
-from semantic_text2sql.postgres import PostgresRegistry
+from semantic_text2sql.postgres import PostgresRegistry, postgres_databases_from_environment
 from semantic_text2sql.validator import validate_sql
 
 
@@ -53,6 +53,29 @@ def test_validator_blocks_postgres_row_lock() -> None:
 
     assert result.valid is False
     assert result.code == "SQL_NOT_READ_ONLY"
+
+
+def test_postgres_allowlist_loads_multiple_databases_from_environment(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv(
+        "TEXT2SQL_POSTGRES_DATABASES",
+        '{"business":"postgresql://reader:secret@db/business",'
+        '"finance":"postgresql://reader:secret@db/finance"}',
+    )
+    monkeypatch.setenv("POSTGRES_BOOKS_DSN", "postgresql://reader:secret@db/books")
+
+    configured = postgres_databases_from_environment()
+
+    assert set(configured) == {"business", "finance", "books_postgres"}
+
+
+def test_postgres_allowlist_rejects_invalid_database_id(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv(
+        "TEXT2SQL_POSTGRES_DATABASES",
+        '{"../../business":"postgresql://reader:secret@db/business"}',
+    )
+
+    with pytest.raises(ValueError, match="Unsupported PostgreSQL database ID"):
+        postgres_databases_from_environment()
 
 
 @pytest.mark.skipif(not os.environ.get("POSTGRES_BOOKS_DSN"), reason="PostgreSQL DSN not set")
