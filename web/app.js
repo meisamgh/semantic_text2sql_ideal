@@ -201,11 +201,7 @@ function appendAssistant(body, elapsed) {
   }
   const rejectedAttempts = attempts.filter((attempt) => attemptOutcome(attempt) !== "passed");
   const failureSummary = rejectedAttempts.length
-    ? rejectedAttempts.map((attempt) => {
-      const validation = attempt.validation || {};
-      const outcome = attemptOutcome(attempt) === "not_selected" ? "not selected" : "failed";
-      return `Attempt ${attempt.number} ${outcome}: ${validation.code || "UNKNOWN"} — ${validation.message || "No reason returned."}`;
-    }).join(" ")
+    ? `${rejectedAttempts.length} candidate${rejectedAttempts.length === 1 ? " was" : "s were"} rejected; details are available under Issues.`
     : "";
   const responseMessage = body.explanation || body.message || "";
   fragment.querySelector(".response-note").textContent = [responseMessage, failureSummary].filter(Boolean).join(" ");
@@ -228,6 +224,7 @@ function appendAssistant(body, elapsed) {
   renderTable(fragment.querySelector(".table-wrap"), generation.columns || [], generation.rows || []);
   fragment.querySelector(".row-count").textContent = `${generation.row_count || 0} rows${generation.truncated ? " · truncated" : ""}`;
   renderModelContext(fragment, body, generation);
+  setupTechnicalTabs(fragment, rejectedAttempts.length);
   $("#messages").append(fragment);
   const correctionButton = article?.querySelector(".correction-button");
   correctionButton?.addEventListener("click", () => {
@@ -314,18 +311,19 @@ function renderAttempts(fragment, attempts) {
   const panel = fragment.querySelector(".attempts-panel");
   const list = fragment.querySelector(".attempts-list");
   const summary = fragment.querySelector(".attempts-summary");
-  if (!panel || !list || !summary || !attempts.length) {
+  const visibleAttempts = attempts.filter((attempt) => attemptOutcome(attempt) !== "passed");
+  if (!panel || !list || !summary || !visibleAttempts.length) {
     if (panel) panel.hidden = true;
     return;
   }
 
-  const failed = attempts.filter((attempt) => attemptOutcome(attempt) === "failed").length;
-  const notSelected = attempts.filter((attempt) => attemptOutcome(attempt) === "not_selected").length;
-  const summaryParts = [`Validation attempts (${attempts.length})`, `${failed} failed`];
+  const failed = visibleAttempts.filter((attempt) => attemptOutcome(attempt) === "failed").length;
+  const notSelected = visibleAttempts.filter((attempt) => attemptOutcome(attempt) === "not_selected").length;
+  const summaryParts = [`${visibleAttempts.length} rejected candidate${visibleAttempts.length === 1 ? "" : "s"}`];
+  if (failed) summaryParts.push(`${failed} failed`);
   if (notSelected) summaryParts.push(`${notSelected} not selected`);
   summary.textContent = summaryParts.join(" · ");
-  panel.open = failed > 0 || notSelected > 0;
-  attempts.forEach((attempt, index) => {
+  visibleAttempts.forEach((attempt, index) => {
     const validation = attempt.validation || {};
     const outcome = attemptOutcome(attempt);
     const passed = outcome === "passed";
@@ -355,6 +353,31 @@ function renderAttempts(fragment, attempts) {
     }
     list.append(item);
   });
+}
+
+function setupTechnicalTabs(fragment, issueCount) {
+  const panel = fragment.querySelector(".technical-panel");
+  if (!panel) return;
+  const issueTab = panel.querySelector('[data-tab="issues"]');
+  if (!issueCount) issueTab.hidden = true;
+  else {
+    issueTab.classList.add("has-issues");
+    issueTab.textContent = `Issues · ${issueCount}`;
+  }
+
+  const activate = (name) => {
+    panel.querySelectorAll(".technical-tab").forEach((tab) => {
+      tab.classList.toggle("active", tab.dataset.tab === name);
+    });
+    panel.querySelectorAll(".tab-pane").forEach((pane) => {
+      pane.classList.toggle("active", pane.dataset.tabPanel === name);
+    });
+  };
+  panel.querySelectorAll(".technical-tab").forEach((tab) => {
+    tab.addEventListener("click", () => activate(tab.dataset.tab));
+  });
+  const initial = panel.querySelector('[data-tab="context"]')?.hidden ? "tokens" : "context";
+  activate(initial);
 }
 
 function renderModelContext(fragment, body, generation) {
@@ -446,7 +469,18 @@ function renderTable(container, columns, rows) {
   const body = table.createTBody();
   rows.forEach((row) => {
     const tr = body.insertRow();
-    row.forEach((value) => { const td = tr.insertCell(); td.textContent = value === null ? "NULL" : String(value); });
+    row.forEach((value) => {
+      const td = tr.insertCell();
+      if (value === null) {
+        const badge = document.createElement("span");
+        badge.className = "null-value";
+        badge.textContent = "NULL";
+        td.append(badge);
+      } else {
+        td.textContent = String(value);
+        if (typeof value === "number") td.classList.add("numeric");
+      }
+    });
   });
   container.append(table);
 }

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="Conversational, glossary-grounded Text-to-SQL client" />
     <title>Query Room · Text-to-SQL</title>
-    <link rel="stylesheet" href="/static/styles.css?v=clean-results-1" />
+    <link rel="stylesheet" href="/static/styles.css?v=query-room-2" />
   </head>
   <body>
     <div class="app-shell">
@@ -26,18 +26,20 @@
           <button class="icon-button" id="resetButton" type="button" title="Reset conversation">↻</button>
         </div>
 
-        <label for="databaseSelect">Database</label>
-        <select id="databaseSelect"></select>
+        <section class="configuration-card">
+          <label for="databaseSelect">Database</label>
+          <select id="databaseSelect"></select>
 
-        <label for="contextModelSelect">Context method</label>
-        <select id="contextModelSelect"></select>
+          <label for="contextModelSelect">Context method</label>
+          <select id="contextModelSelect"></select>
 
-        <label for="sqlModelSelect">SQL generator</label>
-        <select id="sqlModelSelect"></select>
+          <label for="sqlModelSelect">SQL generator</label>
+          <select id="sqlModelSelect"></select>
+        </section>
 
         <div class="session-card">
-          <span class="eyebrow">Session</span>
-          <code id="sessionId"></code>
+          <div class="session-status"><span></span><strong>Conversation ready</strong></div>
+          <code id="sessionId" title="Conversation session"></code>
           <p>Follow-up questions reuse the last successful semantic context.</p>
         </div>
 
@@ -59,7 +61,7 @@
 
       <form class="composer" id="chatForm">
         <textarea id="messageInput" rows="1" placeholder="Ask a question about your data…" required></textarea>
-        <button type="submit" id="sendButton" aria-label="Send question">Ask <span>↗</span></button>
+        <button type="submit" id="sendButton" aria-label="Send question"><span>Ask</span><b aria-hidden="true">↑</b></button>
         <button type="button" id="cancelButton" class="cancel-button" hidden>Cancel</button>
         <p>Enter to send · Shift + Enter for a new line</p>
       </form>
@@ -78,23 +80,28 @@
             <div class="panel-header"><span>Query result</span><span class="row-count"></span></div>
             <div class="table-wrap"></div>
           </section>
-          <details class="attempts-panel">
-            <summary class="attempts-summary">Validation attempts</summary>
-            <div class="attempts-list"></div>
-          </details>
-          <details class="token-panel">
-            <summary class="token-summary">Token accounting</summary>
-            <div class="token-grid"></div>
-            <p class="token-note"></p>
-          </details>
-          <details class="context-panel">
-            <summary>Verified context sent to Model 2</summary>
-            <div class="schema-visual"></div>
-            <details class="context-json-panel">
-              <summary>Raw context JSON</summary>
-              <pre><code class="context-json"></code></pre>
-            </details>
-          </details>
+          <section class="technical-panel">
+            <nav class="technical-tabs" aria-label="Query details">
+              <button type="button" class="technical-tab active" data-tab="context">Context</button>
+              <button type="button" class="technical-tab issues-tab" data-tab="issues">Issues</button>
+              <button type="button" class="technical-tab" data-tab="tokens">Tokens</button>
+            </nav>
+            <div class="context-panel tab-pane active" data-tab-panel="context">
+              <div class="schema-visual"></div>
+              <details class="context-json-panel">
+                <summary>Raw context JSON</summary>
+                <pre><code class="context-json"></code></pre>
+              </details>
+            </div>
+            <div class="attempts-panel tab-pane" data-tab-panel="issues">
+              <div class="attempts-summary"></div>
+              <div class="attempts-list"></div>
+            </div>
+            <div class="token-panel tab-pane" data-tab-panel="tokens">
+              <div class="token-grid"></div>
+              <p class="token-note"></p>
+            </div>
+          </section>
           <details class="feedback-panel">
             <summary>Is this answer wrong?</summary>
             <div class="feedback-form">
@@ -118,6 +125,6 @@
         </div>
       </article>
     </template>
-    <script src="/static/app.js?v=grounded-explanations-1" defer></script>
+    <script src="/static/app.js?v=query-room-2" defer></script>
   </body>
 </html>

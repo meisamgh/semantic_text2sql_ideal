@@ -83,7 +83,11 @@ def test_web_chat_application_is_served() -> None:
     assert 'id="contextModelSelect"' in page.text
     assert 'id="sqlModelSelect"' in page.text
     assert 'id="contextModeSelect"' not in page.text
-    assert 'class="token-panel"' in page.text
+    assert 'class="technical-panel"' in page.text
+    assert 'data-tab="context"' in page.text
+    assert 'data-tab="issues"' in page.text
+    assert 'data-tab="tokens"' in page.text
+    assert "Validation attempts" not in page.text
     assert script.status_code == 200
     assert 'api("/api/chat"' in script.text
     assert "renderTokenAccounting" in script.text
@@ -96,9 +100,8 @@ def test_web_chat_application_is_served() -> None:
 
     sql_position = page.text.index('class="sql-panel"')
     result_position = page.text.index('class="result-panel"')
-    attempts_position = page.text.index('class="attempts-panel"')
-    tokens_position = page.text.index('class="token-panel"')
-    assert sql_position < result_position < attempts_position < tokens_position
+    details_position = page.text.index('class="technical-panel"')
+    assert sql_position < result_position < details_position
 
 
 def test_chat_request_accepts_independent_context_and_sql_models() -> None:
