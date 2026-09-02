@@ -50,9 +50,6 @@ details textarea { margin-top: 10px; resize: vertical; }
 .hero-kicker { color: var(--green-2); font-size: 11px; font-weight: 800; letter-spacing: .18em; }
 .hero h2 { margin: 17px 0 10px; font: 500 clamp(35px, 5vw, 58px)/1.05 Georgia, serif; }
 .hero > p { color: var(--muted); }
-.suggestions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 35px; }
-.suggestions button { padding: 18px; text-align: left; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--ink); line-height: 1.4; box-shadow: 0 5px 18px rgba(35,45,39,.04); }
-.suggestions button:hover { border-color: var(--green-2); transform: translateY(-1px); }
 .messages { max-width: 980px; margin: 0 auto; }
 .message { display: flex; gap: 13px; margin-bottom: 28px; }
 .user-message { justify-content: flex-end; }
@@ -160,7 +157,6 @@ td.numeric { text-align: right; font-variant-numeric: tabular-nums; }
   .configuration-card { display: contents; }
   .sidebar { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .conversation { padding: 30px 16px 150px; }
-  .suggestions { grid-template-columns: 1fr; }
   .composer { left: 12px; right: 12px; bottom: 10px; }
   .user-message .bubble { max-width: 88%; }
   .feedback-form { grid-template-columns: 1fr; }

@@ -638,10 +638,6 @@ $("#messageInput").addEventListener("keydown", (event) => {
   }
 });
 
-$("#suggestions").addEventListener("click", (event) => {
-  if (event.target.matches("button")) send(event.target.textContent);
-});
-
 $("#resetButton").addEventListener("click", async () => {
   try {
     await api("/api/chat", {

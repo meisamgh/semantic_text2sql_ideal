@@ -83,6 +83,8 @@ def test_web_chat_application_is_served() -> None:
     assert 'id="contextModelSelect"' in page.text
     assert 'id="sqlModelSelect"' in page.text
     assert 'id="contextModeSelect"' not in page.text
+    assert 'id="suggestions"' not in page.text
+    assert "How many records are in each category?" not in page.text
     assert 'class="technical-panel"' in page.text
     assert 'data-tab="context"' in page.text
     assert 'data-tab="issues"' in page.text
