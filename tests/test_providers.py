@@ -10,6 +10,7 @@ from semantic_text2sql.llm import (
     AgentRouterCodexModel,
     AgentRouterModel,
     GroqSQLModel,
+    JustDoWorkSQLModel,
     ModelError,
     _prompt,
     ollama_model_status,
@@ -73,6 +74,7 @@ def test_agentrouter_uses_anthropic_messages_contract() -> None:
     prompt = captured["body"]["messages"][0]["content"]  # type: ignore[index]
     assert "CORRECTNESS-FIRST EFFICIENCY RULES" in prompt
     assert "never use SELECT * unless" in prompt
+    assert "concise, stable, meaningful `AS` alias" in prompt
     assert "prefer EXISTS" in prompt
     assert "Retrieved live" not in prompt
     assert "Strategy hint:" not in prompt
@@ -196,6 +198,7 @@ def test_optimization_uses_dedicated_prompt_and_excludes_generation_context() ->
     assert "ORIGINAL_EXPLAIN:\nSCAN customers" in prompt
     assert '"customers"' in prompt
     assert "Return the accepted SQL unchanged" in prompt
+    assert "Preserve existing output aliases" in prompt
     assert "Question:" not in prompt
     assert "CORRECTNESS-FIRST EFFICIENCY RULES" not in prompt
     assert "HISTORICAL EXAMPLES" not in prompt
@@ -351,6 +354,45 @@ def test_groq_qwen_uses_chat_completions_and_reports_usage() -> None:
     assert captured["body"]["model"] == "qwen/qwen3.6-27b"  # type: ignore[index]
     assert captured["body"]["reasoning_effort"] == "none"  # type: ignore[index]
     assert captured["body"]["reasoning_format"] == "hidden"  # type: ignore[index]
+
+
+def test_justdowork_supports_claude_and_gpt_over_one_openai_compatible_api() -> None:
+    requested_models: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        requested_models.append(body["model"])
+        assert request.url.path == "/v1/chat/completions"
+        assert request.headers["authorization"] == "Bearer shared-key"
+        assert "temperature" not in body
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "SELECT 1"}}],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 1},
+            },
+        )
+
+    model = JustDoWorkSQLModel(
+        "shared-key",
+        "https://justdowork.test/v1",
+        transport=httpx.MockTransport(handler),
+    )
+
+    for name in ("claude-opus-5", "gpt-5.6-sol"):
+        sql, usage = asyncio.run(model.complete_detailed(name, "Return SQL only"))
+        assert sql == "SELECT 1"
+        assert usage.total_tokens == 4
+    assert requested_models == ["claude-opus-5", "gpt-5.6-sol"]
+
+
+def test_justdowork_fails_without_api_key() -> None:
+    try:
+        asyncio.run(JustDoWorkSQLModel(None).complete("claude-opus-5", "Return SQL"))
+    except ModelError as exc:
+        assert "JUSTDOWORK_API_KEY" in str(exc)
+    else:
+        raise AssertionError("Missing JustDoWork key was accepted")
 
 
 def test_groq_fails_without_api_key() -> None:

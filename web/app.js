@@ -31,7 +31,10 @@ async function initialize() {
     await api("/api/health");
     $("#healthStatus").classList.add("online");
     $("#healthStatus").lastChild.textContent = " Online";
-    const [databases, models] = await Promise.all([api("/api/databases"), api("/api/models")]);
+    const [databases, models] = await Promise.all([
+      api("/api/databases"),
+      api(`/api/models?refresh=${Date.now()}`, { cache: "no-store" }),
+    ]);
     const preferredModel = models.find((item) => item.configured);
     fillSelect("#databaseSelect", databases.filter((item) => item.configured && item.dialect === "sqlite"), "db_id", "db_id", null);
     const preferred = preferredModel && `${preferredModel.provider}|${preferredModel.model}`;

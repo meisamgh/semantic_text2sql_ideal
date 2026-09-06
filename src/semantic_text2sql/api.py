@@ -10,7 +10,7 @@ from time import perf_counter
 from typing import Any, cast
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -35,15 +35,11 @@ from semantic_text2sql.hybrid_retrieval import (
     LightGBMSchemaReranker,
 )
 from semantic_text2sql.llm import (
-    CLAUDE_CODE_EXECUTABLE,
-    AgentRouterClaudeModel,
-    AgentRouterCodexModel,
-    AgentRouterModel,
     GroqSQLModel,
+    JustDoWorkSQLModel,
     ModelError,
     OllamaSQLModel,
     RoutingSQLModel,
-    claude_code_available,
     ollama_model_status,
 )
 from semantic_text2sql.models import (
@@ -84,32 +80,27 @@ def create_app(
             os.environ.get("TEXT2SQL_HISTORY_PATH", "benchmarks/data/bird_history_seed42_400.json")
         )
     )
-    claude = AgentRouterClaudeModel(
-        os.environ.get("AGENTROUTER_API_KEY"),
-        os.environ.get("AGENTROUTER_BASE_URL", "https://agentrouter.org"),
-    )
-    agentrouter = AgentRouterModel(
-        claude,
-        AgentRouterCodexModel(
-            os.environ.get("AGENTROUTER_API_KEY"),
-            os.environ.get("AGENTROUTER_BASE_URL", "https://agentrouter.org"),
-        ),
-    )
     ollama = OllamaSQLModel(os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434"))
     groq = GroqSQLModel(
         os.environ.get("GROQ_API_KEY"),
         os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
     )
+    justdowork = JustDoWorkSQLModel(
+        os.environ.get("JUSTDOWORK_API_KEY"),
+        os.environ.get("JUSTDOWORK_BASE_URL", "https://api.justwoker.icu/v1"),
+        float(os.environ.get("JUSTDOWORK_TIMEOUT_SECONDS", "120")),
+    )
     active_agent = agent or TextToSQLAgent(
         sqlite,
-        RoutingSQLModel(ollama, agentrouter, groq),
+        RoutingSQLModel(ollama, justdowork, groq, justdowork),
         postgres,
         profiles,
     )
     turn_completers = conversation_completers or {
         "ollama": ollama,
-        "agentrouter": agentrouter,
+        "agentrouter": justdowork,
         "groq": groq,
+        "justdowork": justdowork,
     }
     app = FastAPI(
         title="Semantic Text-to-SQL v5",
@@ -165,11 +156,12 @@ def create_app(
         return FileResponse(web_root / "index.html")
 
     @app.get("/api/models", response_model=list[ModelOption])
-    async def models() -> list[ModelOption]:
-        missing_key = (
+    async def models(response: Response) -> list[ModelOption]:
+        response.headers["Cache-Control"] = "no-store"
+        missing_justdowork_key = (
             None
-            if os.environ.get("AGENTROUTER_API_KEY")
-            else "AGENTROUTER_API_KEY is not set in the environment."
+            if os.environ.get("JUSTDOWORK_API_KEY")
+            else "JUSTDOWORK_API_KEY is not set in the environment."
         )
         missing_groq_key = (
             None
@@ -177,16 +169,15 @@ def create_app(
             else "GROQ_API_KEY is not set in the environment."
         )
         local_reason = await ollama_model_status(DEFAULT_OLLAMA_MODEL, base_url=ollama.base_url)
-        claude_reason = missing_key or (
-            None
-            if claude_code_available()
-            else f"Claude Code is not installed at {CLAUDE_CODE_EXECUTABLE}."
-        )
         return [
             _model_option("ollama", DEFAULT_OLLAMA_MODEL, local=True, reason=local_reason),
-            _model_option("agentrouter", "gpt-5.6-sol", local=False, reason=missing_key),
-            _model_option("agentrouter", "claude-opus-5", local=False, reason=claude_reason),
-            _model_option("agentrouter", "claude-opus-4-7", local=False, reason=claude_reason),
+            _model_option("justdowork", "gpt-5.6-sol", local=False, reason=missing_justdowork_key),
+            _model_option(
+                "justdowork", "claude-opus-5", local=False, reason=missing_justdowork_key
+            ),
+            _model_option(
+                "justdowork", "claude-opus-4-7", local=False, reason=missing_justdowork_key
+            ),
             _model_option("groq", GROQ_QWEN_MODEL, local=False, reason=missing_groq_key),
         ]
 

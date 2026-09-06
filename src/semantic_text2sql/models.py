@@ -10,7 +10,7 @@ from semantic_text2sql.sql_formatting import format_sql_for_display
 
 DEFAULT_OLLAMA_MODEL = "qwen3.5:9b"
 GROQ_QWEN_MODEL = "qwen/qwen3.6-27b"
-ModelProvider = Literal["ollama", "agentrouter", "groq"]
+ModelProvider = Literal["ollama", "agentrouter", "groq", "justdowork"]
 """Single source of truth for the locally installed Ollama generation model.
 
 Sized to fit in system RAM: a model whose weights exceed memory pages to disk and

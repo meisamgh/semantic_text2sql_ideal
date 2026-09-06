@@ -247,6 +247,95 @@ class GroqSQLModel:
         return content, _token_usage(body.get("usage") or {})
 
 
+class JustDoWorkSQLModel:
+    """OpenAI-compatible client for Claude and GPT models served by JustDoWork."""
+
+    def __init__(
+        self,
+        api_key: str | None,
+        base_url: str = "https://api.justwoker.icu/v1",
+        timeout: float = 120.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+        self.transport = transport
+
+    async def generate(self, **kwargs: object) -> tuple[str, int, TokenUsage]:
+        from time import perf_counter
+
+        prompt = _prompt(
+            str(kwargs["question"]),
+            cast(str | None, kwargs.get("evidence")),
+            cast(SchemaInfo, kwargs["schema"]),
+            cast(StrategyHints, kwargs["strategy"]),
+            cast(Literal["sqlite", "postgres"], kwargs["dialect"]),
+            str(kwargs["profile_context"]),
+            cast(str | None, kwargs.get("previous_sql")),
+            cast(str | None, kwargs.get("feedback")),
+            cast(list[str], kwargs["rejected_shapes"]),
+            cast(Literal["reasoning", "icl", "alternative"], kwargs["generation_style"]),
+        )
+        started = perf_counter()
+        content, usage = await self.complete_detailed(str(kwargs["model"]), prompt)
+        return content, round((perf_counter() - started) * 1_000), usage
+
+    async def complete(self, model: str, prompt: str) -> str:
+        content, _ = await self.complete_detailed(model, prompt)
+        return content
+
+    async def complete_detailed(self, model: str, prompt: str) -> tuple[str, TokenUsage]:
+        if not self.api_key:
+            raise ModelError("JUSTDOWORK_API_KEY is not configured.")
+        try:
+            async with httpx.AsyncClient(
+                base_url=self.base_url,
+                timeout=self.timeout,
+                transport=self.transport,
+            ) as client:
+                response = await client.post(
+                    "chat/completions",
+                    headers={
+                        "authorization": f"Bearer {self.api_key}",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "max_tokens": 4_000,
+                        "stream": False,
+                    },
+                )
+                response.raise_for_status()
+                body = response.json()
+                content = body["choices"][0]["message"]["content"]
+        except httpx.HTTPStatusError as exc:
+            detail = _response_detail(exc.response)
+            raise ModelError(
+                f"The JustDoWork request failed: {detail or f'HTTP {exc.response.status_code}'}"
+            ) from exc
+        except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
+            raise ModelError(f"The JustDoWork request failed: {exc}") from exc
+        if not isinstance(content, str) or not content.strip():
+            raise ModelError("JustDoWork returned no text output.")
+        return content, _token_usage(body.get("usage") or {})
+
+
+def _response_detail(response: httpx.Response) -> str:
+    """Extract a bounded, non-secret provider error message."""
+    try:
+        payload = response.json()
+    except ValueError:
+        return f"HTTP {response.status_code}"
+    error = payload.get("error", payload) if isinstance(payload, dict) else payload
+    if isinstance(error, dict):
+        detail = error.get("message") or error.get("detail") or error.get("type")
+    else:
+        detail = error
+    return str(detail or f"HTTP {response.status_code}").replace("\n", " ")[:500]
+
+
 def _groq_retry_delay(response: httpx.Response) -> float:
     """Return Groq's bounded retry delay for a transient token-rate rejection."""
     header = response.headers.get("retry-after")
@@ -661,14 +750,17 @@ class RoutingSQLModel:
     def __init__(
         self,
         ollama: OllamaSQLModel,
-        agentrouter: AgentRouterClaudeModel | AgentRouterModel,
+        agentrouter: SQLModel,
         groq: GroqSQLModel,
+        justdowork: JustDoWorkSQLModel | None = None,
     ) -> None:
         self.providers: dict[str, SQLModel] = {
             "ollama": ollama,
             "agentrouter": agentrouter,
             "groq": groq,
         }
+        if justdowork is not None:
+            self.providers["justdowork"] = justdowork
 
     async def generate(
         self,
@@ -930,6 +1022,9 @@ Generation approach: {style_rules}
 CORRECTNESS-FIRST EFFICIENCY RULES:
 - Preserve the requested outputs, filters, formulas, grain, ordering, and result semantics.
 - Project only required columns; never use SELECT * unless every column is explicitly requested.
+- Give every computed, aggregated, derived, ranked, or otherwise renamed output expression a
+  concise, stable, meaningful `AS` alias that reflects the user's requested business output.
+  Preserve natural source-column names for plain projected columns unless renaming adds clarity.
 - Apply selective filters early when semantics allow, and avoid unnecessary joins, CTEs,
   DISTINCT operations, repeated scans, and sorting.
 - When a related table is needed only to test eligibility, prefer EXISTS if it preserves the
@@ -1034,6 +1129,8 @@ Return the accepted SQL unchanged when no safe improvement exists. {dialect_rule
 
 INVARIANTS:
 - Preserve output column count, names, order, result rows, result values, and meaningful ordering.
+- Preserve existing output aliases; add a meaningful `AS` alias when a projected expression has
+  no stable output name, without changing the result shape.
 - Preserve every filter, formula, aggregation, grouping level, grain, ranking, and LIMIT.
 - Use only tables, columns, and relationships in REFERENCED_CONTEXT; SQL aliases are allowed.
 - Do not add DISTINCT to conceal join fanout or remove required NULL/zero-division handling.
