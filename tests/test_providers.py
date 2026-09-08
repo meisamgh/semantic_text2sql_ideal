@@ -354,7 +354,7 @@ def test_groq_qwen_uses_chat_completions_and_reports_usage() -> None:
     assert captured["body"]["model"] == "qwen/qwen3.6-27b"  # type: ignore[index]
     assert captured["body"]["reasoning_effort"] == "none"  # type: ignore[index]
     assert captured["body"]["reasoning_format"] == "hidden"  # type: ignore[index]
-    assert captured["body"]["max_completion_tokens"] == 900  # type: ignore[index]
+    assert captured["body"]["max_completion_tokens"] == 180  # type: ignore[index]
 
 
 def test_justdowork_supports_claude_and_gpt_over_one_openai_compatible_api() -> None:

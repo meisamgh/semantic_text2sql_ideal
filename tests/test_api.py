@@ -64,6 +64,24 @@ def test_health_endpoint() -> None:
     assert response.json() == {"status": "online"}
 
 
+def test_justdowork_catalog_matches_gateway_and_requires_verified_enablement(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("JUSTDOWORK_API_KEY", "configured-key")
+    monkeypatch.delenv("JUSTDOWORK_ENABLED", raising=False)
+
+    options = TestClient(create_app()).get("/api/models").json()
+    justdowork = [item for item in options if item["provider"] == "justdowork"]
+
+    assert [item["model"] for item in justdowork] == [
+        "gpt-5.6-sol",
+        "gpt-5.6-luna",
+        "gpt-5.6-terra",
+    ]
+    assert all(item["configured"] is False for item in justdowork)
+    assert all("not been verified" in item["unavailable_reason"] for item in justdowork)
+
+
 def test_public_post_surface_contains_only_current_workflow() -> None:
     app = create_app()
     post_paths = {route.path for route in app.routes if "POST" in getattr(route, "methods", set())}

@@ -192,7 +192,7 @@ class GroqSQLModel:
             cast(Literal["reasoning", "icl", "alternative"], kwargs["generation_style"]),
         )
         started = perf_counter()
-        content, usage = await self._complete_detailed(str(kwargs["model"]), prompt, 900)
+        content, usage = await self._complete_detailed(str(kwargs["model"]), prompt, 180)
         return content, round((perf_counter() - started) * 1_000), usage
 
     async def complete(self, model: str, prompt: str) -> str:
@@ -200,7 +200,7 @@ class GroqSQLModel:
         return content
 
     async def complete_detailed(self, model: str, prompt: str) -> tuple[str, TokenUsage]:
-        return await self._complete_detailed(model, prompt, 900)
+        return await self._complete_detailed(model, prompt, 180)
 
     async def _complete_detailed(
         self, model: str, prompt: str, max_tokens: int

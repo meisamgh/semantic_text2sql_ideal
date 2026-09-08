@@ -158,11 +158,15 @@ def create_app(
     @app.get("/api/models", response_model=list[ModelOption])
     async def models(response: Response) -> list[ModelOption]:
         response.headers["Cache-Control"] = "no-store"
-        missing_justdowork_key = (
-            None
-            if os.environ.get("JUSTDOWORK_API_KEY")
-            else "JUSTDOWORK_API_KEY is not set in the environment."
-        )
+        justdowork_enabled = os.environ.get("JUSTDOWORK_ENABLED", "false").casefold() == "true"
+        missing_justdowork_key = None
+        if not os.environ.get("JUSTDOWORK_API_KEY"):
+            missing_justdowork_key = "JUSTDOWORK_API_KEY is not set in the environment."
+        elif not justdowork_enabled:
+            missing_justdowork_key = (
+                "JustDoWork is disabled because chat completion access has not been verified. "
+                "Set JUSTDOWORK_ENABLED=true only after a successful completion probe."
+            )
         missing_groq_key = (
             None
             if os.environ.get("GROQ_API_KEY")
@@ -172,11 +176,9 @@ def create_app(
         return [
             _model_option("ollama", DEFAULT_OLLAMA_MODEL, local=True, reason=local_reason),
             _model_option("justdowork", "gpt-5.6-sol", local=False, reason=missing_justdowork_key),
+            _model_option("justdowork", "gpt-5.6-luna", local=False, reason=missing_justdowork_key),
             _model_option(
-                "justdowork", "claude-opus-5", local=False, reason=missing_justdowork_key
-            ),
-            _model_option(
-                "justdowork", "claude-opus-4-7", local=False, reason=missing_justdowork_key
+                "justdowork", "gpt-5.6-terra", local=False, reason=missing_justdowork_key
             ),
             _model_option("groq", GROQ_QWEN_MODEL, local=False, reason=missing_groq_key),
         ]
