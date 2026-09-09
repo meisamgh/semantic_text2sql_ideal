@@ -98,8 +98,9 @@
             </div>
           </section>
           <details class="feedback-panel">
-            <summary>Is this answer wrong?</summary>
+            <summary>Review or correct this answer</summary>
             <div class="feedback-form">
+              <button class="correctness-button" type="button">Check correctness</button>
               <select class="feedback-category" aria-label="Problem category">
                 <option value="wrong_result">Wrong result</option>
                 <option value="wrong_interpretation">Wrong interpretation</option>
@@ -117,9 +118,15 @@
               <button class="correction-button" type="button">Correct & rerun</button>
             </div>
           </details>
+          <section class="human-review-panel" hidden>
+            <strong>Human review required</strong>
+            <p class="human-review-reason"></p>
+            <p class="human-review-question"></p>
+            <div class="human-review-options"></div>
+          </section>
         </div>
       </article>
     </template>
-    <script src="/static/app.js?v=query-room-4" defer></script>
+    <script src="/static/app.js?v=query-room-5" defer></script>
   </body>
 </html>

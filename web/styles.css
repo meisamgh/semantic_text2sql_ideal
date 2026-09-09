@@ -144,9 +144,15 @@ td.numeric { text-align: right; font-variant-numeric: tabular-nums; }
 .attempt-reason { margin: 7px 14px 12px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .attempt-item pre { max-height: 260px; border-top: 1px solid var(--line); box-shadow: none; }
 .feedback-panel summary { cursor: pointer; font-size: 12px; font-weight: 700; }
-.feedback-form { display: grid; grid-template-columns: 180px 1fr auto; gap: 8px; margin-top: 10px; }
+.feedback-form { display: grid; grid-template-columns: auto 180px 1fr auto; gap: 8px; margin-top: 10px; }
 .feedback-form input { min-width: 0; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
 .correction-button { border: 0; border-radius: 8px; padding: 0 13px; background: var(--green-2); color: white; font-weight: 700; }
+.correctness-button { border: 1px solid var(--green-2); border-radius: 8px; padding: 0 13px; background: transparent; color: var(--green); font-weight: 700; }
+.human-review-panel { margin-top: 14px; padding: 14px; border: 1px solid #c5923d; border-radius: 10px; background: #fff8e8; }
+.human-review-panel > strong { color: #815810; }
+.human-review-panel p { margin: 8px 0; color: var(--ink); font-size: 12px; }
+.human-review-options { display: flex; flex-wrap: wrap; gap: 8px; }
+.human-review-options button { padding: 8px 11px; border: 1px solid #c5923d; border-radius: 7px; background: white; color: #815810; font-weight: 700; }
 
 @media (max-width: 760px) {
   .app-shell { grid-template: 64px auto 1fr auto / 1fr; }

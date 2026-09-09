@@ -496,6 +496,28 @@ class Attempt(StrictModel):
     token_usage: TokenUsage = Field(default_factory=TokenUsage)
 
 
+class RecoveryToolCall(StrictModel):
+    tool: str
+    purpose: str
+    result_summary: str
+
+
+class RecoveryTrace(StrictModel):
+    activated: bool = True
+    failure_code: str
+    failure_category: str
+    tool_calls: list[RecoveryToolCall] = Field(default_factory=list, max_length=3)
+    evidence: list[str] = Field(default_factory=list, max_length=20)
+    requires_human_review: bool = False
+
+
+class HumanReviewRequest(StrictModel):
+    reason: str
+    question: str
+    options: list[str] = Field(default_factory=list, max_length=5)
+    evidence: list[str] = Field(default_factory=list, max_length=20)
+
+
 class OptimizationEvidence(StrictModel):
     optimizer: Literal["sqlglot", "model2"] = "model2"
     status: Literal[
@@ -610,6 +632,7 @@ class TurnInterpretation(StrictModel):
         "EXPLAIN_INTERPRETATION",
         "EXPLAIN_CONTEXT",
         "EXPLAIN_FAILURE",
+        "CHECK_CORRECTNESS",
         "RESET_CONTEXT",
     ]
     depends_on_previous: bool
@@ -640,6 +663,7 @@ class ChatResponse(StrictModel):
         "EXPLAIN_INTERPRETATION",
         "EXPLAIN_CONTEXT",
         "EXPLAIN_FAILURE",
+        "CHECK_CORRECTNESS",
         "RESET_CONTEXT",
     ]
     resolved_question: str
@@ -650,6 +674,7 @@ class ChatResponse(StrictModel):
     explanation: str | None = None
     clarification_required: bool = False
     clarification_question: str | None = None
+    human_review: HumanReviewRequest | None = None
     provenance: list[str] = Field(default_factory=list)
     token_usage: TokenUsage = Field(default_factory=TokenUsage)
     timings_ms: dict[str, int] = Field(default_factory=dict)
@@ -687,6 +712,7 @@ class GenerateResponse(StrictModel):
     model_context: dict[str, Any] | None = None
     context_request: ContextRequest | None = None
     telemetry: PipelineTelemetry = Field(default_factory=PipelineTelemetry)
+    recovery: RecoveryTrace | None = None
 
 
 class CheckRequest(StrictModel):

@@ -52,6 +52,7 @@ from semantic_text2sql.models import (
     ConversationState,
     DatabaseOption,
     GenerateResponse,
+    HumanReviewRequest,
     ModelOption,
     ModelProvider,
     TokenUsage,
@@ -59,6 +60,7 @@ from semantic_text2sql.models import (
 )
 from semantic_text2sql.postgres import PostgresRegistry, postgres_databases_from_environment
 from semantic_text2sql.profiling import ProfileStore
+from semantic_text2sql.recovery import RecoveryCoordinator, RecoveryTools, recovery_feedback
 from semantic_text2sql.service import TextToSQLService
 
 logger = logging.getLogger(__name__)
@@ -427,10 +429,37 @@ def create_app(
                     "total": round((perf_counter() - started) * 1_000),
                 },
             )
+        correctness_trace = None
+        correctness_evidence = request.evidence
+        if operation == "CHECK_CORRECTNESS" and previous and previous.last_sql:
+            database = sqlite if request.db_id in sqlite.list_ids() else postgres
+            if database is not None:
+                review_schema = database.inspect(request.db_id)
+                review_profile = profiles.load(review_schema.dialect, request.db_id)
+                correctness_trace = RecoveryCoordinator(
+                    RecoveryTools(database, request.db_id, review_schema, review_profile)
+                ).investigate(
+                    question=previous.resolved_question,
+                    failed_sql=previous.last_sql,
+                    failure_code="CORRECTNESS_REVIEW_SCHEMA",
+                    failure_message="User requested evidence-based correctness verification.",
+                    allowed_tables=previous.approved_tables,
+                )
+                correctness_evidence = "\n\n".join(
+                    value
+                    for value in (
+                        request.evidence,
+                        f"Previously accepted SQL:\n{previous.last_sql}",
+                        recovery_feedback(correctness_trace),
+                        "Generate an independent SQL candidate for the original request. Do not "
+                        "copy the previous SQL unless the evidence supports the same solution.",
+                    )
+                    if value
+                )
         execution = await question_service.execute_question(
             question=pending.resolved_question,
             db_id=request.db_id,
-            evidence=request.evidence,
+            evidence=correctness_evidence,
             provider=request.provider,
             model=request.model,
             context_mode=request.context_mode,
@@ -462,6 +491,7 @@ def create_app(
         planning_ms = execution.planning_ms
         generation_ms = execution.generation_ms
         response_state: ConversationState | None
+        human_review: HumanReviewRequest | None = None
         if generated.accepted:
             pending = pending.model_copy(
                 update={
@@ -479,6 +509,41 @@ def create_app(
             conversations.put(pending)
             response_state = pending
             message = _conversational_answer(operation, generated)
+            if operation == "CHECK_CORRECTNESS" and previous and previous.last_sql:
+                database = sqlite if request.db_id in sqlite.list_ids() else postgres
+                equivalent = False
+                if database is not None:
+                    try:
+                        old_columns, old_rows, old_truncated = database.execute(
+                            request.db_id, previous.last_sql, max_rows=request.max_rows
+                        )
+                        equivalent = (
+                            not old_truncated
+                            and not generated.truncated
+                            and old_columns == generated.columns
+                            and old_rows == generated.rows
+                        )
+                    except Exception:  # pragma: no cover - review must not break chat
+                        equivalent = False
+                if equivalent:
+                    message = (
+                        "An independently generated candidate returned the same bounded result. "
+                        "This increases confidence but is not formal proof of business correctness."
+                    )
+                else:
+                    human_review = HumanReviewRequest(
+                        reason=(
+                            "The independent correctness candidate did not reproduce the previous "
+                            "bounded output exactly."
+                        ),
+                        question="Which interpretation should be trusted before replacing the SQL?",
+                        options=[
+                            "Keep previous SQL",
+                            "Use reviewed candidate",
+                            "Explain the difference",
+                        ],
+                        evidence=correctness_trace.evidence if correctness_trace else [],
+                    )
         else:
             message = _failure_message(generated)
             failure_state = (previous or pending).model_copy(
@@ -489,6 +554,18 @@ def create_app(
             )
             conversations.put(failure_state)
             response_state = failure_state
+            if generated.termination_reason != "model_error":
+                recovery = generated.recovery or correctness_trace
+                human_review = HumanReviewRequest(
+                    reason="Automated recovery exhausted the bounded SQL attempts.",
+                    question="Please clarify the intended business meaning or expected result.",
+                    options=[
+                        "Clarify business definition",
+                        "Provide expected output",
+                        "Keep previous SQL",
+                    ],
+                    evidence=recovery.evidence if recovery else [],
+                )
         return ChatResponse(
             session_id=request.session_id,
             operation=operation,
@@ -497,6 +574,7 @@ def create_app(
             state=response_state,
             generation=generated,
             message=message,
+            human_review=human_review,
             provenance=[
                 "current question and trusted evidence",
                 "session-scoped conversation contract",
@@ -627,6 +705,8 @@ def _conversational_answer(operation: str, generated: GenerateResponse) -> str:
             prefix = "The rewrite was equivalent but not faster, so I retained the original query."
         else:
             prefix = "No optimization passed the acceptance gate; I retained the previous query."
+    elif operation == "CHECK_CORRECTNESS":
+        prefix = "I ran an evidence-based correctness review and executed an independent candidate."
     elif operation == "CORRECTION":
         prefix = "I applied your correction and reran the query."
     elif operation == "NEW_QUERY":

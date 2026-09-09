@@ -43,10 +43,16 @@ SQLGlot syntax and read-only safety validation
     v
 Read-only execution
     |
-    +-- failure --> focused SQL repair, maximum 3 attempts
+    +-- failure --> bounded LangGraph recovery
+    |                 | schema/profile evidence only when needed
+    |                 +-- focused SQL repair, maximum 3 total attempts
     |
     v
 Final SQL, result, context JSON, and attempt history
+    |
+    +-- user requests correctness --> independent evidence-based candidate
+                                      |
+                                      +-- disagreement/uncertainty --> human review
 ```
 
 The web application has a **Context method** selector and a separate **SQL generator** selector.
@@ -290,8 +296,16 @@ Neither status proves business correctness. Returning rows—or returning a non-
 treated as proof that the query correctly answers the question.
 
 When an attempt fails, the web application displays its attempt number, error code, explanation,
-and rejected SQL. Parse and database failures receive focused repair feedback. Generation
-is bounded to three total SQL attempts.
+and rejected SQL. After the first SQL failure, a bounded LangGraph controller classifies the
+failure and retrieves only relevant schema/profile evidence before the next repair. Provider and
+safety failures do not receive exploratory database access. Generation is bounded to three total
+SQL attempts.
+
+After a successful query, **Check correctness** creates an independent candidate using the original
+question, verified schema evidence, and the accepted SQL as an object to review. Exact agreement of
+the bounded result increases confidence but is not presented as proof. Disagreement or exhausted
+recovery produces a structured human-review request. Human decisions remain session-scoped unless
+they are explicitly promoted into an approved glossary outside this workflow.
 
 ## Models
 

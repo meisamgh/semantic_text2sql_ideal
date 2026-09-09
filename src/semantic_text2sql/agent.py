@@ -33,12 +33,14 @@ from semantic_text2sql.models import (
     GenerateResponse,
     OptimizationEvidence,
     PipelineTelemetry,
+    RecoveryTrace,
     SemanticContract,
     TokenUsage,
     ValidationResult,
 )
 from semantic_text2sql.postgres import PostgresRegistry
 from semantic_text2sql.profiling import ProfileStore
+from semantic_text2sql.recovery import RecoveryCoordinator, RecoveryTools, recovery_feedback
 from semantic_text2sql.strategy import route_question
 from semantic_text2sql.validator import (
     clean_model_sql,
@@ -220,6 +222,7 @@ class TextToSQLAgent:
         executed_columns: list[str] = []
         executed_rows: list[list[object]] = []
         executed_truncated = False
+        recovery_trace: RecoveryTrace | None = None
 
         # In explicit optimization mode, try a deterministic SQLGlot rewrite before
         # spending another model call. Formatting-only changes are ignored. The rewrite
@@ -447,6 +450,20 @@ class TextToSQLAgent:
             rejected_shapes.append(fingerprint)
             previous_sql = sql
             feedback = repair_context(validation)
+            if number == 1 and request.max_attempts > 1:
+                if progress:
+                    progress("recovery")
+                recovery_trace = RecoveryCoordinator(
+                    RecoveryTools(database, request.db_id, schema, profile)
+                ).investigate(
+                    question=request.question,
+                    failed_sql=sql,
+                    failure_code=validation.code,
+                    failure_message=validation.message,
+                    allowed_tables=[table.name for table in retrieved_schema.tables],
+                )
+                if recovery_trace.failure_category != "provider":
+                    feedback += "\n\n" + recovery_feedback(recovery_trace)
             category = failure_context_category(validation.code)
             if (
                 category
@@ -572,6 +589,7 @@ class TextToSQLAgent:
                     retrieved_categories,
                     attempts,
                 ),
+                recovery=recovery_trace,
             )
         rows = executed_rows if request.execute else []
         columns = executed_columns if request.execute else []
@@ -607,6 +625,7 @@ class TextToSQLAgent:
                 retrieved_categories,
                 attempts,
             ),
+            recovery=recovery_trace,
         )
 
 

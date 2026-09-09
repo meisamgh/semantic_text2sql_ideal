@@ -33,6 +33,7 @@ Operation = Literal[
     "EXPLAIN_INTERPRETATION",
     "EXPLAIN_CONTEXT",
     "EXPLAIN_FAILURE",
+    "CHECK_CORRECTNESS",
     "RESET_CONTEXT",
 ]
 EXPLANATION_OPERATIONS = frozenset(
@@ -55,6 +56,7 @@ STATE_REQUIRED_OPERATIONS = frozenset(
         "CHANGE_GRAIN",
         "COMPARE",
         "CORRECTION",
+        "CHECK_CORRECTNESS",
         *EXPLANATION_OPERATIONS,
     }
 )
@@ -113,6 +115,12 @@ def classify_operation(
         return "RESET_CONTEXT"
     if feedback_category or _CORRECTION.search(value):
         return "CORRECTION"
+    if has_state and re.search(
+        r"\b(check|verify|validate|review)\b.*\b(correct|correctness|accurate|accuracy)\b|"
+        r"\bis (?:this|the) (?:sql|query|answer|result) correct\b",
+        value,
+    ):
+        return "CHECK_CORRECTNESS"
     explanation = _classify_explanation(value)
     if explanation is not None:
         return explanation
@@ -173,7 +181,7 @@ Return exactly one JSON object:
 
 Allowed operation values: NEW_QUERY, REFINE, OPTIMIZE, ADD_FILTER, REMOVE_FILTER,
 CHANGE_METRIC, CHANGE_GRAIN, COMPARE, CORRECTION, EXPLAIN_SQL, EXPLAIN_RESULT,
-EXPLAIN_INTERPRETATION, EXPLAIN_CONTEXT, EXPLAIN_FAILURE, RESET_CONTEXT.
+EXPLAIN_INTERPRETATION, EXPLAIN_CONTEXT, EXPLAIN_FAILURE, CHECK_CORRECTNESS, RESET_CONTEXT.
 
 Rules:
 - This call must not generate SQL.
@@ -188,6 +196,7 @@ Rules:
 - EXPLAIN_INTERPRETATION asks how the analytical request was understood.
 - EXPLAIN_CONTEXT asks which tables, columns, relationships, glossary facts, or metadata were used.
 - EXPLAIN_FAILURE asks why generation, validation, model access, or execution failed.
+- CHECK_CORRECTNESS asks for an evidence-based review of the previously accepted SQL/result.
 - If the message contains SQL as a proposed fix, preserve it verbatim in resolved_instruction
   and classify it as CORRECTION.
 - resolved_instruction must state the user's request clearly without inventing requirements.
@@ -248,6 +257,8 @@ def resolve_turn(
         )
         return "NEW_QUERY", state
     if operation in EXPLANATION_OPERATIONS:
+        return operation, previous
+    if operation == "CHECK_CORRECTNESS":
         return operation, previous
     correction_type = feedback_category or (interpreted.correction_type if interpreted else None)
     correction = (

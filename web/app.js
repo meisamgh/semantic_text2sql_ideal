@@ -242,6 +242,7 @@ function appendAssistant(body, elapsed) {
   renderTable(fragment.querySelector(".table-wrap"), generation.columns || [], generation.rows || []);
   fragment.querySelector(".row-count").textContent = `${generation.row_count || 0} rows${generation.truncated ? " · truncated" : ""}`;
   renderModelContext(fragment, body, generation);
+  renderHumanReview(fragment, body.human_review);
   setupTechnicalTabs(fragment, rejectedAttempts.length);
   $("#messages").append(fragment);
   const correctionButton = article?.querySelector(".correction-button");
@@ -251,7 +252,26 @@ function appendAssistant(body, elapsed) {
     if (!correction) return;
     send(correction, category);
   });
+  article?.querySelector(".correctness-button")?.addEventListener("click", () => {
+    send("Check whether the previous SQL and result are correct.");
+  });
   article?.scrollIntoView({ behavior: "smooth", block: "end" });
+}
+
+function renderHumanReview(fragment, review) {
+  const panel = fragment.querySelector(".human-review-panel");
+  if (!panel || !review) return;
+  panel.hidden = false;
+  panel.querySelector(".human-review-reason").textContent = review.reason || "Automated review is uncertain.";
+  panel.querySelector(".human-review-question").textContent = review.question || "Please clarify.";
+  const options = panel.querySelector(".human-review-options");
+  (review.options || []).forEach((label) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    button.addEventListener("click", () => send(label, "other"));
+    options.append(button);
+  });
 }
 
 function usageTotal(usage) {
@@ -514,6 +534,7 @@ const pipelineStages = [
   ["grounding", "Grounding"],
   ["generation", "Generate SQL"],
   ["validation", "Validate"],
+  ["recovery", "Recovery"],
 ];
 
 function appendProgress(provider, model, contextMode) {

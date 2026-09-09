@@ -120,6 +120,7 @@ def test_classifier_detects_correction_and_explanation() -> None:
         == "EXPLAIN_INTERPRETATION"
     )
     assert classify_operation("Optimize it", True) == "OPTIMIZE"
+    assert classify_operation("Check whether this SQL is correct", True) == "CHECK_CORRECTNESS"
     assert requires_model_interpretation(
         "You need to calculate average per customer before selecting the minimum", True
     )
