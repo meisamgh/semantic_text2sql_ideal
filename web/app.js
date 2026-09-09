@@ -264,12 +264,13 @@ function renderHumanReview(fragment, review) {
   panel.hidden = false;
   panel.querySelector(".human-review-reason").textContent = review.reason || "Automated review is uncertain.";
   const checks = panel.querySelector(".human-review-filter-checks");
-  if (checks && (review.filter_checks || []).length) {
+  const failedChecks = (review.filter_checks || []).filter((item) => item.status !== "MATCH");
+  if (checks && failedChecks.length) {
     checks.hidden = false;
     const heading = document.createElement("strong");
-    heading.textContent = "Filter checks";
+    heading.textContent = "Issue";
     checks.append(heading);
-    (review.filter_checks || []).forEach((item) => {
+    failedChecks.forEach((item) => {
       const row = document.createElement("div");
       row.className = `filter-check ${item.status === "MATCH" ? "filter-match" : "filter-no-match"}`;
       const expression = document.createElement("span");
@@ -282,12 +283,6 @@ function renderHumanReview(fragment, review) {
         : `${item.match_count ?? 0} matching rows`;
       row.append(expression, result);
       checks.append(row);
-      if (item.status === "NO_MATCH" && item.no_match_explanation) {
-        const explanation = document.createElement("p");
-        explanation.className = "filter-check-explanation";
-        explanation.textContent = item.no_match_explanation;
-        checks.append(explanation);
-      }
     });
   }
   const cost = panel.querySelector(".human-review-cost");
