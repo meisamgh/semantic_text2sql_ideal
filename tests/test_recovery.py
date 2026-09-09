@@ -139,3 +139,24 @@ def test_recovery_caps_database_filter_probes(registry) -> None:  # type: ignore
 
     assert trace.usage.database_probe_count == 8
     assert trace.usage.budget_exhausted is True
+
+
+def test_missing_identifier_is_explained_in_plain_language(registry) -> None:  # type: ignore[no-untyped-def]
+    schema = registry.inspect("shop")
+    trace = RecoveryCoordinator(
+        RecoveryTools(registry, "shop", schema, profile=None)
+    ).investigate(
+        question="How much did customer 600000 spend?",
+        failed_sql="SELECT SUM(amount) FROM orders WHERE customer_id = 600000",
+        failure_code="NULL_RESULT",
+        failure_message="Aggregate returned NULL",
+        allowed_tables=["orders"],
+        mode="NULL_RESULT",
+    )
+
+    assert trace.diagnosis_code == "FILTER_NO_MATCH"
+    assert trace.filter_checks[0]["subject_kind"] == "identifier"
+    assert trace.filter_checks[0]["no_match_explanation"] == (
+        "There is no customer with ID 600000 in this database. Because the selected customer "
+        "is unavailable, the requested result cannot be calculated."
+    )

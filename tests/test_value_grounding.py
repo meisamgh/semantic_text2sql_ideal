@@ -262,17 +262,15 @@ def test_api_escalates_executable_zero_row_result_to_human_review(
     assert body["generation"]["accepted"] is True
     assert body["generation"]["row_count"] == 0
     assert body["human_review"]["question"] == (
-        "Would you like to accept this result or change the request?"
+        "No data matched all requested conditions. What would you like to do?"
     )
     assert "Accept no matching data" in body["human_review"]["options"]
-    assert body["human_review"]["filter_checks"] == [
-        {
-            "filter": "country = 'Spain'",
-            "plain_language": "country must equal Spain",
-            "match_count": 0,
-            "status": "NO_MATCH",
-        }
-    ]
+    check = body["human_review"]["filter_checks"][0]
+    assert check["filter"] == "country = 'Spain'"
+    assert check["plain_language"] == "country must equal Spain"
+    assert check["match_count"] == 0
+    assert check["status"] == "NO_MATCH"
+    assert "Spain" in check["no_match_explanation"]
     assert body["human_review"]["recovery_usage"]["llm_calls"] == 0
     assert body["human_review"]["recovery_usage"]["database_probe_count"] == 1
 

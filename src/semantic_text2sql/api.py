@@ -55,6 +55,7 @@ from semantic_text2sql.models import (
     HumanReviewRequest,
     ModelOption,
     ModelProvider,
+    RecoveryTrace,
     TokenUsage,
     TurnInterpretation,
 )
@@ -579,14 +580,8 @@ def create_app(
                     human_review = HumanReviewRequest(
                         reason=zero_trace.diagnosis_summary
                         or "The question and filters produced no matching data.",
-                        question="Would you like to accept this result or change the request?",
-                        options=[
-                            "Accept no matching data",
-                            "Edit filters",
-                            "Edit the question",
-                            "Check another period",
-                            "Explain the diagnosis",
-                        ],
+                        question=_human_review_question(zero_trace),
+                        options=_human_review_options(zero_trace),
                         evidence=zero_trace.evidence,
                         filter_checks=zero_trace.filter_checks,
                         recovery_usage=zero_trace.usage,
@@ -626,18 +621,12 @@ def create_app(
                         reason=null_trace.diagnosis_summary
                         or "The result contains a missing value that needs confirmation.",
                         question=(
-                            "Would you like to accept that no data matched or change the request?"
+                            _human_review_question(null_trace)
                             if null_filter_failure
                             else "Would you like to accept the missing value or review the request?"
                         ),
                         options=(
-                            [
-                                "Accept no matching data",
-                                "Edit filters",
-                                "Edit the question",
-                                "Check another period",
-                                "Explain the diagnosis",
-                            ]
+                            _human_review_options(null_trace)
                             if null_filter_failure
                             else [
                                 "Confirm expected NULL",
@@ -879,6 +868,48 @@ def _failure_message(generated: GenerateResponse) -> str:
             return detail
         return f"The {generated.model} model could not be reached: {detail}"
     return "Query failed; previous conversation state was preserved."
+
+
+def _human_review_question(trace: RecoveryTrace) -> str:
+    failed = next(
+        (item for item in trace.filter_checks if item.get("status") == "NO_MATCH"),
+        None,
+    )
+    if failed and failed.get("subject_kind") == "identifier":
+        return "The selected record is not available. What would you like to do?"
+    if failed and failed.get("subject_kind") == "date":
+        return "The selected period has no matching data. What would you like to do?"
+    return "No data matched all requested conditions. What would you like to do?"
+
+
+def _human_review_options(trace: RecoveryTrace) -> list[str]:
+    failed = next(
+        (item for item in trace.filter_checks if item.get("status") == "NO_MATCH"),
+        None,
+    )
+    if failed and failed.get("subject_kind") == "identifier":
+        return [
+            "Accept that the record is unavailable",
+            "Enter another ID",
+            "Edit filters",
+            "Edit the question",
+            "Explain the check",
+        ]
+    if failed and failed.get("subject_kind") == "date":
+        return [
+            "Accept no data for this period",
+            "Choose another period",
+            "Edit filters",
+            "Edit the question",
+            "Explain the check",
+        ]
+    return [
+        "Accept no matching data",
+        "Edit filters",
+        "Edit the question",
+        "Check another period",
+        "Explain the diagnosis",
+    ]
 
 
 app = create_app()

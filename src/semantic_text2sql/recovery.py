@@ -258,10 +258,17 @@ class RecoveryTools:
                     timeout_seconds=min(2.0, remaining),
                 )
                 count = int(rows[0][0]) if rows else 0
+                subject_kind = _filter_subject_kind(predicate)
                 checks.append(
                     {
                         "filter": predicate.sql(dialect=self.schema.dialect),
                         "plain_language": _plain_filter(predicate),
+                        "subject_kind": subject_kind,
+                        "no_match_explanation": (
+                            _no_match_explanation(predicate, subject_kind)
+                            if count == 0
+                            else None
+                        ),
                         "match_count": count,
                         "status": "MATCH" if count > 0 else "NO_MATCH",
                     }
@@ -463,7 +470,8 @@ def _diagnose(
                     "selected database column.",
                 )
     no_match = [
-        item.get("plain_language", item["filter"])
+        item.get("no_match_explanation")
+        or item.get("plain_language", item["filter"])
         for item in checks
         if item.get("status") == "NO_MATCH"
     ]
@@ -534,3 +542,34 @@ def _plain_filter(predicate: exp.Expression) -> str:
     if isinstance(predicate, exp.Is):
         return f"{subject} must have the requested missing-value state"
     return f"The condition on {subject} must be satisfied"
+
+
+def _filter_subject_kind(predicate: exp.Expression) -> str:
+    column = next(predicate.find_all(exp.Column), None)
+    name = column.name.casefold() if column is not None else ""
+    if name.endswith("id") or name.endswith("_id"):
+        return "identifier"
+    if any(token in name for token in ("date", "year", "month", "time")):
+        return "date"
+    if isinstance(predicate, (exp.GT, exp.GTE, exp.LT, exp.LTE, exp.Between)):
+        return "numeric_or_date"
+    return "categorical_or_text"
+
+
+def _no_match_explanation(predicate: exp.Expression, subject_kind: str) -> str:
+    column = next(predicate.find_all(exp.Column), None)
+    subject = column.name if column is not None else "selected field"
+    literal = next(predicate.find_all(exp.Literal), None)
+    value = str(literal.this) if literal is not None else "the requested value"
+    if subject_kind == "identifier":
+        entity = subject[:-2].replace("_", " ").strip() or "record"
+        return (
+            f"There is no {entity.lower()} with ID {value} in this database. "
+            f"Because the selected {entity.lower()} is unavailable, the requested result "
+            "cannot be calculated."
+        )
+    if subject_kind == "date":
+        return f"The database has no records for the requested {subject} value {value}."
+    if subject_kind == "numeric_or_date":
+        return f"No records satisfy the requested condition on {subject} using {value}."
+    return f"The value {value} is not used by any matching record in {subject}."

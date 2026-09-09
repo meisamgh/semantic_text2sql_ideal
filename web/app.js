@@ -282,6 +282,12 @@ function renderHumanReview(fragment, review) {
         : `${item.match_count ?? 0} matching rows`;
       row.append(expression, result);
       checks.append(row);
+      if (item.status === "NO_MATCH" && item.no_match_explanation) {
+        const explanation = document.createElement("p");
+        explanation.className = "filter-check-explanation";
+        explanation.textContent = item.no_match_explanation;
+        checks.append(explanation);
+      }
     });
   }
   const cost = panel.querySelector(".human-review-cost");

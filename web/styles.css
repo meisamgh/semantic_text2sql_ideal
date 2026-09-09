@@ -159,6 +159,7 @@ td.numeric { text-align: right; font-variant-numeric: tabular-nums; }
 .filter-check span { white-space: nowrap; font-weight: 700; }
 .filter-match span { color: #23704a; }
 .filter-no-match span { color: #a33b32; }
+.filter-check-explanation { margin: -3px 4px 5px !important; font-size: 12px !important; line-height: 1.45; }
 .human-review-options { display: flex; flex-wrap: wrap; gap: 8px; }
 .human-review-options button { padding: 8px 11px; border: 1px solid #c5923d; border-radius: 7px; background: white; color: #815810; font-weight: 700; }
 
