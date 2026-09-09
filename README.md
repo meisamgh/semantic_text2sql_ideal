@@ -88,6 +88,8 @@ filter inspection. Database access remains read-only and restricted to configure
 Each recovery trace reports its model-call count, token usage, diagnostic database probes, latency
 and available cost information. The current deterministic recovery graph uses zero LLM calls and
 zero LLM tokens; database cost remains explicitly unmeasured when the backend does not report it.
+Recovery is capped at six tool calls, eight diagnostic database probes and eight seconds overall;
+the trace explicitly reports when a limit is reached.
 
 ## Validation boundary
 

@@ -510,6 +510,10 @@ class RecoveryUsage(StrictModel):
     )
     database_probe_count: int = Field(default=0, ge=0)
     latency_ms: int = Field(default=0, ge=0)
+    max_tool_calls: int = Field(default=6, ge=1)
+    max_database_probes: int = Field(default=8, ge=1)
+    max_recovery_ms: int = Field(default=8_000, ge=1)
+    budget_exhausted: bool = False
     estimated_llm_cost_usd: float | None = Field(default=0.0, ge=0)
     database_cost_usd: float | None = Field(default=None, ge=0)
     database_cost_note: str = Field(

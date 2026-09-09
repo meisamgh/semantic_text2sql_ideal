@@ -66,6 +66,10 @@ def test_zero_result_recovery_inspects_every_filter(registry) -> None:  # type: 
     assert trace.usage.token_usage.total_tokens == 0
     assert trace.usage.database_probe_count == 3
     assert trace.usage.latency_ms >= 0
+    assert trace.usage.max_tool_calls == 6
+    assert trace.usage.max_database_probes == 8
+    assert trace.usage.max_recovery_ms == 8_000
+    assert trace.usage.budget_exhausted is False
 
 
 def test_provider_failure_does_not_probe_database(registry) -> None:  # type: ignore[no-untyped-def]
@@ -117,3 +121,21 @@ def test_sampled_date_values_are_not_treated_as_complete_domain(registry) -> Non
     )
 
     assert trace.diagnosis_code != "FILTER_VALUE_NOT_FOUND"
+
+
+def test_recovery_caps_database_filter_probes(registry) -> None:  # type: ignore[no-untyped-def]
+    schema = registry.inspect("shop")
+    tools = RecoveryTools(registry, "shop", schema, profile=None)
+    predicates = " AND ".join(f"amount >= {index}" for index in range(1, 10))
+
+    trace = RecoveryCoordinator(tools).investigate(
+        question="Apply several amount filters",
+        failed_sql=f"SELECT order_id FROM orders WHERE {predicates}",
+        failure_code="ZERO_RESULT",
+        failure_message="Executed with zero rows",
+        allowed_tables=["orders"],
+        mode="ZERO_RESULT",
+    )
+
+    assert trace.usage.database_probe_count == 8
+    assert trace.usage.budget_exhausted is True

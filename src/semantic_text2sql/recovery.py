@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from time import perf_counter
+from time import monotonic, perf_counter
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -46,12 +46,27 @@ class RecoveryTools:
         profile: DatabaseProfile | None,
         *,
         max_rows: int = 20,
+        max_database_probes: int = 8,
+        max_recovery_seconds: float = 8.0,
     ) -> None:
         self.database = database
         self.db_id = db_id
         self.schema = schema
         self.profile = profile
         self.max_rows = min(max_rows, 20)
+        self.max_database_probes = min(max(1, max_database_probes), 8)
+        self.max_recovery_seconds = min(max(0.1, max_recovery_seconds), 8.0)
+        self._deadline: float | None = None
+        self.budget_exhausted = False
+
+    def begin_recovery(self) -> None:
+        self._deadline = monotonic() + self.max_recovery_seconds
+        self.budget_exhausted = False
+
+    def remaining_seconds(self) -> float:
+        if self._deadline is None:
+            return self.max_recovery_seconds
+        return max(0.0, self._deadline - monotonic())
 
     def inspect_schema(self, tables: list[str]) -> dict[str, Any]:
         allowed = set(tables)
@@ -210,9 +225,16 @@ class RecoveryTools:
         }
         if not physical_tables.issubset(set(allowed_tables)):
             return []
-        predicates = _split_and(select.args["where"].this)[:10]
+        all_predicates = _split_and(select.args["where"].this)
+        predicates = all_predicates[: self.max_database_probes]
+        if len(all_predicates) > self.max_database_probes:
+            self.budget_exhausted = True
         checks: list[dict[str, Any]] = []
         for predicate in predicates:
+            remaining = self.remaining_seconds()
+            if remaining <= 0:
+                self.budget_exhausted = True
+                break
             probe_tree = tree.copy()
             probe_select = (
                 probe_tree if isinstance(probe_tree, exp.Select) else probe_tree.find(exp.Select)
@@ -230,7 +252,10 @@ class RecoveryTools:
             probe_sql = probe_tree.sql(dialect=self.schema.dialect)
             try:
                 _, rows, _ = self.database.execute(
-                    self.db_id, probe_sql, max_rows=1, timeout_seconds=2.0
+                    self.db_id,
+                    probe_sql,
+                    max_rows=1,
+                    timeout_seconds=min(2.0, remaining),
                 )
                 count = int(rows[0][0]) if rows else 0
                 checks.append(
@@ -277,6 +302,7 @@ class RecoveryCoordinator:
         mode: str = "FAILURE",
     ) -> RecoveryTrace:
         started = perf_counter()
+        self.tools.begin_recovery()
         result = self.graph.invoke(
             RecoveryState(
                 mode=mode,
@@ -305,6 +331,10 @@ class RecoveryCoordinator:
                 llm_calls=0,
                 database_probe_count=len(result["filter_checks"]),
                 latency_ms=round((perf_counter() - started) * 1_000),
+                max_tool_calls=6,
+                max_database_probes=self.tools.max_database_probes,
+                max_recovery_ms=round(self.tools.max_recovery_seconds * 1_000),
+                budget_exhausted=self.tools.budget_exhausted,
                 estimated_llm_cost_usd=0.0,
             ),
             evidence=result["evidence"],
@@ -334,7 +364,7 @@ class RecoveryCoordinator:
         evidence = [f"Failure {state['failure_code']}: {state['failure_message']}"]
         calls: list[dict[str, str]] = []
         filters: list[dict[str, Any]] = []
-        if state["category"] in {"schema", "data_grounding", "correctness"}:
+        if state["category"] in {"schema", "data_grounding", "correctness"} and len(calls) < 6:
             schema = self.tools.inspect_schema(state["allowed_tables"])
             evidence.append(f"Verified schema: {schema}")
             calls.append(
@@ -344,7 +374,7 @@ class RecoveryCoordinator:
                     "result_summary": f"Inspected {len(schema['tables'])} allowed tables.",
                 }
             )
-        if state["category"] in {"data_grounding", "correctness"} and len(calls) < 3:
+        if state["category"] in {"data_grounding", "correctness"} and len(calls) < 6:
             profiles = self.tools.inspect_profiles(state["allowed_tables"])
             evidence.append(f"Relevant column profiles: {profiles}")
             calls.append(
@@ -354,7 +384,10 @@ class RecoveryCoordinator:
                     "result_summary": f"Returned {len(profiles)} bounded profile entries.",
                 }
             )
-        if state["mode"] in {"ZERO_RESULT", "NULL_RESULT", "FILTER", "CORRECTNESS"}:
+        if (
+            state["mode"] in {"ZERO_RESULT", "NULL_RESULT", "FILTER", "CORRECTNESS"}
+            and len(calls) < 6
+        ):
             filters = self.tools.inspect_filters(
                 state["failed_sql"], allowed_tables=state["allowed_tables"]
             )
@@ -367,7 +400,7 @@ class RecoveryCoordinator:
                 }
             )
         filter_checks: list[dict[str, Any]] = []
-        if state["mode"] in {"ZERO_RESULT", "NULL_RESULT", "FILTER"}:
+        if state["mode"] in {"ZERO_RESULT", "NULL_RESULT", "FILTER"} and len(calls) < 6:
             filter_checks = self.tools.probe_filter_counts(
                 state["failed_sql"], allowed_tables=state["allowed_tables"]
             )

@@ -291,7 +291,7 @@ function renderHumanReview(fragment, review) {
       ? (usage.token_usage.input_tokens || 0) + (usage.token_usage.output_tokens || 0)
       : 0;
     cost.hidden = false;
-    cost.textContent = `Recovery cost: ${usage.llm_calls || 0} model calls · ${tokens.toLocaleString()} tokens · ${usage.database_probe_count || 0} database probes · ${usage.latency_ms || 0} ms`;
+    cost.textContent = `Recovery cost: ${usage.llm_calls || 0} model calls · ${tokens.toLocaleString()} tokens · ${usage.database_probe_count || 0}/${usage.max_database_probes || 8} database probes · ${usage.latency_ms || 0}/${usage.max_recovery_ms || 8000} ms${usage.budget_exhausted ? " · budget reached" : ""}`;
     cost.title = usage.database_cost_usd == null
       ? (usage.database_cost_note || "Database execution cost was not reported.")
       : `Reported database cost: $${Number(usage.database_cost_usd).toFixed(6)}`;
