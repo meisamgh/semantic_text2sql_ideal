@@ -154,7 +154,7 @@ td.numeric { text-align: right; font-variant-numeric: tabular-nums; }
 .human-review-filter-checks { margin: 12px 0; display: grid; gap: 7px; }
 .human-review-filter-checks > strong { font-size: 12px; color: #815810; }
 .filter-check { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 8px 10px; border-radius: 7px; background: #fff; font-size: 12px; }
-.filter-check code { overflow-wrap: anywhere; color: var(--ink); }
+.filter-check-description { overflow-wrap: anywhere; color: var(--ink); }
 .filter-check span { white-space: nowrap; font-weight: 700; }
 .filter-match span { color: #23704a; }
 .filter-no-match span { color: #a33b32; }

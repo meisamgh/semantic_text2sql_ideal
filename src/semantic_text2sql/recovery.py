@@ -180,6 +180,7 @@ class RecoveryTools:
                 predicates.append(
                     {
                         "expression": predicate.sql(dialect=self.schema.dialect),
+                        "plain_language": _plain_filter(predicate),
                         "columns": column_evidence,
                         "literals": [literal.this for literal in predicate.find_all(exp.Literal)],
                     }
@@ -233,6 +234,7 @@ class RecoveryTools:
                 checks.append(
                     {
                         "filter": predicate.sql(dialect=self.schema.dialect),
+                        "plain_language": _plain_filter(predicate),
                         "match_count": count,
                         "status": "MATCH" if count > 0 else "NO_MATCH",
                     }
@@ -241,6 +243,7 @@ class RecoveryTools:
                 checks.append(
                     {
                         "filter": predicate.sql(dialect=self.schema.dialect),
+                        "plain_language": _plain_filter(predicate),
                         "match_count": None,
                         "status": "PROBE_FAILED",
                         "error": str(exc)[:200],
@@ -414,12 +417,20 @@ def _diagnose(
             if column.get("domain_complete") and known and literals and literals.isdisjoint(known):
                 return (
                     "FILTER_VALUE_NOT_FOUND",
-                    f"{item['expression']} uses no value found in the profiled column domain.",
+                    f"The requested value in '{item['plain_language']}' is not stored in the "
+                    "selected database column.",
                 )
-    no_match = [item["filter"] for item in checks if item.get("status") == "NO_MATCH"]
+    no_match = [
+        item.get("plain_language", item["filter"])
+        for item in checks
+        if item.get("status") == "NO_MATCH"
+    ]
     matched = [item for item in checks if item.get("status") == "MATCH"]
     if no_match:
-        return "FILTER_NO_MATCH", f"These independent filters matched no rows: {no_match}."
+        return (
+            "FILTER_NO_MATCH",
+            "No data matched the following condition(s): " + "; ".join(no_match) + ".",
+        )
     if mode == "ZERO_RESULT" and checks and len(matched) == len(checks):
         return (
             "FILTER_COMBINATION_EMPTY",
@@ -452,3 +463,32 @@ def _diagnose(
             "required.",
         )
     return None, None
+
+
+def _plain_filter(predicate: exp.Expression) -> str:
+    """Render a common SQL predicate as concise user-facing language."""
+    column = next(predicate.find_all(exp.Column), None)
+    subject = column.name if column is not None else "calculated value"
+    literals = [str(item.this) for item in predicate.find_all(exp.Literal)]
+    value = literals[0] if literals else "the requested value"
+    if isinstance(predicate, exp.EQ):
+        return f"{subject} must equal {value}"
+    if isinstance(predicate, exp.NEQ):
+        return f"{subject} must not equal {value}"
+    if isinstance(predicate, exp.GT):
+        return f"{subject} must be greater than {value}"
+    if isinstance(predicate, exp.GTE):
+        return f"{subject} must be at least {value}"
+    if isinstance(predicate, exp.LT):
+        return f"{subject} must be less than or earlier than {value}"
+    if isinstance(predicate, exp.LTE):
+        return f"{subject} must be at most or no later than {value}"
+    if isinstance(predicate, exp.In):
+        return f"{subject} must be one of {', '.join(literals) or 'the requested values'}"
+    if isinstance(predicate, exp.Between) and len(literals) >= 2:
+        return f"{subject} must be between {literals[0]} and {literals[1]}"
+    if isinstance(predicate, (exp.Like, exp.ILike)):
+        return f"{subject} must match {value}"
+    if isinstance(predicate, exp.Is):
+        return f"{subject} must have the requested missing-value state"
+    return f"The condition on {subject} must be satisfied"

@@ -577,17 +577,15 @@ def create_app(
                         mode="ZERO_RESULT",
                     )
                     human_review = HumanReviewRequest(
-                        reason=(
-                            f"{zero_trace.diagnosis_code or 'ZERO_RESULT_UNRESOLVED'}: "
-                            f"{zero_trace.diagnosis_summary or 'The query returned zero rows.'}"
-                        ),
-                        question="How should the zero-row result be handled?",
+                        reason=zero_trace.diagnosis_summary
+                        or "The question and filters produced no matching data.",
+                        question="Would you like to accept this result or change the request?",
                         options=[
-                            "Accept empty result",
-                            "Review filter values",
-                            "Review date filters",
-                            "Review joins",
-                            "Clarify the question",
+                            "Accept no matching data",
+                            "Edit filters",
+                            "Edit the question",
+                            "Check another period",
+                            "Explain the diagnosis",
                         ],
                         evidence=zero_trace.evidence,
                         filter_checks=zero_trace.filter_checks,
@@ -624,22 +622,20 @@ def create_app(
                         "FILTER_COMBINATION_EMPTY",
                     }
                     human_review = HumanReviewRequest(
-                        reason=(
-                            f"{null_trace.diagnosis_code or 'NULL_RESULT_UNRESOLVED'}: "
-                            f"{null_trace.diagnosis_summary or 'The result contains NULL.'}"
-                        ),
+                        reason=null_trace.diagnosis_summary
+                        or "The result contains a missing value that needs confirmation.",
                         question=(
-                            "A filter produced no matching data. How should it be handled?"
+                            "Would you like to accept that no data matched or change the request?"
                             if null_filter_failure
-                            else "How should the NULL result be handled?"
+                            else "Would you like to accept the missing value or review the request?"
                         ),
                         options=(
                             [
-                                "Keep filters and accept NULL",
-                                "Change filter value",
-                                "Review date filters",
-                                "Remove a filter",
-                                "Clarify the question",
+                                "Accept no matching data",
+                                "Edit filters",
+                                "Edit the question",
+                                "Check another period",
+                                "Explain the diagnosis",
                             ]
                             if null_filter_failure
                             else [

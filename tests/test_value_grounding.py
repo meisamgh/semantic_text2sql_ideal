@@ -261,10 +261,17 @@ def test_api_escalates_executable_zero_row_result_to_human_review(
     body = response.json()
     assert body["generation"]["accepted"] is True
     assert body["generation"]["row_count"] == 0
-    assert body["human_review"]["question"] == "How should the zero-row result be handled?"
-    assert "Accept empty result" in body["human_review"]["options"]
+    assert body["human_review"]["question"] == (
+        "Would you like to accept this result or change the request?"
+    )
+    assert "Accept no matching data" in body["human_review"]["options"]
     assert body["human_review"]["filter_checks"] == [
-        {"filter": "country = 'Spain'", "match_count": 0, "status": "NO_MATCH"}
+        {
+            "filter": "country = 'Spain'",
+            "plain_language": "country must equal Spain",
+            "match_count": 0,
+            "status": "NO_MATCH",
+        }
     ]
 
 
@@ -291,7 +298,9 @@ def test_api_escalates_null_result_and_checks_all_filters(
     assert response.status_code == 200
     body = response.json()
     assert body["generation"]["accepted"] is True
-    assert body["human_review"]["question"] == "How should the NULL result be handled?"
+    assert body["human_review"]["question"] == (
+        "Would you like to accept the missing value or review the request?"
+    )
     evidence = " ".join(body["human_review"]["evidence"])
     assert "country = 'Germany'" in evidence
     assert "customer_id > 0" in evidence

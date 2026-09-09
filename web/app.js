@@ -272,8 +272,10 @@ function renderHumanReview(fragment, review) {
     (review.filter_checks || []).forEach((item) => {
       const row = document.createElement("div");
       row.className = `filter-check ${item.status === "MATCH" ? "filter-match" : "filter-no-match"}`;
-      const expression = document.createElement("code");
-      expression.textContent = item.filter || "Unknown filter";
+      const expression = document.createElement("span");
+      expression.className = "filter-check-description";
+      expression.textContent = item.plain_language || "A requested condition";
+      expression.title = item.filter || "";
       const result = document.createElement("span");
       result.textContent = item.status === "PROBE_FAILED"
         ? "Probe unavailable"
