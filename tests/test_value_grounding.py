@@ -263,6 +263,9 @@ def test_api_escalates_executable_zero_row_result_to_human_review(
     assert body["generation"]["row_count"] == 0
     assert body["human_review"]["question"] == "How should the zero-row result be handled?"
     assert "Accept empty result" in body["human_review"]["options"]
+    assert body["human_review"]["filter_checks"] == [
+        {"filter": "country = 'Spain'", "match_count": 0, "status": "NO_MATCH"}
+    ]
 
 
 def test_api_escalates_null_result_and_checks_all_filters(
@@ -292,3 +295,4 @@ def test_api_escalates_null_result_and_checks_all_filters(
     evidence = " ".join(body["human_review"]["evidence"])
     assert "country = 'Germany'" in evidence
     assert "customer_id > 0" in evidence
+    assert len(body["human_review"]["filter_checks"]) == 2

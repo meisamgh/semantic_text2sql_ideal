@@ -530,6 +530,7 @@ class HumanReviewRequest(StrictModel):
     question: str
     options: list[str] = Field(default_factory=list, max_length=5)
     evidence: list[str] = Field(default_factory=list, max_length=20)
+    filter_checks: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
 
 
 class OptimizationEvidence(StrictModel):

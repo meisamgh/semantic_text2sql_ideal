@@ -263,6 +263,25 @@ function renderHumanReview(fragment, review) {
   if (!panel || !review) return;
   panel.hidden = false;
   panel.querySelector(".human-review-reason").textContent = review.reason || "Automated review is uncertain.";
+  const checks = panel.querySelector(".human-review-filter-checks");
+  if (checks && (review.filter_checks || []).length) {
+    checks.hidden = false;
+    const heading = document.createElement("strong");
+    heading.textContent = "Filter checks";
+    checks.append(heading);
+    (review.filter_checks || []).forEach((item) => {
+      const row = document.createElement("div");
+      row.className = `filter-check ${item.status === "MATCH" ? "filter-match" : "filter-no-match"}`;
+      const expression = document.createElement("code");
+      expression.textContent = item.filter || "Unknown filter";
+      const result = document.createElement("span");
+      result.textContent = item.status === "PROBE_FAILED"
+        ? "Probe unavailable"
+        : `${item.match_count ?? 0} matching rows`;
+      row.append(expression, result);
+      checks.append(row);
+    });
+  }
   panel.querySelector(".human-review-question").textContent = review.question || "Please clarify.";
   const options = panel.querySelector(".human-review-options");
   (review.options || []).forEach((label) => {

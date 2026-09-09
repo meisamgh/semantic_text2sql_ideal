@@ -590,6 +590,7 @@ def create_app(
                             "Clarify the question",
                         ],
                         evidence=zero_trace.evidence,
+                        filter_checks=zero_trace.filter_checks,
                     )
                     message = (
                         "The query executed safely but returned zero rows. Recovery diagnosis: "
@@ -650,6 +651,7 @@ def create_app(
                             ]
                         ),
                         evidence=null_trace.evidence,
+                        filter_checks=null_trace.filter_checks,
                     )
                     message = (
                         "The query executed safely but returned NULL values. Every explicit filter "
