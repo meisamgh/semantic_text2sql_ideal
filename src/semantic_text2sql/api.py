@@ -578,8 +578,8 @@ def create_app(
                     )
                     human_review = HumanReviewRequest(
                         reason=(
-                            "The query executed successfully but returned zero rows. This may be "
-                            "a valid empty result or an unresolved filter/join mismatch."
+                            f"{zero_trace.diagnosis_code or 'ZERO_RESULT_UNRESOLVED'}: "
+                            f"{zero_trace.diagnosis_summary or 'The query returned zero rows.'}"
                         ),
                         question="How should the zero-row result be handled?",
                         options=[
@@ -592,8 +592,9 @@ def create_app(
                         evidence=zero_trace.evidence,
                     )
                     message = (
-                        "The query executed safely but returned zero rows. A bounded evidence "
-                        "review was run; human confirmation is required before changing filters."
+                        "The query executed safely but returned zero rows. Recovery diagnosis: "
+                        f"{zero_trace.diagnosis_code or 'unresolved'}. Human confirmation is "
+                        "required before changing filters."
                     )
             elif request.execute and any(
                 value is None for row in generated.rows for value in row
@@ -618,8 +619,8 @@ def create_app(
                     )
                     human_review = HumanReviewRequest(
                         reason=(
-                            "The result contains NULL. NULL may be valid source data or may have "
-                            "been introduced by a join, filter, aggregation, CASE, or division."
+                            f"{null_trace.diagnosis_code or 'NULL_RESULT_UNRESOLVED'}: "
+                            f"{null_trace.diagnosis_summary or 'The result contains NULL.'}"
                         ),
                         question="How should the NULL result be handled?",
                         options=[
@@ -633,8 +634,9 @@ def create_app(
                     )
                     message = (
                         "The query executed safely but returned NULL values. Every explicit filter "
-                        "was included in a bounded evidence review; human confirmation is required "
-                        "before changing the SQL."
+                        "was checked. Recovery diagnosis: "
+                        f"{null_trace.diagnosis_code or 'unresolved'}. Human confirmation is "
+                        "required before changing the SQL."
                     )
             if operation == "CHECK_CORRECTNESS" and previous and previous.last_sql:
                 database = sqlite if request.db_id in sqlite.list_ids() else postgres

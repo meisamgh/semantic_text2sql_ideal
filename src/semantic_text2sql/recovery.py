@@ -25,6 +25,9 @@ class RecoveryState(TypedDict):
     failure_message: str
     allowed_tables: list[str]
     category: str
+    diagnosis_code: str | None
+    diagnosis_summary: str | None
+    filter_checks: list[dict[str, Any]]
     evidence: list[str]
     tool_calls: list[dict[str, str]]
     requires_human_review: bool
@@ -186,6 +189,64 @@ class RecoveryTools:
             unique.setdefault(item["expression"], item)
         return list(unique.values())[:20]
 
+    def probe_filter_counts(
+        self, sql: str, *, allowed_tables: list[str]
+    ) -> list[dict[str, Any]]:
+        """Run one bounded count probe per top-level AND filter."""
+        try:
+            tree = parse_one(sql, dialect=self.schema.dialect)
+        except Exception:
+            return []
+        select = tree if isinstance(tree, exp.Select) else tree.find(exp.Select)
+        if select is None or select.args.get("where") is None:
+            return []
+        cte_names = {cte.alias_or_name for cte in tree.find_all(exp.CTE)}
+        physical_tables = {
+            table.name for table in tree.find_all(exp.Table) if table.name not in cte_names
+        }
+        if not physical_tables.issubset(set(allowed_tables)):
+            return []
+        predicates = _split_and(select.args["where"].this)[:10]
+        checks: list[dict[str, Any]] = []
+        for predicate in predicates:
+            probe_tree = tree.copy()
+            probe_select = (
+                probe_tree if isinstance(probe_tree, exp.Select) else probe_tree.find(exp.Select)
+            )
+            if probe_select is None:
+                continue
+            probe_select.set(
+                "expressions",
+                [exp.alias_(exp.Count(this=exp.Star()), "match_count")],
+            )
+            probe_select.set("where", exp.Where(this=predicate.copy()))
+            for clause in ("group", "having", "qualify", "order", "limit", "offset"):
+                probe_select.set(clause, None)
+            probe_select.set("distinct", None)
+            probe_sql = probe_tree.sql(dialect=self.schema.dialect)
+            try:
+                _, rows, _ = self.database.execute(
+                    self.db_id, probe_sql, max_rows=1, timeout_seconds=2.0
+                )
+                count = int(rows[0][0]) if rows else 0
+                checks.append(
+                    {
+                        "filter": predicate.sql(dialect=self.schema.dialect),
+                        "match_count": count,
+                        "status": "MATCH" if count > 0 else "NO_MATCH",
+                    }
+                )
+            except Exception as exc:
+                checks.append(
+                    {
+                        "filter": predicate.sql(dialect=self.schema.dialect),
+                        "match_count": None,
+                        "status": "PROBE_FAILED",
+                        "error": str(exc)[:200],
+                    }
+                )
+        return checks
+
 class RecoveryCoordinator:
     """A deterministic controller expressed as a bounded LangGraph."""
 
@@ -218,6 +279,9 @@ class RecoveryCoordinator:
                 failure_message=failure_message,
                 allowed_tables=allowed_tables,
                 category="sql",
+                diagnosis_code=None,
+                diagnosis_summary=None,
+                filter_checks=[],
                 evidence=[],
                 tool_calls=[],
                 requires_human_review=False,
@@ -227,6 +291,9 @@ class RecoveryCoordinator:
             mode=mode,  # type: ignore[arg-type]
             failure_code=failure_code,
             failure_category=result["category"],
+            diagnosis_code=result["diagnosis_code"],
+            diagnosis_summary=result["diagnosis_summary"],
+            filter_checks=result["filter_checks"],
             evidence=result["evidence"],
             tool_calls=[RecoveryToolCall.model_validate(item) for item in result["tool_calls"]],
             requires_human_review=result["requires_human_review"],
@@ -253,6 +320,7 @@ class RecoveryCoordinator:
     def _gather(self, state: RecoveryState) -> dict[str, Any]:
         evidence = [f"Failure {state['failure_code']}: {state['failure_message']}"]
         calls: list[dict[str, str]] = []
+        filters: list[dict[str, Any]] = []
         if state["category"] in {"schema", "data_grounding", "correctness"}:
             schema = self.tools.inspect_schema(state["allowed_tables"])
             evidence.append(f"Verified schema: {schema}")
@@ -285,10 +353,35 @@ class RecoveryCoordinator:
                     "result_summary": f"Inspected {len(filters)} distinct filter predicates.",
                 }
             )
+        filter_checks: list[dict[str, Any]] = []
+        if state["mode"] in {"ZERO_RESULT", "NULL_RESULT", "FILTER"}:
+            filter_checks = self.tools.probe_filter_counts(
+                state["failed_sql"], allowed_tables=state["allowed_tables"]
+            )
+            evidence.append(f"Independent filter counts: {filter_checks}")
+            calls.append(
+                {
+                    "tool": "probe_filter_counts",
+                    "purpose": "Test each top-level filter independently with a bounded SELECT.",
+                    "result_summary": f"Probed {len(filter_checks)} filters with a 2 second limit.",
+                }
+            )
+        diagnosis_code, diagnosis_summary = _diagnose(
+            mode=state["mode"],
+            sql=state["failed_sql"],
+            filters=filters,
+            checks=filter_checks,
+        )
+        if diagnosis_code:
+            evidence.append(f"Diagnosis {diagnosis_code}: {diagnosis_summary}")
         return {
             "evidence": evidence,
             "tool_calls": calls,
-            "requires_human_review": state["category"] == "provider",
+            "requires_human_review": state["category"] == "provider"
+            or state["mode"] in {"ZERO_RESULT", "NULL_RESULT", "FILTER"},
+            "diagnosis_code": diagnosis_code,
+            "diagnosis_summary": diagnosis_summary,
+            "filter_checks": filter_checks,
         }
 
 
@@ -298,3 +391,63 @@ def recovery_feedback(trace: RecoveryTrace) -> str:
         "Bounded recovery was activated after the first failure. Fix only the diagnosed "
         "violation while preserving the original question and grounded context.\n" + evidence
     )
+
+
+def _split_and(expression: exp.Expression) -> list[exp.Expression]:
+    if isinstance(expression, exp.And):
+        return [*_split_and(expression.left), *_split_and(expression.right)]
+    return [expression]
+
+
+def _diagnose(
+    *,
+    mode: str,
+    sql: str,
+    filters: list[dict[str, Any]],
+    checks: list[dict[str, Any]],
+) -> tuple[str | None, str | None]:
+    for item in filters:
+        literals = {str(value).casefold() for value in item.get("literals", [])}
+        for column in item.get("columns", []):
+            known = {str(value).casefold() for value in column.get("known_values", [])}
+            if known and literals and literals.isdisjoint(known):
+                return (
+                    "FILTER_VALUE_NOT_FOUND",
+                    f"{item['expression']} uses no value found in the profiled column domain.",
+                )
+    no_match = [item["filter"] for item in checks if item.get("status") == "NO_MATCH"]
+    matched = [item for item in checks if item.get("status") == "MATCH"]
+    if no_match:
+        return "FILTER_NO_MATCH", f"These independent filters matched no rows: {no_match}."
+    if mode == "ZERO_RESULT" and checks and len(matched) == len(checks):
+        return (
+            "FILTER_COMBINATION_EMPTY",
+            "Every checked filter matched independently, but their complete combination "
+            "returned no rows.",
+        )
+    if mode == "ZERO_RESULT" and not filters:
+        return "VALID_EMPTY_RESULT", "The query has no explicit filter to relax or remap."
+    if mode == "NULL_RESULT":
+        try:
+            tree = parse_one(sql)
+        except Exception:
+            tree = None
+        if tree is not None and any(
+            join.args.get("side") == "LEFT" for join in tree.find_all(exp.Join)
+        ):
+            return "QUERY_INDUCED_NULL", "A LEFT JOIN can introduce NULL for unmatched rows."
+        if tree is not None and tree.find(exp.Nullif) is not None:
+            return "DIVISION_BY_ZERO", "NULLIF can intentionally turn a zero denominator into NULL."
+        aggregate_types = (exp.Sum, exp.Avg, exp.Min, exp.Max)
+        if tree is not None and any(tree.find(kind) is not None for kind in aggregate_types):
+            return (
+                "AGGREGATION_OVER_EMPTY_SET",
+                "An aggregate may return NULL when its qualifying input contains no non-NULL "
+                "values.",
+            )
+        return (
+            "SOURCE_DATA_NULL_OR_EXPRESSION",
+            "The NULL may come from stored data or a SQL expression; human confirmation is "
+            "required.",
+        )
+    return None, None

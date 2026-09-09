@@ -35,11 +35,11 @@ def test_zero_result_recovery_inspects_every_filter(registry) -> None:  # type: 
     trace = RecoveryCoordinator(
         RecoveryTools(registry, "shop", schema, profile=None)
     ).investigate(
-        question="List German completed orders above 10",
+        question="List German pending orders above 10",
         failed_sql=(
             "SELECT o.order_id FROM orders o JOIN customers c "
             "ON c.customer_id = o.customer_id "
-            "WHERE c.country = 'Germany' AND o.status = 'complete' AND o.amount > 10"
+            "WHERE c.country = 'Germany' AND o.status = 'pending' AND o.amount > 10"
         ),
         failure_code="ZERO_RESULT",
         failure_message="Executed with zero rows",
@@ -52,11 +52,15 @@ def test_zero_result_recovery_inspects_every_filter(registry) -> None:  # type: 
         "inspect_schema",
         "inspect_column",
         "inspect_filters",
+        "probe_filter_counts",
     ]
     filter_evidence = next(item for item in trace.evidence if item.startswith("All explicit"))
     assert "country = 'Germany'" in filter_evidence
-    assert "status = 'complete'" in filter_evidence
+    assert "status = 'pending'" in filter_evidence
     assert "amount > 10" in filter_evidence
+    assert len(trace.filter_checks) == 3
+    assert all(item["status"] == "MATCH" for item in trace.filter_checks)
+    assert trace.diagnosis_code == "FILTER_COMBINATION_EMPTY"
 
 
 def test_provider_failure_does_not_probe_database(registry) -> None:  # type: ignore[no-untyped-def]

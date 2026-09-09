@@ -510,6 +510,9 @@ class RecoveryTrace(StrictModel):
     )
     failure_code: str
     failure_category: str
+    diagnosis_code: str | None = None
+    diagnosis_summary: str | None = None
+    filter_checks: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
     tool_calls: list[RecoveryToolCall] = Field(default_factory=list, max_length=6)
     evidence: list[str] = Field(default_factory=list, max_length=20)
     requires_human_review: bool = False

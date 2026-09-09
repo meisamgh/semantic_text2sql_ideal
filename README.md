@@ -78,9 +78,10 @@ One bounded LangGraph recovery component operates in five modes:
 | `CORRECTNESS` | User requests correctness review | Compare an independent evidence-based candidate |
 
 For zero-row and NULL-result reviews, every explicit SQL filter is enumerated with its columns,
-literals and available profile evidence. The system never broadens a filter or converts `NULL` to
-zero merely to produce a result. Unresolved decisions are presented to the user and retained only
-as conversation-scoped trusted evidence.
+literals and available profile evidence. Bounded read-only count probes test each top-level filter
+independently and distinguish a missing value from a combination that has no matching rows. The
+system never broadens a filter or converts `NULL` to zero merely to produce a result. Unresolved
+decisions are presented to the user and retained only as conversation-scoped trusted evidence.
 
 Recovery tools are capability-scoped: schema inspection, profiles, bounded value lookup and parsed
 filter inspection. Database access remains read-only and restricted to configured databases.
