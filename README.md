@@ -5,8 +5,11 @@ schema retrieval, optional model-based context selection, verified metadata grou
 generation, read-only execution, bounded recovery, and human review.
 
 <p align="center">
-  <img src="docs/semantic_text2sql_architecture.svg" alt="Semantic Text-to-SQL architecture" width="760" />
+  <img src="docs/assets/text-to-sql-architecture.png" alt="Semantic Text-to-SQL architecture" width="1000" />
 </p>
+
+_Visual overview of the query workflow. The architecture and runtime boundaries documented below
+are authoritative._
 
 ## Architecture
 
