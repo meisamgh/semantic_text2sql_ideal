@@ -119,9 +119,10 @@ def test_web_chat_application_is_served() -> None:
     assert "renderSqlTokens" in script.text
     assert "sql-line-number" in script.text
     assert '"NOT SELECTED"' in script.text
-    assert 'class="human-review-editor"' in page.text
+    assert 'class="human-review-panel"' in page.text
+    assert 'class="human-review-editor"' not in page.text
     assert '"Enter another ID"' in script.text
-    assert "Replace the unavailable ID" in script.text
+    assert "Enter the replacement ID in the chat" in script.text
 
     sql_position = page.text.index('class="sql-panel"')
     result_position = page.text.index('class="result-panel"')

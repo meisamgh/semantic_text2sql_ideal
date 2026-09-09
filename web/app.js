@@ -231,6 +231,9 @@ function appendAssistant(body, elapsed) {
     fragment.querySelector(".sql-panel").hidden = true;
     fragment.querySelector(".result-panel").hidden = true;
   }
+  if (body.clarification_required) {
+    fragment.querySelector(".feedback-panel").hidden = true;
+  }
   renderAttempts(fragment, attempts);
   const sql = generation.sql || "No SQL was accepted.";
   const displaySql = generation.formatted_sql || formatSqlForDisplay(sql);
@@ -265,51 +268,12 @@ function renderHumanReview(fragment, review) {
   panel.querySelector(".human-review-reason").textContent = review.reason || "Automated review is uncertain.";
   panel.querySelector(".human-review-question").textContent = review.question || "Please clarify.";
   const options = panel.querySelector(".human-review-options");
-  const editor = panel.querySelector(".human-review-editor");
-  const editorLabel = panel.querySelector(".human-review-editor-label");
-  const editorInput = panel.querySelector(".human-review-editor-input");
-  const editorCancel = panel.querySelector(".human-review-editor-cancel");
-  let editorAction = null;
   const editableActions = {
-    "Enter another ID": {
-      label: "Enter the new ID",
-      placeholder: "For example: 16358",
-      category: "missing_filter",
-      instruction: (value) => `Replace the unavailable ID with ${value}.`,
-    },
-    "Edit filters": {
-      label: "Describe the corrected filters",
-      placeholder: "For example: use CustomerID 16358 and keep August–November 2013",
-      category: "missing_filter",
-      instruction: (value) => value,
-    },
-    "Edit the question": {
-      label: "Rewrite the analytical question",
-      placeholder: "Enter the complete revised question",
-      category: "wrong_interpretation",
-      instruction: (value) => value,
-    },
-    "Choose another period": {
-      label: "Enter the new period",
-      placeholder: "For example: January–March 2013",
-      category: "wrong_datetime",
-      instruction: (value) => `Change the requested period to ${value}.`,
-    },
-    "Check another period": {
-      label: "Enter the period to check",
-      placeholder: "For example: January–March 2013",
-      category: "wrong_datetime",
-      instruction: (value) => `Change the requested period to ${value}.`,
-    },
-  };
-  const openEditor = (label) => {
-    editorAction = editableActions[label];
-    if (!editor || !editorAction) return;
-    editor.hidden = false;
-    editorLabel.textContent = editorAction.label;
-    editorInput.placeholder = editorAction.placeholder;
-    editorInput.value = "";
-    editorInput.focus();
+    "Enter another ID": "Enter the replacement ID in the chat…",
+    "Edit filters": "Describe the corrected filters in the chat…",
+    "Edit the question": "Enter the complete revised question…",
+    "Choose another period": "Enter the replacement period in the chat…",
+    "Check another period": "Enter the period to check in the chat…",
   };
   (review.options || []).forEach((label) => {
     const button = document.createElement("button");
@@ -317,23 +281,21 @@ function renderHumanReview(fragment, review) {
     button.textContent = label;
     button.addEventListener("click", () => {
       if (editableActions[label]) {
-        openEditor(label);
+        const input = $("#messageInput");
+        input.placeholder = editableActions[label];
+        input.focus();
+        return;
+      }
+      if (review.replacement_target) {
+        send(
+          `Replace filter value ${JSON.stringify(review.replacement_target)} with ${JSON.stringify(label)}.`,
+          "missing_filter",
+        );
         return;
       }
       send(label, "other");
     });
     options.append(button);
-  });
-  editor?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const value = editorInput.value.trim();
-    if (!value || !editorAction) return;
-    editor.hidden = true;
-    send(editorAction.instruction(value), editorAction.category);
-  });
-  editorCancel?.addEventListener("click", () => {
-    editor.hidden = true;
-    editorAction = null;
   });
 }
 

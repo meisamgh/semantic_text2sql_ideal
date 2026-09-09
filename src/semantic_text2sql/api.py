@@ -528,6 +528,8 @@ def create_app(
                     reason=issue.reason,
                     question=f"Which value should replace {issue.user_value!r}?",
                     options=options,
+                    replacement_target=issue.user_value,
+                    replacement_column=issue.column,
                     evidence=[f"{issue.column} contains: {', '.join(issue.available_values)}"],
                 ),
                 provenance=["live categorical profile", "approved glossary aliases"],

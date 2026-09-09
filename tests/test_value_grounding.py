@@ -235,6 +235,8 @@ def test_api_clarifies_unknown_value_before_model_call(
     assert body["generation"]["attempts"] == []
     assert body["generation"]["grounding_issue"]["user_value"] == "Dollar"
     assert body["human_review"]["options"] == ["CZK", "EUR"]
+    assert body["human_review"]["replacement_target"] == "Dollar"
+    assert body["human_review"]["replacement_column"] == "customers.country"
 
 
 def test_api_escalates_executable_zero_row_result_to_human_review(

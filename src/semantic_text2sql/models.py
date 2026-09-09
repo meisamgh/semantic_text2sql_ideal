@@ -549,6 +549,8 @@ class HumanReviewRequest(StrictModel):
     reason: str
     question: str
     options: list[str] = Field(default_factory=list, max_length=5)
+    replacement_target: str | None = None
+    replacement_column: str | None = None
     evidence: list[str] = Field(default_factory=list, max_length=20)
     filter_checks: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
     recovery_usage: RecoveryUsage | None = None

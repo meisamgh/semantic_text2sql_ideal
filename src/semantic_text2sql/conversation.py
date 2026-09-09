@@ -81,6 +81,10 @@ _CORRECTION = re.compile(
     re.I,
 )
 _FENCE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.I | re.S)
+_EXPLICIT_VALUE_REPLACEMENT = re.compile(
+    r'^\s*Replace filter value "(?P<old>[^"]+)" with "(?P<new>[^"]+)"\.\s*$',
+    re.I,
+)
 
 
 class ConversationCompleter(Protocol):
@@ -260,6 +264,38 @@ def resolve_turn(
         return operation, previous
     if operation == "CHECK_CORRECTNESS":
         return operation, previous
+    replacement = _EXPLICIT_VALUE_REPLACEMENT.fullmatch(effective_message)
+    if operation == "CORRECTION" and replacement:
+        old_value = replacement.group("old")
+        new_value = replacement.group("new")
+        updated_question, count = re.subn(
+            rf"(?<!\w){re.escape(old_value)}(?!\w)",
+            new_value,
+            previous.resolved_question,
+            flags=re.I,
+        )
+        if count:
+            correction = f"Replaced filter value {old_value!r} with {new_value!r}."
+            delta = ContractDelta(
+                operation=operation,
+                instruction=correction,
+                feedback_category=feedback_category,
+            )
+            return operation, previous.model_copy(
+                update={
+                    "root_question": re.sub(
+                        rf"(?<!\w){re.escape(old_value)}(?!\w)",
+                        new_value,
+                        previous.root_question,
+                        flags=re.I,
+                    ),
+                    "resolved_question": updated_question,
+                    "turn_count": previous.turn_count + 1,
+                    "modifications": [*previous.modifications, correction],
+                    "corrections": [*previous.corrections, correction],
+                    "contract_deltas": [*previous.contract_deltas, delta],
+                }
+            )
     correction_type = feedback_category or (interpreted.correction_type if interpreted else None)
     correction = (
         f"Correction category={correction_type or 'other'}: {effective_message}"

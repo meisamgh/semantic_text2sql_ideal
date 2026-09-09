@@ -7,13 +7,42 @@ from fastapi.testclient import TestClient
 
 from semantic_text2sql.agent import TextToSQLAgent
 from semantic_text2sql.api import create_app
-from semantic_text2sql.conversation import classify_operation, requires_model_interpretation
+from semantic_text2sql.conversation import (
+    classify_operation,
+    requires_model_interpretation,
+    resolve_turn,
+)
 from semantic_text2sql.models import (
     DEFAULT_OLLAMA_MODEL,
+    ConversationState,
     SchemaInfo,
     StrategyHints,
     TokenUsage,
 )
+
+
+def test_explicit_filter_value_correction_replaces_stored_question() -> None:
+    previous = ConversationState(
+        session_id="replacement",
+        db_id="debit_card_specializing",
+        root_question="Compare OOK and LAM customers paid in Dollar.",
+        resolved_question="Compare OOK and LAM customers paid in Dollar.",
+        turn_count=1,
+    )
+
+    operation, state = resolve_turn(
+        "replacement",
+        "debit_card_specializing",
+        'Replace filter value "OOK" with "SME".',
+        previous,
+        feedback_category="missing_filter",
+    )
+
+    assert operation == "CORRECTION"
+    assert state is not None
+    assert state.root_question == "Compare SME and LAM customers paid in Dollar."
+    assert state.resolved_question == "Compare SME and LAM customers paid in Dollar."
+    assert state.corrections == ["Replaced filter value 'OOK' with 'SME'."]
 
 
 class ConversationModel:

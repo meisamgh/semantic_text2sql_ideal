@@ -83,6 +83,13 @@ independently and distinguish a missing value from a combination that has no mat
 system never broadens a filter or converts `NULL` to zero merely to produce a result. Unresolved
 decisions are presented to the user and retained only as conversation-scoped trusted evidence.
 
+Unknown categorical values are corrected progressively. The interface shows verified replacement
+choices; selecting one replaces that exact value in the stored standalone question and then checks
+the remaining filters. If more than one value is invalid, the next issue is presented separately
+instead of restarting the conversation or repeating the first clarification. Users can also type a
+custom correction or revised question directly in the normal chat box—there is no separate data-entry
+form in the review panel.
+
 Recovery tools are capability-scoped: schema inspection, profiles, bounded value lookup and parsed
 filter inspection. Database access remains read-only and restricted to configured databases.
 Each recovery trace reports its model-call count, token usage, diagnostic database probes, latency
@@ -222,7 +229,7 @@ uv run mypy src
 git diff --check
 ```
 
-Current local verification: **113 passed, 1 skipped**. These are software tests, not a claim of
+Current local verification: **118 passed, 1 skipped**. These are software tests, not a claim of
 Text-to-SQL execution accuracy. Model quality must be measured on a frozen dataset, database state,
 provider, prompt and result-equivalence protocol.
 
