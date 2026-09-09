@@ -151,6 +151,7 @@ td.numeric { text-align: right; font-variant-numeric: tabular-nums; }
 .human-review-panel { margin-top: 14px; padding: 14px; border: 1px solid #c5923d; border-radius: 10px; background: #fff8e8; }
 .human-review-panel > strong { color: #815810; }
 .human-review-panel p { margin: 8px 0; color: var(--ink); font-size: 12px; }
+.human-review-cost { padding: 8px 10px; border-radius: 7px; background: #f7efd9; font-variant-numeric: tabular-nums; }
 .human-review-filter-checks { margin: 12px 0; display: grid; gap: 7px; }
 .human-review-filter-checks > strong { font-size: 12px; color: #815810; }
 .filter-check { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 8px 10px; border-radius: 7px; background: #fff; font-size: 12px; }

@@ -85,6 +85,9 @@ decisions are presented to the user and retained only as conversation-scoped tru
 
 Recovery tools are capability-scoped: schema inspection, profiles, bounded value lookup and parsed
 filter inspection. Database access remains read-only and restricted to configured databases.
+Each recovery trace reports its model-call count, token usage, diagnostic database probes, latency
+and available cost information. The current deterministic recovery graph uses zero LLM calls and
+zero LLM tokens; database cost remains explicitly unmeasured when the backend does not report it.
 
 ## Validation boundary
 

@@ -284,6 +284,18 @@ function renderHumanReview(fragment, review) {
       checks.append(row);
     });
   }
+  const cost = panel.querySelector(".human-review-cost");
+  if (cost && review.recovery_usage) {
+    const usage = review.recovery_usage;
+    const tokens = usage.token_usage
+      ? (usage.token_usage.input_tokens || 0) + (usage.token_usage.output_tokens || 0)
+      : 0;
+    cost.hidden = false;
+    cost.textContent = `Recovery cost: ${usage.llm_calls || 0} model calls · ${tokens.toLocaleString()} tokens · ${usage.database_probe_count || 0} database probes · ${usage.latency_ms || 0} ms`;
+    cost.title = usage.database_cost_usd == null
+      ? (usage.database_cost_note || "Database execution cost was not reported.")
+      : `Reported database cost: $${Number(usage.database_cost_usd).toFixed(6)}`;
+  }
   panel.querySelector(".human-review-question").textContent = review.question || "Please clarify.";
   const options = panel.querySelector(".human-review-options");
   (review.options || []).forEach((label) => {

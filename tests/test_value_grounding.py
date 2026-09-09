@@ -273,6 +273,8 @@ def test_api_escalates_executable_zero_row_result_to_human_review(
             "status": "NO_MATCH",
         }
     ]
+    assert body["human_review"]["recovery_usage"]["llm_calls"] == 0
+    assert body["human_review"]["recovery_usage"]["database_probe_count"] == 1
 
 
 def test_api_escalates_null_result_and_checks_all_filters(

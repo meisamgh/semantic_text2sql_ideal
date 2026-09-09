@@ -62,6 +62,10 @@ def test_zero_result_recovery_inspects_every_filter(registry) -> None:  # type: 
     assert len(trace.filter_checks) == 3
     assert all(item["status"] == "MATCH" for item in trace.filter_checks)
     assert trace.diagnosis_code == "FILTER_COMBINATION_EMPTY"
+    assert trace.usage.llm_calls == 0
+    assert trace.usage.token_usage.total_tokens == 0
+    assert trace.usage.database_probe_count == 3
+    assert trace.usage.latency_ms >= 0
 
 
 def test_provider_failure_does_not_probe_database(registry) -> None:  # type: ignore[no-untyped-def]

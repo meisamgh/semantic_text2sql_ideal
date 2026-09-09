@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -12,6 +13,7 @@ from semantic_text2sql.models import (
     DatabaseProfile,
     RecoveryToolCall,
     RecoveryTrace,
+    RecoveryUsage,
     SchemaInfo,
 )
 from semantic_text2sql.postgres import PostgresRegistry
@@ -274,6 +276,7 @@ class RecoveryCoordinator:
         allowed_tables: list[str],
         mode: str = "FAILURE",
     ) -> RecoveryTrace:
+        started = perf_counter()
         result = self.graph.invoke(
             RecoveryState(
                 mode=mode,
@@ -298,6 +301,12 @@ class RecoveryCoordinator:
             diagnosis_code=result["diagnosis_code"],
             diagnosis_summary=result["diagnosis_summary"],
             filter_checks=result["filter_checks"],
+            usage=RecoveryUsage(
+                llm_calls=0,
+                database_probe_count=len(result["filter_checks"]),
+                latency_ms=round((perf_counter() - started) * 1_000),
+                estimated_llm_cost_usd=0.0,
+            ),
             evidence=result["evidence"],
             tool_calls=[RecoveryToolCall.model_validate(item) for item in result["tool_calls"]],
             requires_human_review=result["requires_human_review"],

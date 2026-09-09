@@ -503,6 +503,21 @@ class RecoveryToolCall(StrictModel):
     result_summary: str
 
 
+class RecoveryUsage(StrictModel):
+    llm_calls: int = Field(default=0, ge=0)
+    token_usage: TokenUsage = Field(
+        default_factory=lambda: TokenUsage(input_tokens=0, output_tokens=0)
+    )
+    database_probe_count: int = Field(default=0, ge=0)
+    latency_ms: int = Field(default=0, ge=0)
+    estimated_llm_cost_usd: float | None = Field(default=0.0, ge=0)
+    database_cost_usd: float | None = Field(default=None, ge=0)
+    database_cost_note: str = Field(
+        default="Database execution cost is not reported by the configured backend.",
+        max_length=300,
+    )
+
+
 class RecoveryTrace(StrictModel):
     activated: bool = True
     mode: Literal["FAILURE", "CORRECTNESS", "ZERO_RESULT", "NULL_RESULT", "FILTER"] = (
@@ -513,6 +528,7 @@ class RecoveryTrace(StrictModel):
     diagnosis_code: str | None = None
     diagnosis_summary: str | None = None
     filter_checks: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
+    usage: RecoveryUsage = Field(default_factory=RecoveryUsage)
     tool_calls: list[RecoveryToolCall] = Field(default_factory=list, max_length=6)
     evidence: list[str] = Field(default_factory=list, max_length=20)
     requires_human_review: bool = False
@@ -531,6 +547,7 @@ class HumanReviewRequest(StrictModel):
     options: list[str] = Field(default_factory=list, max_length=5)
     evidence: list[str] = Field(default_factory=list, max_length=20)
     filter_checks: list[dict[str, Any]] = Field(default_factory=list, max_length=20)
+    recovery_usage: RecoveryUsage | None = None
 
 
 class OptimizationEvidence(StrictModel):
