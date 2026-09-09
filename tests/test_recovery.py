@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+
 from sqlglot import parse_one
 
-from semantic_text2sql.models import ColumnProfile, DatabaseProfile, ValueFrequency
+from semantic_text2sql.models import ColumnProfile, DatabaseProfile, TokenUsage, ValueFrequency
 from semantic_text2sql.recovery import (
     RecoveryCoordinator,
     RecoveryTools,
@@ -10,6 +12,123 @@ from semantic_text2sql.recovery import (
     _plain_filter,
     recovery_feedback,
 )
+
+
+class RecoveryReasoner:
+    async def complete_detailed(self, model: str, prompt: str):  # type: ignore[no-untyped-def]
+        assert "Tool observations" in prompt
+        return (
+            '{"action":"INFORM","diagnosis":"The requested year is outside the dates '
+            'stored in the database. '
+            'Please check the year in your question.","confidence":0.93}',
+            TokenUsage(input_tokens=80, output_tokens=22),
+        )
+
+
+class ToolSelectingReasoner:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete_detailed(self, model: str, prompt: str):  # type: ignore[no-untyped-def]
+        self.calls += 1
+        if self.calls == 1:
+            return (
+                '{"action":"CALL_TOOL","tool":"inspect_schema","arguments":'
+                '{"tables":["orders"],"columns":{"orders":["amount"]}},'
+                '"purpose":"Check date coverage."}',
+                TokenUsage(input_tokens=20, output_tokens=10),
+            )
+        assert "2024-12-31" in prompt
+        return (
+            '{"action":"INFORM","diagnosis":"The requested year is outside the stored '
+            '2024 date range. No date was changed.","confidence":0.98}',
+            TokenUsage(input_tokens=30, output_tokens=12),
+        )
+
+
+def test_bounded_reasoner_explains_null_result_from_verified_evidence(registry) -> None:  # type: ignore[no-untyped-def]
+    schema = registry.inspect("shop")
+    trace = asyncio.run(
+        RecoveryCoordinator(
+            RecoveryTools(registry, "shop", schema, profile=None)
+        ).ainvestigate(
+            question="How much was ordered in 22134?",
+            failed_sql="SELECT SUM(amount) FROM orders WHERE order_date = '22134'",
+            failure_code="NULL_RESULT",
+            failure_message="Aggregate returned NULL",
+            allowed_tables=["orders"],
+            mode="NULL_RESULT",
+            completer=RecoveryReasoner(),
+            model="test-model",
+        )
+    )
+
+    assert trace.agent_diagnosis is not None
+    assert "outside the dates" in trace.agent_diagnosis
+    assert trace.agent_confidence == 0.93
+    assert trace.usage.llm_calls == 1
+    assert trace.usage.token_usage.total_tokens == 102
+
+
+def test_recovery_supplies_verified_temporal_coverage(registry) -> None:  # type: ignore[no-untyped-def]
+    schema = registry.inspect("shop")
+    profile = DatabaseProfile(
+        db_id="shop",
+        dialect="sqlite",
+        profiled_at="2026-09-09T00:00:00Z",
+        columns=[
+            ColumnProfile(
+                table="orders",
+                column="amount",
+                database_type="TEXT",
+                semantic_type="date",
+                row_count=3,
+                null_count=0,
+                null_ratio=0,
+                minimum="2024-01-01",
+                maximum="2024-12-31",
+                range_exact=True,
+                observed_format="YYYY-MM-DD",
+            )
+        ],
+    )
+
+    trace = RecoveryCoordinator(
+        RecoveryTools(registry, "shop", schema, profile=profile)
+    ).investigate(
+        question="How much was ordered in 22134?",
+        failed_sql="SELECT SUM(amount) FROM orders WHERE amount = '22134'",
+        failure_code="NULL_RESULT",
+        failure_message="Aggregate returned NULL",
+        allowed_tables=["orders"],
+        mode="NULL_RESULT",
+    )
+
+    temporal = next(item for item in trace.evidence if item.startswith("Verified temporal"))
+    assert "YYYY-MM-DD" in temporal
+    assert "2024-01-01" in temporal
+    assert "2024-12-31" in temporal
+    assert "inspect_temporal_coverage" in [call.tool for call in trace.tool_calls]
+
+    reasoner = ToolSelectingReasoner()
+    agent_trace = asyncio.run(
+        RecoveryCoordinator(
+            RecoveryTools(registry, "shop", schema, profile=profile)
+        ).ainvestigate(
+            question="How much was ordered in 22134?",
+            failed_sql="SELECT SUM(amount) FROM orders WHERE amount = '22134'",
+            failure_code="NULL_RESULT",
+            failure_message="Aggregate returned NULL",
+            allowed_tables=["orders"],
+            mode="NULL_RESULT",
+            completer=reasoner,
+            model="test-model",
+        )
+    )
+    assert reasoner.calls == 2
+    assert [call.tool for call in agent_trace.tool_calls] == ["inspect_schema"]
+    assert agent_trace.agent_action == "INFORM"
+    assert agent_trace.usage.llm_calls == 2
 
 
 def test_recovery_graph_uses_schema_tool_for_unknown_column(registry) -> None:  # type: ignore[no-untyped-def]

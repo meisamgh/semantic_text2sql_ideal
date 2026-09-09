@@ -916,6 +916,16 @@ class RoutingSQLModel:
             generation_style=generation_style,
         )
 
+    async def complete_detailed(
+        self, provider: ModelProvider, model: str, prompt: str
+    ) -> tuple[str, TokenUsage]:
+        """Route bounded non-SQL reasoning through the user-selected provider."""
+        selected = self.providers.get(provider)
+        detailed = getattr(selected, "complete_detailed", None)
+        if selected is None or not callable(detailed):
+            raise ModelError(f"Provider {provider} does not support bounded reasoning calls.")
+        return cast(tuple[str, TokenUsage], await detailed(model, prompt))
+
 
 def _token_usage(value: object) -> TokenUsage:
     usage = value if isinstance(value, dict) else {}

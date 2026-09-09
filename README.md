@@ -59,7 +59,7 @@ A/B comparison.
 - PK/FK, formula-dependency and bridge-table restoration
 - Compact verified context instead of full-schema prompting
 - Mandatory observed format for every selected date/datetime column
-- Deterministic grounding of explicit values against complete small categorical domains
+- Advisory categorical examples and observed date formats in the compact model context
 - SQL-only generation with at most three total attempts
 - Syntax-coloured SQL, tabular results, progress, cancellation and token accounting
 - Result-equivalence and performance gates for explicit optimization requests
@@ -67,7 +67,7 @@ A/B comparison.
 
 ## Recovery and human review
 
-One bounded LangGraph recovery component operates in five modes:
+One bounded LangGraph recovery agent operates in five modes:
 
 | Mode | Trigger | Purpose |
 |---|---|---|
@@ -77,26 +77,20 @@ One bounded LangGraph recovery component operates in five modes:
 | `NULL_RESULT` | Result contains unexpected SQL `NULL` | Inspect filters, joins, aggregation and missing-value evidence |
 | `CORRECTNESS` | User requests correctness review | Compare an independent evidence-based candidate |
 
-For zero-row and NULL-result reviews, every explicit SQL filter is enumerated with its columns,
-literals and available profile evidence. Bounded read-only count probes test each top-level filter
-independently and distinguish a missing value from a combination that has no matching rows. The
-system never broadens a filter or converts `NULL` to zero merely to produce a result. Unresolved
-decisions are presented to the user and retained only as conversation-scoped trusted evidence.
+Before SQL generation, categorical values and temporal metadata are advisory context rather than
+hard validation rules. Sampled values never prove that another value is invalid. Data validity is
+investigated only after an execution anomaly or an explicit correctness review.
 
-Unknown categorical values are corrected progressively. The interface shows verified replacement
-choices; selecting one replaces that exact value in the stored standalone question and then checks
-the remaining filters. If more than one value is invalid, the next issue is presented separately
-instead of restarting the conversation or repeating the first clarification. Users can also type a
-custom correction or revised question directly in the normal chat box—there is no separate data-entry
-form in the review panel.
+Recovery uses one reasoning agent with two capability-scoped tools:
 
-Recovery tools are capability-scoped: schema inspection, profiles, bounded value lookup and parsed
-filter inspection. Database access remains read-only and restricted to configured databases.
-Each recovery trace reports its model-call count, token usage, diagnostic database probes, latency
-and available cost information. The current deterministic recovery graph uses zero LLM calls and
-zero LLM tokens; database cost remains explicitly unmeasured when the backend does not report it.
-Recovery is capped at six tool calls, eight diagnostic database probes and eight seconds overall;
-the trace explicitly reports when a limit is reached.
+- `inspect_schema`: bounded schema, grain, relationship, NULL, value and temporal metadata
+- `query_database`: SQLGlot-checked, SELECT-only probes over approved tables
+
+The agent may inspect evidence, reason again, and finish with `REPAIR`, `INFORM`, or `ESCALATE`.
+Safety remains outside model control: one statement, read-only SQL, approved tables, short timeouts,
+at most 20 returned rows and at most four recovery tool calls. It never silently changes an explicit
+value or date. Zero-row and unexpected-NULL diagnoses are displayed once as informational messages;
+users may provide a correction naturally in the normal chat.
 
 ## Validation boundary
 
@@ -229,7 +223,7 @@ uv run mypy src
 git diff --check
 ```
 
-Current local verification: **118 passed, 1 skipped**. These are software tests, not a claim of
+Current local verification: **115 passed, 1 skipped**. These are software tests, not a claim of
 Text-to-SQL execution accuracy. Model quality must be measured on a frozen dataset, database state,
 provider, prompt and result-equivalence protocol.
 
@@ -241,7 +235,6 @@ src/semantic_text2sql/
   conversation.py      turn classification and session state
   hybrid_retrieval.py  BM25, embeddings, values, RRF and ML reranking
   context.py           deterministic grounding and context assembly
-  value_grounding.py   explicit categorical value verification
   llm.py               provider adapters and generation prompts
   validator.py         SQLGlot syntax and read-only safety checks
   recovery.py          bounded LangGraph evidence recovery

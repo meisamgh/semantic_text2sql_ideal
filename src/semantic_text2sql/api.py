@@ -55,7 +55,6 @@ from semantic_text2sql.models import (
     HumanReviewRequest,
     ModelOption,
     ModelProvider,
-    RecoveryTrace,
     TokenUsage,
     TurnInterpretation,
 )
@@ -448,15 +447,17 @@ def create_app(
             if database is not None:
                 review_schema = database.inspect(request.db_id)
                 review_profile = profiles.load(review_schema.dialect, request.db_id)
-                correctness_trace = RecoveryCoordinator(
+                correctness_trace = await RecoveryCoordinator(
                     RecoveryTools(database, request.db_id, review_schema, review_profile)
-                ).investigate(
+                ).ainvestigate(
                     question=previous.resolved_question,
                     failed_sql=previous.last_sql,
                     failure_code="CORRECTNESS_REVIEW_SCHEMA",
                     failure_message="User requested evidence-based correctness verification.",
                     allowed_tables=previous.approved_tables,
                     mode="CORRECTNESS",
+                    completer=turn_completers.get(request.provider),
+                    model=request.model,
                 )
                 correctness_evidence = "\n\n".join(
                     value
@@ -503,45 +504,6 @@ def create_app(
         routing_ms = execution.routing_ms
         planning_ms = execution.planning_ms
         generation_ms = execution.generation_ms
-        if generated.grounding_issue is not None:
-            issue = generated.grounding_issue
-            options = issue.available_values[:5]
-            clarification = (
-                f"{issue.user_value!r} is not stored in {issue.column}. "
-                f"Available values are {', '.join(options)}. Which value should I use?"
-            )
-            pending = pending.model_copy(
-                update={"last_failure": issue.reason, "last_failed_sql": None}
-            )
-            conversations.put(pending)
-            return ChatResponse(
-                session_id=request.session_id,
-                operation=operation,
-                resolved_question=pending.resolved_question,
-                conversation_interpretation=interpretation,
-                state=pending,
-                generation=generated,
-                message=clarification,
-                clarification_required=True,
-                clarification_question=clarification,
-                human_review=HumanReviewRequest(
-                    reason=issue.reason,
-                    question=f"Which value should replace {issue.user_value!r}?",
-                    options=options,
-                    replacement_target=issue.user_value,
-                    replacement_column=issue.column,
-                    evidence=[f"{issue.column} contains: {', '.join(issue.available_values)}"],
-                ),
-                provenance=["live categorical profile", "approved glossary aliases"],
-                token_usage=_add_usage(conversation_usage, planner_usage),
-                timings_ms={
-                    "conversation_interpretation": conversation_ms,
-                    "routing": routing_ms,
-                    "planning": planning_ms,
-                    "generation_validation_execution": 0,
-                    "total": round((perf_counter() - started) * 1_000),
-                },
-            )
         response_state: ConversationState | None
         human_review: HumanReviewRequest | None = None
         if generated.accepted:
@@ -566,9 +528,9 @@ def create_app(
                 if database is not None:
                     zero_schema = database.inspect(request.db_id)
                     zero_profile = profiles.load(zero_schema.dialect, request.db_id)
-                    zero_trace = RecoveryCoordinator(
+                    zero_trace = await RecoveryCoordinator(
                         RecoveryTools(database, request.db_id, zero_schema, zero_profile)
-                    ).investigate(
+                    ).ainvestigate(
                         question=pending.resolved_question,
                         failed_sql=generated.sql or "",
                         failure_code="ZERO_RESULT",
@@ -578,20 +540,11 @@ def create_app(
                         ),
                         allowed_tables=proposed_tables,
                         mode="ZERO_RESULT",
+                        completer=turn_completers.get(request.provider),
+                        model=request.model,
                     )
-                    human_review = HumanReviewRequest(
-                        reason=zero_trace.diagnosis_summary
-                        or "The question and filters produced no matching data.",
-                        question=_human_review_question(zero_trace),
-                        options=_human_review_options(zero_trace),
-                        evidence=zero_trace.evidence,
-                        filter_checks=zero_trace.filter_checks,
-                        recovery_usage=zero_trace.usage,
-                    )
-                    message = (
-                        "The query executed safely but returned zero rows. Recovery diagnosis: "
-                        f"{zero_trace.diagnosis_code or 'unresolved'}. Human confirmation is "
-                        "required before changing filters."
+                    message = zero_trace.diagnosis_summary or (
+                        "The query returned no matching rows. No filter was changed automatically."
                     )
             elif request.execute and any(
                 value is None for row in generated.rows for value in row
@@ -600,9 +553,9 @@ def create_app(
                 if database is not None:
                     null_schema = database.inspect(request.db_id)
                     null_profile = profiles.load(null_schema.dialect, request.db_id)
-                    null_trace = RecoveryCoordinator(
+                    null_trace = await RecoveryCoordinator(
                         RecoveryTools(database, request.db_id, null_schema, null_profile)
-                    ).investigate(
+                    ).ainvestigate(
                         question=pending.resolved_question,
                         failed_sql=generated.sql or "",
                         failure_code="NULL_RESULT",
@@ -613,40 +566,11 @@ def create_app(
                         ),
                         allowed_tables=proposed_tables,
                         mode="NULL_RESULT",
+                        completer=turn_completers.get(request.provider),
+                        model=request.model,
                     )
-                    null_filter_failure = null_trace.diagnosis_code in {
-                        "FILTER_VALUE_NOT_FOUND",
-                        "FILTER_NO_MATCH",
-                        "FILTER_COMBINATION_EMPTY",
-                    }
-                    human_review = HumanReviewRequest(
-                        reason=null_trace.diagnosis_summary
-                        or "The result contains a missing value that needs confirmation.",
-                        question=(
-                            _human_review_question(null_trace)
-                            if null_filter_failure
-                            else "Would you like to accept the missing value or review the request?"
-                        ),
-                        options=(
-                            _human_review_options(null_trace)
-                            if null_filter_failure
-                            else [
-                                "Confirm expected NULL",
-                                "Review all filters",
-                                "Review joins",
-                                "Review calculation",
-                                "Clarify the question",
-                            ]
-                        ),
-                        evidence=null_trace.evidence,
-                        filter_checks=null_trace.filter_checks,
-                        recovery_usage=null_trace.usage,
-                    )
-                    message = (
-                        "The query executed safely but returned NULL values. Every explicit filter "
-                        "was checked. Recovery diagnosis: "
-                        f"{null_trace.diagnosis_code or 'unresolved'}. Human confirmation is "
-                        "required before changing the SQL."
+                    message = null_trace.diagnosis_summary or (
+                        "The query returned a missing value. No filter was changed automatically."
                     )
             if operation == "CHECK_CORRECTNESS" and previous and previous.last_sql:
                 database = sqlite if request.db_id in sqlite.list_ids() else postgres
@@ -676,11 +600,7 @@ def create_app(
                             "bounded output exactly."
                         ),
                         question="Which interpretation should be trusted before replacing the SQL?",
-                        options=[
-                            "Keep previous SQL",
-                            "Use reviewed candidate",
-                            "Explain the difference",
-                        ],
+                        options=[],
                         evidence=correctness_trace.evidence if correctness_trace else [],
                     )
         else:
@@ -696,13 +616,13 @@ def create_app(
             if generated.termination_reason != "model_error":
                 recovery = generated.recovery or correctness_trace
                 human_review = HumanReviewRequest(
-                    reason="Automated recovery exhausted the bounded SQL attempts.",
-                    question="Please clarify the intended business meaning or expected result.",
-                    options=[
-                        "Clarify business definition",
-                        "Provide expected output",
-                        "Keep previous SQL",
-                    ],
+                    reason=(
+                        recovery.diagnosis_summary
+                        if recovery and recovery.diagnosis_summary
+                        else "Automated recovery could not establish a safe correction."
+                    ),
+                    question="Please clarify the intended request in the chat.",
+                    options=[],
                     evidence=recovery.evidence if recovery else [],
                 )
         return ChatResponse(
@@ -870,48 +790,6 @@ def _failure_message(generated: GenerateResponse) -> str:
             return detail
         return f"The {generated.model} model could not be reached: {detail}"
     return "Query failed; previous conversation state was preserved."
-
-
-def _human_review_question(trace: RecoveryTrace) -> str:
-    failed = next(
-        (item for item in trace.filter_checks if item.get("status") == "NO_MATCH"),
-        None,
-    )
-    if failed and failed.get("subject_kind") == "identifier":
-        return "The selected record is not available. What would you like to do?"
-    if failed and failed.get("subject_kind") == "date":
-        return "The selected period has no matching data. What would you like to do?"
-    return "No data matched all requested conditions. What would you like to do?"
-
-
-def _human_review_options(trace: RecoveryTrace) -> list[str]:
-    failed = next(
-        (item for item in trace.filter_checks if item.get("status") == "NO_MATCH"),
-        None,
-    )
-    if failed and failed.get("subject_kind") == "identifier":
-        return [
-            "Accept that the record is unavailable",
-            "Enter another ID",
-            "Edit filters",
-            "Edit the question",
-            "Explain the check",
-        ]
-    if failed and failed.get("subject_kind") == "date":
-        return [
-            "Accept no data for this period",
-            "Choose another period",
-            "Edit filters",
-            "Edit the question",
-            "Explain the check",
-        ]
-    return [
-        "Accept no matching data",
-        "Edit filters",
-        "Edit the question",
-        "Check another period",
-        "Explain the diagnosis",
-    ]
 
 
 app = create_app()

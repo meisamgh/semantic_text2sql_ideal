@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import calendar
+import json
 import re
 from time import monotonic, perf_counter
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
-from sqlglot import exp, parse_one
+from sqlglot import exp, parse, parse_one
 
 from semantic_text2sql.database import DatabaseRegistry
 from semantic_text2sql.models import (
@@ -17,6 +18,7 @@ from semantic_text2sql.models import (
     RecoveryTrace,
     RecoveryUsage,
     SchemaInfo,
+    TokenUsage,
 )
 from semantic_text2sql.postgres import PostgresRegistry
 
@@ -88,6 +90,73 @@ class RecoveryTools:
             ],
         }
 
+    def inspect_schema_rich(
+        self, tables: list[str], columns: dict[str, list[str]] | None = None
+    ) -> dict[str, Any]:
+        """One bounded metadata tool for schema, profiles, grain and relationships."""
+        allowed = set(tables)
+        requested = columns or {}
+        profile_columns = (
+            {(item.table, item.column): item for item in self.profile.columns}
+            if self.profile
+            else {}
+        )
+        table_profiles = {item.table: item for item in self.profile.tables} if self.profile else {}
+        result: dict[str, Any] = {"tables": {}, "relationships": []}
+        for table in self.schema.tables:
+            if table.name not in allowed:
+                continue
+            selected = set(requested.get(table.name, []))
+            live_columns = table.columns if not selected else [
+                item for item in table.columns if item.name in selected
+            ]
+            table_profile = table_profiles.get(table.name)
+            result["tables"][table.name] = {
+                "grain": table_profile.grain if table_profile else None,
+                "primary_key": [item.name for item in table.columns if item.primary_key],
+                "columns": {
+                    item.name: _rich_column_metadata(
+                        item.data_type,
+                        item.primary_key,
+                        profile_columns.get((table.name, item.name)),
+                    )
+                    for item in live_columns
+                },
+            }
+        result["relationships"] = [
+            item.model_dump()
+            for item in self.schema.relationships
+            if item.from_table in allowed and item.to_table in allowed
+        ]
+        return result
+
+    def query_database(self, sql: str, *, allowed_tables: list[str]) -> dict[str, Any]:
+        """Execute one SQLGlot-checked, allowlisted, bounded read-only SELECT probe."""
+        statements = parse(sql, dialect=self.schema.dialect)
+        if len(statements) != 1 or statements[0] is None:
+            raise ValueError("The recovery query must contain exactly one statement.")
+        tree = statements[0]
+        forbidden = (
+            exp.Insert, exp.Update, exp.Delete, exp.Create, exp.Drop, exp.Alter, exp.Command
+        )
+        if any(tree.find(kind) is not None for kind in forbidden):
+            raise ValueError("The recovery query must be read-only.")
+        if tree.find(exp.Select) is None:
+            raise ValueError("The recovery query must be SELECT-only.")
+        ctes = {item.alias_or_name for item in tree.find_all(exp.CTE)}
+        referenced = {item.name for item in tree.find_all(exp.Table) if item.name not in ctes}
+        if not referenced.issubset(set(allowed_tables)):
+            raise ValueError("The recovery query references a table outside the allowlist.")
+        remaining = self.remaining_seconds()
+        if remaining <= 0:
+            self.budget_exhausted = True
+            raise TimeoutError("The recovery database budget is exhausted.")
+        columns, rows, truncated = self.database.execute(
+            self.db_id, tree.sql(dialect=self.schema.dialect), max_rows=self.max_rows,
+            timeout_seconds=min(2.0, remaining),
+        )
+        return {"columns": columns, "rows": rows, "truncated": truncated}
+
     def inspect_profiles(self, tables: list[str]) -> list[dict[str, Any]]:
         if self.profile is None:
             return []
@@ -105,6 +174,25 @@ class RecoveryTools:
             if item.table in allowed
             and (item.observed_format or item.examples or item.top_values or item.null_count)
         ][:20]
+
+    def inspect_temporal_coverage(self, tables: list[str]) -> list[dict[str, Any]]:
+        """Return verified storage format and bounds for date columns in allowed tables."""
+        if self.profile is None:
+            return []
+        allowed = set(tables)
+        return [
+            {
+                "column": f"{item.table}.{item.column}",
+                "observed_format": item.observed_format,
+                "minimum": item.minimum,
+                "maximum": item.maximum,
+                "range_exact": item.range_exact,
+            }
+            for item in self.profile.columns
+            if item.table in allowed
+            and item.semantic_type in {"date", "datetime"}
+            and (item.observed_format or item.minimum or item.maximum)
+        ][:10]
 
     def sample_values(
         self, table: str, column: str, *, allowed_tables: list[str]
@@ -351,6 +439,119 @@ class RecoveryCoordinator:
             requires_human_review=result["requires_human_review"],
         )
 
+    async def ainvestigate(
+        self,
+        *,
+        question: str,
+        failed_sql: str,
+        failure_code: str,
+        failure_message: str,
+        allowed_tables: list[str],
+        mode: str = "FAILURE",
+        completer: Any | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> RecoveryTrace:
+        """Run one bounded agent with two tools; fall back to deterministic recovery."""
+        fallback = self.investigate(
+            question=question, failed_sql=failed_sql, failure_code=failure_code,
+            failure_message=failure_message, allowed_tables=allowed_tables, mode=mode,
+        )
+        if (
+            completer is None
+            or model is None
+            or fallback.failure_category in {"provider", "safety"}
+        ):
+            return fallback
+        self.tools.begin_recovery()
+        observations: list[dict[str, Any]] = []
+        calls: list[RecoveryToolCall] = []
+        total_usage = TokenUsage(input_tokens=0, output_tokens=0)
+        started = perf_counter()
+        try:
+            detailed = getattr(completer, "complete_detailed", None)
+            if not callable(detailed):
+                return fallback
+            for _ in range(4):
+                prompt = _agent_recovery_prompt(
+                    question, failed_sql, failure_code, failure_message,
+                    allowed_tables, observations,
+                )
+                try:
+                    raw, usage = await detailed(provider, model, prompt)
+                except TypeError:
+                    raw, usage = await detailed(model, prompt)
+                if isinstance(usage, TokenUsage):
+                    total_usage = TokenUsage(
+                        input_tokens=(total_usage.input_tokens or 0)
+                        + (usage.input_tokens or 0),
+                        output_tokens=(total_usage.output_tokens or 0)
+                        + (usage.output_tokens or 0),
+                    )
+                payload = json.loads(_strip_json_fence(raw))
+                action = str(payload.get("action") or "").upper()
+                if action in {"REPAIR", "INFORM", "ESCALATE"}:
+                    diagnosis = str(payload.get("diagnosis") or "").strip()
+                    if not diagnosis:
+                        return fallback
+                    return fallback.model_copy(
+                        update={
+                            "agent_diagnosis": diagnosis[:1_000],
+                            "agent_confidence": max(
+                                0.0, min(float(payload.get("confidence", 0.0)), 1.0)
+                            ),
+                            "agent_action": action,
+                            "repair_instruction": (
+                                str(payload.get("repair_instruction") or "")[:1_000] or None
+                            ),
+                            "diagnosis_summary": diagnosis[:1_000],
+                            "evidence": [
+                                f"{item['tool']}: {item['result']}" for item in observations
+                            ],
+                            "tool_calls": calls,
+                            "requires_human_review": action == "ESCALATE",
+                            "usage": fallback.usage.model_copy(
+                                update={
+                                    "llm_calls": len(observations) + 1,
+                                    "token_usage": total_usage,
+                                    "database_probe_count": sum(
+                                        item["tool"] == "query_database" for item in observations
+                                    ),
+                                    "latency_ms": round((perf_counter() - started) * 1_000),
+                                }
+                            ),
+                        }
+                    )
+                if action != "CALL_TOOL" or len(calls) >= 4:
+                    return fallback
+                tool = str(payload.get("tool") or "")
+                arguments = payload.get("arguments") or {}
+                if tool == "inspect_schema":
+                    requested_tables = [
+                        item for item in arguments.get("tables", allowed_tables)
+                        if item in allowed_tables
+                    ]
+                    result = self.tools.inspect_schema_rich(
+                        requested_tables, arguments.get("columns")
+                    )
+                elif tool == "query_database":
+                    result = self.tools.query_database(
+                        str(arguments.get("sql") or ""), allowed_tables=allowed_tables
+                    )
+                else:
+                    return fallback
+                purpose = str(payload.get("purpose") or "Gather verified recovery evidence.")
+                observations.append({"tool": tool, "result": result})
+                calls.append(
+                    RecoveryToolCall(
+                        tool=tool, purpose=purpose[:500],
+                        result_summary=f"Returned bounded {tool} evidence.",
+                    )
+                )
+        except Exception:
+            return fallback
+        return fallback
+
     def _classify(self, state: RecoveryState) -> dict[str, Any]:
         if state["mode"] in {"ZERO_RESULT", "NULL_RESULT", "FILTER"}:
             return {"category": "data_grounding"}
@@ -393,6 +594,19 @@ class RecoveryCoordinator:
                     "result_summary": f"Returned {len(profiles)} bounded profile entries.",
                 }
             )
+        if state["category"] in {"data_grounding", "correctness"} and len(calls) < 6:
+            temporal = self.tools.inspect_temporal_coverage(state["allowed_tables"])
+            if temporal:
+                evidence.append(f"Verified temporal coverage: {temporal}")
+                calls.append(
+                    {
+                        "tool": "inspect_temporal_coverage",
+                        "purpose": (
+                            "Compare requested periods with observed date formats and bounds."
+                        ),
+                        "result_summary": f"Returned coverage for {len(temporal)} date columns.",
+                    }
+                )
         if (
             state["mode"] in {"ZERO_RESULT", "NULL_RESULT", "FILTER", "CORRECTNESS"}
             and len(calls) < 6
@@ -442,10 +656,82 @@ class RecoveryCoordinator:
 
 def recovery_feedback(trace: RecoveryTrace) -> str:
     evidence = "\n".join(f"- {item}" for item in trace.evidence)
+    instruction = (
+        f"\nAgent repair instruction: {trace.repair_instruction}"
+        if trace.agent_action == "REPAIR" and trace.repair_instruction
+        else ""
+    )
     return (
         "Bounded recovery was activated after the first failure. Fix only the diagnosed "
-        "violation while preserving the original question and grounded context.\n" + evidence
+        "violation while preserving the original question and grounded context.\n"
+        + evidence
+        + instruction
     )
+
+
+def _agent_recovery_prompt(
+    question: str,
+    failed_sql: str,
+    failure_code: str,
+    failure_message: str,
+    allowed_tables: list[str],
+    observations: list[dict[str, Any]],
+) -> str:
+    return f"""You are one bounded Text-to-SQL recovery agent with exactly two tools.
+Return one JSON object only, using one of these shapes:
+{{"action":"CALL_TOOL","tool":"inspect_schema","arguments":{{"tables":["name"],
+"columns":{{"name":["column"]}}}},"purpose":"short reason"}}
+{{"action":"CALL_TOOL","tool":"query_database","arguments":{{"sql":"SELECT ..."}},
+"purpose":"short reason"}}
+{{"action":"INFORM","diagnosis":"plain-language fact","confidence":0.0}}
+{{"action":"REPAIR","diagnosis":"plain-language cause","confidence":0.0,
+"repair_instruction":"focused instruction for the SQL generator"}}
+{{"action":"ESCALATE","diagnosis":"plain-language uncertainty","confidence":0.0}}
+
+Rules:
+- Use inspect_schema for types, grain, keys, relationships, NULLs, values and temporal coverage.
+- Use query_database only for a necessary bounded SELECT probe over allowed tables.
+- Prefer one tool at a time and stop as soon as evidence is sufficient.
+- Before a final action, check every independent explicit filter that could explain an empty or
+  NULL result. Report all confirmed issues, not only the first one discovered.
+- For temporal filters, inspect the date format and coverage. For identifier and categorical
+  filters, verify whether the requested value exists. Distinguish an individually invalid filter
+  from a valid set of filters whose combination has no rows.
+- Never silently change an explicit value or date and never expose chain-of-thought.
+- Final diagnosis must be at most three short sentences for a non-technical stakeholder.
+- Separate verified facts from uncertainty. Do not call a value a typo unless you say you cannot
+  determine the intended replacement.
+
+Question: {question}
+Failure: {failure_code}: {failure_message}
+SQL: {failed_sql or 'No SQL was produced.'}
+Allowed tables: {json.dumps(allowed_tables)}
+Tool observations: {json.dumps(observations, default=str)[:12_000]}
+"""
+
+
+def _rich_column_metadata(data_type: str, primary_key: bool, profile: Any | None) -> dict[str, Any]:
+    result: dict[str, Any] = {"type": data_type, "primary_key": primary_key}
+    if profile is None:
+        return result
+    result.update(
+        {
+            "semantic_type": profile.semantic_type,
+            "observed_nulls": profile.null_count > 0,
+            "format": profile.observed_format,
+            "minimum": profile.minimum if profile.semantic_type in {"date", "datetime"} else None,
+            "maximum": profile.maximum if profile.semantic_type in {"date", "datetime"} else None,
+            "range_exact": profile.range_exact,
+            "top_values": [item.value for item in profile.top_values[:5]],
+        }
+    )
+    return {key: value for key, value in result.items() if value is not None}
+
+
+def _strip_json_fence(value: str) -> str:
+    cleaned = value.strip()
+    match = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", cleaned, re.I | re.S)
+    return match.group(1) if match else cleaned
 
 
 def _split_and(expression: exp.Expression) -> list[exp.Expression]:

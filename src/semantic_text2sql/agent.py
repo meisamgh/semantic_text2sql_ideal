@@ -453,14 +453,17 @@ class TextToSQLAgent:
             if number == 1 and request.max_attempts > 1:
                 if progress:
                     progress("recovery")
-                recovery_trace = RecoveryCoordinator(
+                recovery_trace = await RecoveryCoordinator(
                     RecoveryTools(database, request.db_id, schema, profile)
-                ).investigate(
+                ).ainvestigate(
                     question=request.question,
                     failed_sql=sql,
                     failure_code=validation.code,
                     failure_message=validation.message,
                     allowed_tables=[table.name for table in retrieved_schema.tables],
+                    completer=self.model,
+                    provider=request.provider,
+                    model=request.model,
                 )
                 if recovery_trace.failure_category != "provider":
                     feedback += "\n\n" + recovery_feedback(recovery_trace)

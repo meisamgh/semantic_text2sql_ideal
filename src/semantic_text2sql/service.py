@@ -37,9 +37,7 @@ from semantic_text2sql.models import (
 )
 from semantic_text2sql.postgres import PostgresRegistry
 from semantic_text2sql.profiling import ProfileStore
-from semantic_text2sql.strategy import route_question
 from semantic_text2sql.validator import validate_sql
-from semantic_text2sql.value_grounding import ground_question_values
 
 logger = logging.getLogger(__name__)
 ContextMode = Literal["model1", "retrieval"]
@@ -216,41 +214,6 @@ class TextToSQLService:
             approved_concepts,
         )
         logger.info("verified_context_request=%s", context_request.model_dump_json())
-        value_grounding = ground_question_values(
-            question,
-            context_request,
-            database_profile,
-            self.glossaries.load(db_id),
-        )
-        if value_grounding.issue is not None:
-            planning_ms = round((perf_counter() - planning_started) * 1_000)
-            generated = GenerateResponse(
-                db_id=db_id,
-                question=question,
-                provider=provider,
-                model=model,
-                dialect=dialect,
-                strategy=route_question(question),
-                semantic_contract=contract,
-                sql=None,
-                accepted=False,
-                termination_reason="grounding_clarification",
-                grounding_issue=value_grounding.issue,
-                context_request=context_request,
-            )
-            return QuestionExecution(
-                generated=generated,
-                approved_tables=context_request.tables,
-                semantic_contract=contract,
-                planner_usage=planner_usage,
-                routing_ms=routing_ms,
-                planning_ms=planning_ms,
-                generation_ms=0,
-            )
-        if value_grounding.evidence:
-            evidence = "\n".join(
-                value for value in (evidence or "", *value_grounding.evidence) if value
-            )
         contract = reconcile_context_contract(contract, context_request)
         business_context = (
             self.glossaries.retrieve(db_id, question, top_k=5)

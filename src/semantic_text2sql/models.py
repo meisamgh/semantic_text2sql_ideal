@@ -535,14 +535,11 @@ class RecoveryTrace(StrictModel):
     usage: RecoveryUsage = Field(default_factory=RecoveryUsage)
     tool_calls: list[RecoveryToolCall] = Field(default_factory=list, max_length=6)
     evidence: list[str] = Field(default_factory=list, max_length=20)
+    agent_diagnosis: str | None = Field(default=None, max_length=1_000)
+    agent_confidence: float | None = Field(default=None, ge=0, le=1)
+    agent_action: Literal["REPAIR", "INFORM", "ESCALATE"] | None = None
+    repair_instruction: str | None = Field(default=None, max_length=1_000)
     requires_human_review: bool = False
-
-
-class ValueGroundingIssue(StrictModel):
-    user_value: str
-    column: str
-    available_values: list[str] = Field(default_factory=list, max_length=20)
-    reason: str
 
 
 class HumanReviewRequest(StrictModel):
@@ -743,7 +740,7 @@ class GenerateResponse(StrictModel):
     row_count: int = Field(default=0, ge=0)
     truncated: bool = False
     termination_reason: Literal[
-        "accepted", "attempt_limit", "model_error", "database_error", "grounding_clarification"
+        "accepted", "attempt_limit", "model_error", "database_error"
     ]
     model_error: str | None = Field(default=None, max_length=500)
     token_usage: TokenUsage = Field(default_factory=TokenUsage)
@@ -753,7 +750,6 @@ class GenerateResponse(StrictModel):
     context_request: ContextRequest | None = None
     telemetry: PipelineTelemetry = Field(default_factory=PipelineTelemetry)
     recovery: RecoveryTrace | None = None
-    grounding_issue: ValueGroundingIssue | None = None
 
 
 class CheckRequest(StrictModel):
