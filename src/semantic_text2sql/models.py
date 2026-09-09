@@ -10,7 +10,8 @@ from semantic_text2sql.sql_formatting import format_sql_for_display
 
 DEFAULT_OLLAMA_MODEL = "qwen3.5:9b"
 GROQ_QWEN_MODEL = "qwen/qwen3.6-27b"
-ModelProvider = Literal["ollama", "agentrouter", "groq", "justdowork"]
+SOTA_GPT_MODEL = "gpt-5.5"
+ModelProvider = Literal["ollama", "agentrouter", "groq", "justdowork", "sota"]
 """Single source of truth for the locally installed Ollama generation model.
 
 Sized to fit in system RAM: a model whose weights exceed memory pages to disk and
@@ -504,11 +505,21 @@ class RecoveryToolCall(StrictModel):
 
 class RecoveryTrace(StrictModel):
     activated: bool = True
+    mode: Literal["FAILURE", "CORRECTNESS", "ZERO_RESULT", "NULL_RESULT", "FILTER"] = (
+        "FAILURE"
+    )
     failure_code: str
     failure_category: str
-    tool_calls: list[RecoveryToolCall] = Field(default_factory=list, max_length=3)
+    tool_calls: list[RecoveryToolCall] = Field(default_factory=list, max_length=6)
     evidence: list[str] = Field(default_factory=list, max_length=20)
     requires_human_review: bool = False
+
+
+class ValueGroundingIssue(StrictModel):
+    user_value: str
+    column: str
+    available_values: list[str] = Field(default_factory=list, max_length=20)
+    reason: str
 
 
 class HumanReviewRequest(StrictModel):
@@ -704,7 +715,9 @@ class GenerateResponse(StrictModel):
     columns: list[str] = Field(default_factory=list)
     row_count: int = Field(default=0, ge=0)
     truncated: bool = False
-    termination_reason: Literal["accepted", "attempt_limit", "model_error", "database_error"]
+    termination_reason: Literal[
+        "accepted", "attempt_limit", "model_error", "database_error", "grounding_clarification"
+    ]
     model_error: str | None = Field(default=None, max_length=500)
     token_usage: TokenUsage = Field(default_factory=TokenUsage)
     optimization: OptimizationEvidence | None = None
@@ -713,6 +726,7 @@ class GenerateResponse(StrictModel):
     context_request: ContextRequest | None = None
     telemetry: PipelineTelemetry = Field(default_factory=PipelineTelemetry)
     recovery: RecoveryTrace | None = None
+    grounding_issue: ValueGroundingIssue | None = None
 
 
 class CheckRequest(StrictModel):

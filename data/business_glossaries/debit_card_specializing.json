@@ -56,6 +56,12 @@
       "term": "customer currency",
       "definition": "Configured customer account currency, normally CZK or EUR.",
       "synonyms": ["pay in", "paid in", "koruna", "euro", "CZK", "EUR"],
+      "value_aliases": {
+        "euro": "EUR",
+        "euros": "EUR",
+        "czech koruna": "CZK",
+        "koruna": "CZK"
+      },
       "columns": ["customers.Currency"],
       "grain": "customer",
       "core": false

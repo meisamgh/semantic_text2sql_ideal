@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
-from sqlglot import exp
+from sqlglot import exp, parse_one
 
 from semantic_text2sql.database import DatabaseRegistry
 from semantic_text2sql.models import (
@@ -18,6 +18,7 @@ from semantic_text2sql.postgres import PostgresRegistry
 
 
 class RecoveryState(TypedDict):
+    mode: str
     question: str
     failed_sql: str
     failure_code: str
@@ -104,6 +105,87 @@ class RecoveryTools:
         )
         return {"columns": columns, "rows": rows, "truncated": truncated}
 
+    def inspect_filters(self, sql: str, *, allowed_tables: list[str]) -> list[dict[str, Any]]:
+        """Enumerate every explicit SQL filter with bounded profile evidence."""
+        try:
+            tree = parse_one(sql, dialect=self.schema.dialect)
+        except Exception:
+            return []
+        allowed = set(allowed_tables)
+        aliases = {
+            table.alias_or_name: table.name
+            for table in tree.find_all(exp.Table)
+            if table.name in allowed
+        }
+        profiles = (
+            {(item.table, item.column): item for item in self.profile.columns}
+            if self.profile
+            else {}
+        )
+        predicates: list[dict[str, Any]] = []
+        filter_types = (
+            exp.EQ,
+            exp.NEQ,
+            exp.GT,
+            exp.GTE,
+            exp.LT,
+            exp.LTE,
+            exp.In,
+            exp.Between,
+            exp.Like,
+            exp.ILike,
+            exp.Is,
+        )
+        for where in tree.find_all(exp.Where):
+            for predicate in where.walk():
+                if not isinstance(predicate, filter_types):
+                    continue
+                columns = list(predicate.find_all(exp.Column))
+                if not columns:
+                    continue
+                column_evidence: list[dict[str, Any]] = []
+                for column in columns:
+                    table = aliases.get(column.table, column.table)
+                    if table and table not in allowed:
+                        # Aliases are still useful in the trace, but never authorize a new table.
+                        profile = None
+                    else:
+                        candidates = [
+                            item
+                            for (profile_table, profile_column), item in profiles.items()
+                            if profile_column == column.name
+                            and (not table or profile_table == table)
+                            and profile_table in allowed
+                        ]
+                        profile = candidates[0] if len(candidates) == 1 else None
+                    column_evidence.append(
+                        {
+                            "column": column.sql(dialect=self.schema.dialect),
+                            "semantic_type": profile.semantic_type if profile else None,
+                            "observed_format": profile.observed_format if profile else None,
+                            "observed_nulls": profile.null_count > 0 if profile else None,
+                            "known_values": (
+                                profile.allowed_values[:20]
+                                if profile and profile.allowed_values
+                                else [value.value for value in profile.top_values[:5]]
+                                if profile
+                                else []
+                            ),
+                        }
+                    )
+                predicates.append(
+                    {
+                        "expression": predicate.sql(dialect=self.schema.dialect),
+                        "columns": column_evidence,
+                        "literals": [literal.this for literal in predicate.find_all(exp.Literal)],
+                    }
+                )
+        # Nested predicates can repeat; preserve order while deduplicating exact expressions.
+        unique: dict[str, dict[str, Any]] = {}
+        for item in predicates:
+            unique.setdefault(item["expression"], item)
+        return list(unique.values())[:20]
+
 class RecoveryCoordinator:
     """A deterministic controller expressed as a bounded LangGraph."""
 
@@ -125,9 +207,11 @@ class RecoveryCoordinator:
         failure_code: str,
         failure_message: str,
         allowed_tables: list[str],
+        mode: str = "FAILURE",
     ) -> RecoveryTrace:
         result = self.graph.invoke(
             RecoveryState(
+                mode=mode,
                 question=question,
                 failed_sql=failed_sql,
                 failure_code=failure_code,
@@ -140,6 +224,7 @@ class RecoveryCoordinator:
             )
         )
         return RecoveryTrace(
+            mode=mode,  # type: ignore[arg-type]
             failure_code=failure_code,
             failure_category=result["category"],
             evidence=result["evidence"],
@@ -148,6 +233,10 @@ class RecoveryCoordinator:
         )
 
     def _classify(self, state: RecoveryState) -> dict[str, Any]:
+        if state["mode"] in {"ZERO_RESULT", "NULL_RESULT", "FILTER"}:
+            return {"category": "data_grounding"}
+        if state["mode"] == "CORRECTNESS":
+            return {"category": "correctness"}
         text = f"{state['failure_code']} {state['failure_message']}".casefold()
         if any(token in text for token in ("column", "table", "alias", "schema")):
             category = "schema"
@@ -164,7 +253,7 @@ class RecoveryCoordinator:
     def _gather(self, state: RecoveryState) -> dict[str, Any]:
         evidence = [f"Failure {state['failure_code']}: {state['failure_message']}"]
         calls: list[dict[str, str]] = []
-        if state["category"] in {"schema", "data_grounding"}:
+        if state["category"] in {"schema", "data_grounding", "correctness"}:
             schema = self.tools.inspect_schema(state["allowed_tables"])
             evidence.append(f"Verified schema: {schema}")
             calls.append(
@@ -174,7 +263,7 @@ class RecoveryCoordinator:
                     "result_summary": f"Inspected {len(schema['tables'])} allowed tables.",
                 }
             )
-        if state["category"] == "data_grounding" and len(calls) < 3:
+        if state["category"] in {"data_grounding", "correctness"} and len(calls) < 3:
             profiles = self.tools.inspect_profiles(state["allowed_tables"])
             evidence.append(f"Relevant column profiles: {profiles}")
             calls.append(
@@ -182,6 +271,18 @@ class RecoveryCoordinator:
                     "tool": "inspect_column",
                     "purpose": "Verify date, value, and NULL representations.",
                     "result_summary": f"Returned {len(profiles)} bounded profile entries.",
+                }
+            )
+        if state["mode"] in {"ZERO_RESULT", "NULL_RESULT", "FILTER", "CORRECTNESS"}:
+            filters = self.tools.inspect_filters(
+                state["failed_sql"], allowed_tables=state["allowed_tables"]
+            )
+            evidence.append(f"All explicit SQL filters: {filters}")
+            calls.append(
+                {
+                    "tool": "inspect_filters",
+                    "purpose": "Check every explicit filter and its grounded column evidence.",
+                    "result_summary": f"Inspected {len(filters)} distinct filter predicates.",
                 }
             )
         return {

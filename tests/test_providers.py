@@ -12,7 +12,9 @@ from semantic_text2sql.llm import (
     GroqSQLModel,
     JustDoWorkSQLModel,
     ModelError,
+    SotaSQLModel,
     _prompt,
+    _responses_stream_result,
     ollama_model_status,
 )
 from semantic_text2sql.models import ColumnInfo, SchemaInfo, StrategyHints, TableInfo, TokenUsage
@@ -82,6 +84,64 @@ def test_agentrouter_uses_anthropic_messages_contract() -> None:
     assert "observed_format" not in prompt
     assert "METRIC DEPENDENCY RULES" not in prompt
     assert "APPROVED FORMULAS:" not in prompt
+
+
+def test_sota_uses_responses_api_without_storage() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        captured["authorization"] = request.headers.get("authorization")
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "output_text": "SELECT title AS book_title FROM books",
+                "usage": {"input_tokens": 9, "output_tokens": 4},
+            },
+        )
+
+    model = SotaSQLModel(
+        "project-key",
+        "https://sota.test",
+        transport=httpx.MockTransport(handler),
+    )
+    content, usage = asyncio.run(model.complete_detailed("gpt-5.5", "Generate SQL"))
+
+    assert content == "SELECT title AS book_title FROM books"
+    assert usage.total_tokens == 13
+    assert captured["path"] == "/responses"
+    assert captured["authorization"] == "Bearer project-key"
+    assert captured["body"] == {
+        "model": "gpt-5.5",
+        "input": [
+            {
+                "role": "user",
+                "content": [{"type": "input_text", "text": "Generate SQL"}],
+            }
+        ],
+        "reasoning": {"effort": "xhigh"},
+        "store": False,
+        "stream": True,
+    }
+
+
+def test_sota_extracts_streamed_response_text_and_usage() -> None:
+    payload = "\n".join(
+        [
+            'event: response.output_text.delta',
+            'data: {"type":"response.output_text.delta","delta":"SELECT "}',
+            'data: {"type":"response.output_text.delta","delta":"1"}',
+            'data: {"type":"response.completed","response":{"usage":'
+            '{"input_tokens":8,"output_tokens":2}}}',
+            'data: [DONE]',
+        ]
+    )
+
+    content, usage = _responses_stream_result(payload)
+
+    assert content == "SELECT 1"
+    assert usage.total_tokens == 10
 
 
 def test_prompt_adds_formula_guidance_only_when_context_contains_a_formula() -> None:

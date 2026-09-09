@@ -18,6 +18,7 @@ class GlossaryTerm(BaseModel):
     term: str
     definition: str
     synonyms: list[str] = Field(default_factory=list)
+    value_aliases: dict[str, str] = Field(default_factory=dict)
     formula: str | None = None
     structural_formula: StructuralFormula | None = None
     columns: list[str] = Field(default_factory=list)

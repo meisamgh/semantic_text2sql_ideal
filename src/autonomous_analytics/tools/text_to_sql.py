@@ -274,6 +274,13 @@ def _compact_context(context: dict[str, Any] | None) -> dict[str, Any] | None:
 
 
 def _response_error(response: GenerateResponse) -> ToolError:
+    if response.grounding_issue is not None:
+        return ToolError(
+            code="VALUE_GROUNDING_REQUIRED",
+            category="clarification",
+            message=response.grounding_issue.reason,
+            retryable=False,
+        )
     if response.model_error:
         return ToolError(
             code="MODEL_UNAVAILABLE",

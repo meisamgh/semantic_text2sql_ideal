@@ -40,11 +40,11 @@ from semantic_text2sql.llm import (
     ModelError,
     OllamaSQLModel,
     RoutingSQLModel,
-    ollama_model_status,
+    SotaSQLModel,
 )
 from semantic_text2sql.models import (
-    DEFAULT_OLLAMA_MODEL,
     GROQ_QWEN_MODEL,
+    SOTA_GPT_MODEL,
     ChatRequest,
     ChatResponse,
     CheckRequest,
@@ -92,9 +92,14 @@ def create_app(
         os.environ.get("JUSTDOWORK_BASE_URL", "https://api.justwoker.icu/v1"),
         float(os.environ.get("JUSTDOWORK_TIMEOUT_SECONDS", "120")),
     )
+    sota = SotaSQLModel(
+        os.environ.get("SOTA_API_KEY"),
+        os.environ.get("SOTA_BASE_URL", "https://true-sota.com"),
+        float(os.environ.get("SOTA_TIMEOUT_SECONDS", "180")),
+    )
     active_agent = agent or TextToSQLAgent(
         sqlite,
-        RoutingSQLModel(ollama, justdowork, groq, justdowork),
+        RoutingSQLModel(ollama, justdowork, groq, justdowork, sota),
         postgres,
         profiles,
     )
@@ -103,6 +108,7 @@ def create_app(
         "agentrouter": justdowork,
         "groq": groq,
         "justdowork": justdowork,
+        "sota": sota,
     }
     app = FastAPI(
         title="Semantic Text-to-SQL v5",
@@ -174,9 +180,14 @@ def create_app(
             if os.environ.get("GROQ_API_KEY")
             else "GROQ_API_KEY is not set in the environment."
         )
-        local_reason = await ollama_model_status(DEFAULT_OLLAMA_MODEL, base_url=ollama.base_url)
+        sota_enabled = os.environ.get("SOTA_ENABLED", "false").casefold() == "true"
+        missing_sota_key = None
+        if not os.environ.get("SOTA_API_KEY"):
+            missing_sota_key = "SOTA_API_KEY is not set in the project environment."
+        elif not sota_enabled:
+            missing_sota_key = "True SOTA is disabled. Set SOTA_ENABLED=true after configuration."
         return [
-            _model_option("ollama", DEFAULT_OLLAMA_MODEL, local=True, reason=local_reason),
+            _model_option("sota", SOTA_GPT_MODEL, local=False, reason=missing_sota_key),
             _model_option("justdowork", "gpt-5.6-sol", local=False, reason=missing_justdowork_key),
             _model_option("justdowork", "gpt-5.6-luna", local=False, reason=missing_justdowork_key),
             _model_option(
@@ -444,6 +455,7 @@ def create_app(
                     failure_code="CORRECTNESS_REVIEW_SCHEMA",
                     failure_message="User requested evidence-based correctness verification.",
                     allowed_tables=previous.approved_tables,
+                    mode="CORRECTNESS",
                 )
                 correctness_evidence = "\n\n".join(
                     value
@@ -490,6 +502,43 @@ def create_app(
         routing_ms = execution.routing_ms
         planning_ms = execution.planning_ms
         generation_ms = execution.generation_ms
+        if generated.grounding_issue is not None:
+            issue = generated.grounding_issue
+            options = issue.available_values[:5]
+            clarification = (
+                f"{issue.user_value!r} is not stored in {issue.column}. "
+                f"Available values are {', '.join(options)}. Which value should I use?"
+            )
+            pending = pending.model_copy(
+                update={"last_failure": issue.reason, "last_failed_sql": None}
+            )
+            conversations.put(pending)
+            return ChatResponse(
+                session_id=request.session_id,
+                operation=operation,
+                resolved_question=pending.resolved_question,
+                conversation_interpretation=interpretation,
+                state=pending,
+                generation=generated,
+                message=clarification,
+                clarification_required=True,
+                clarification_question=clarification,
+                human_review=HumanReviewRequest(
+                    reason=issue.reason,
+                    question=f"Which value should replace {issue.user_value!r}?",
+                    options=options,
+                    evidence=[f"{issue.column} contains: {', '.join(issue.available_values)}"],
+                ),
+                provenance=["live categorical profile", "approved glossary aliases"],
+                token_usage=_add_usage(conversation_usage, planner_usage),
+                timings_ms={
+                    "conversation_interpretation": conversation_ms,
+                    "routing": routing_ms,
+                    "planning": planning_ms,
+                    "generation_validation_execution": 0,
+                    "total": round((perf_counter() - started) * 1_000),
+                },
+            )
         response_state: ConversationState | None
         human_review: HumanReviewRequest | None = None
         if generated.accepted:
@@ -509,6 +558,84 @@ def create_app(
             conversations.put(pending)
             response_state = pending
             message = _conversational_answer(operation, generated)
+            if request.execute and generated.row_count == 0:
+                database = sqlite if request.db_id in sqlite.list_ids() else postgres
+                if database is not None:
+                    zero_schema = database.inspect(request.db_id)
+                    zero_profile = profiles.load(zero_schema.dialect, request.db_id)
+                    zero_trace = RecoveryCoordinator(
+                        RecoveryTools(database, request.db_id, zero_schema, zero_profile)
+                    ).investigate(
+                        question=pending.resolved_question,
+                        failed_sql=generated.sql or "",
+                        failure_code="ZERO_RESULT",
+                        failure_message=(
+                            "The SQL executed successfully but returned zero rows; verify filter "
+                            "values, date representations, NULL semantics, and join elimination."
+                        ),
+                        allowed_tables=proposed_tables,
+                        mode="ZERO_RESULT",
+                    )
+                    human_review = HumanReviewRequest(
+                        reason=(
+                            "The query executed successfully but returned zero rows. This may be "
+                            "a valid empty result or an unresolved filter/join mismatch."
+                        ),
+                        question="How should the zero-row result be handled?",
+                        options=[
+                            "Accept empty result",
+                            "Review filter values",
+                            "Review date filters",
+                            "Review joins",
+                            "Clarify the question",
+                        ],
+                        evidence=zero_trace.evidence,
+                    )
+                    message = (
+                        "The query executed safely but returned zero rows. A bounded evidence "
+                        "review was run; human confirmation is required before changing filters."
+                    )
+            elif request.execute and any(
+                value is None for row in generated.rows for value in row
+            ):
+                database = sqlite if request.db_id in sqlite.list_ids() else postgres
+                if database is not None:
+                    null_schema = database.inspect(request.db_id)
+                    null_profile = profiles.load(null_schema.dialect, request.db_id)
+                    null_trace = RecoveryCoordinator(
+                        RecoveryTools(database, request.db_id, null_schema, null_profile)
+                    ).investigate(
+                        question=pending.resolved_question,
+                        failed_sql=generated.sql or "",
+                        failure_code="NULL_RESULT",
+                        failure_message=(
+                            "The SQL executed successfully but returned one or more NULL values; "
+                            "inspect all filters, joins, aggregations, zero-safe divisions, and "
+                            "stored missing-value representations."
+                        ),
+                        allowed_tables=proposed_tables,
+                        mode="NULL_RESULT",
+                    )
+                    human_review = HumanReviewRequest(
+                        reason=(
+                            "The result contains NULL. NULL may be valid source data or may have "
+                            "been introduced by a join, filter, aggregation, CASE, or division."
+                        ),
+                        question="How should the NULL result be handled?",
+                        options=[
+                            "Confirm expected NULL",
+                            "Review all filters",
+                            "Review joins",
+                            "Review calculation",
+                            "Clarify the question",
+                        ],
+                        evidence=null_trace.evidence,
+                    )
+                    message = (
+                        "The query executed safely but returned NULL values. Every explicit filter "
+                        "was included in a bounded evidence review; human confirmation is required "
+                        "before changing the SQL."
+                    )
             if operation == "CHECK_CORRECTNESS" and previous and previous.last_sql:
                 database = sqlite if request.db_id in sqlite.list_ids() else postgres
                 equivalent = False

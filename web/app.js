@@ -227,7 +227,7 @@ function appendAssistant(body, elapsed) {
   if (Object.keys(timings).length) {
     fragment.querySelector(".response-note").title = `Routing ${timings.routing || 0} ms · Planning ${timings.planning || 0} ms · Generation/validation/execution ${timings.generation_validation_execution || 0} ms`;
   }
-  if (explanatory || modelUnavailable) {
+  if (explanatory || modelUnavailable || body.clarification_required) {
     fragment.querySelector(".sql-panel").hidden = true;
     fragment.querySelector(".result-panel").hidden = true;
   }
