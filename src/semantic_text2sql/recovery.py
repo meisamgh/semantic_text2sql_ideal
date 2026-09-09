@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import calendar
+import re
 from time import monotonic, perf_counter
 from typing import Any, TypedDict
 
@@ -477,10 +479,7 @@ def _diagnose(
     ]
     matched = [item for item in checks if item.get("status") == "MATCH"]
     if no_match:
-        return (
-            "FILTER_NO_MATCH",
-            "No data matched the following condition(s): " + "; ".join(no_match) + ".",
-        )
+        return "FILTER_NO_MATCH", " ".join(no_match)
     if mode == "ZERO_RESULT" and checks and len(matched) == len(checks):
         return (
             "FILTER_COMBINATION_EMPTY",
@@ -520,7 +519,8 @@ def _plain_filter(predicate: exp.Expression) -> str:
     column = next(predicate.find_all(exp.Column), None)
     subject = column.name if column is not None else "calculated value"
     literals = [str(item.this) for item in predicate.find_all(exp.Literal)]
-    value = literals[0] if literals else "the requested value"
+    values = [_human_literal(item) for item in literals]
+    value = values[0] if values else "the requested value"
     if isinstance(predicate, exp.EQ):
         return f"{subject} must equal {value}"
     if isinstance(predicate, exp.NEQ):
@@ -534,9 +534,9 @@ def _plain_filter(predicate: exp.Expression) -> str:
     if isinstance(predicate, exp.LTE):
         return f"{subject} must be at most or no later than {value}"
     if isinstance(predicate, exp.In):
-        return f"{subject} must be one of {', '.join(literals) or 'the requested values'}"
-    if isinstance(predicate, exp.Between) and len(literals) >= 2:
-        return f"{subject} must be between {literals[0]} and {literals[1]}"
+        return f"{subject} must be one of {', '.join(values) or 'the requested values'}"
+    if isinstance(predicate, exp.Between) and len(values) >= 2:
+        return f"{subject} must be from {values[0]} through {values[1]}"
     if isinstance(predicate, (exp.Like, exp.ILike)):
         return f"{subject} must match {value}"
     if isinstance(predicate, exp.Is):
@@ -560,7 +560,7 @@ def _no_match_explanation(predicate: exp.Expression, subject_kind: str) -> str:
     column = next(predicate.find_all(exp.Column), None)
     subject = column.name if column is not None else "selected field"
     literal = next(predicate.find_all(exp.Literal), None)
-    value = str(literal.this) if literal is not None else "the requested value"
+    value = _human_literal(str(literal.this)) if literal is not None else "the requested value"
     if subject_kind == "identifier":
         entity = subject[:-2].replace("_", " ").strip() or "record"
         return (
@@ -569,7 +569,27 @@ def _no_match_explanation(predicate: exp.Expression, subject_kind: str) -> str:
             "cannot be calculated."
         )
     if subject_kind == "date":
-        return f"The database has no records for the requested {subject} value {value}."
+        literals = [_human_literal(str(item.this)) for item in predicate.find_all(exp.Literal)]
+        if isinstance(predicate, exp.Between) and len(literals) >= 2:
+            return f"No records were found from {literals[0]} through {literals[1]}."
+        return f"No records were found for the requested date or period: {value}."
     if subject_kind == "numeric_or_date":
         return f"No records satisfy the requested condition on {subject} using {value}."
     return f"The value {value} is not used by any matching record in {subject}."
+
+
+def _human_literal(value: str) -> str:
+    compact_month = re.fullmatch(r"(?P<year>\d{4})(?P<month>\d{2})", value)
+    if compact_month:
+        month = int(compact_month.group("month"))
+        if 1 <= month <= 12:
+            return f"{calendar.month_name[month]} {compact_month.group('year')}"
+    iso_date = re.fullmatch(
+        r"(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})", value
+    )
+    if iso_date:
+        month = int(iso_date.group("month"))
+        day = int(iso_date.group("day"))
+        if 1 <= month <= 12 and 1 <= day <= 31:
+            return f"{calendar.month_name[month]} {day}, {iso_date.group('year')}"
+    return value

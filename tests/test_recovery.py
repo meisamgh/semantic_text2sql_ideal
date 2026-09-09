@@ -1,7 +1,15 @@
 from __future__ import annotations
 
+from sqlglot import parse_one
+
 from semantic_text2sql.models import ColumnProfile, DatabaseProfile, ValueFrequency
-from semantic_text2sql.recovery import RecoveryCoordinator, RecoveryTools, recovery_feedback
+from semantic_text2sql.recovery import (
+    RecoveryCoordinator,
+    RecoveryTools,
+    _no_match_explanation,
+    _plain_filter,
+    recovery_feedback,
+)
 
 
 def test_recovery_graph_uses_schema_tool_for_unknown_column(registry) -> None:  # type: ignore[no-untyped-def]
@@ -159,4 +167,14 @@ def test_missing_identifier_is_explained_in_plain_language(registry) -> None:  #
     assert trace.filter_checks[0]["no_match_explanation"] == (
         "There is no customer with ID 600000 in this database. Because the selected customer "
         "is unavailable, the requested result cannot be calculated."
+    )
+
+
+def test_compact_date_range_is_rendered_for_stakeholders() -> None:
+    tree = parse_one("SELECT * FROM usage WHERE Date BETWEEN '204308' AND '204311'")
+    predicate = tree.args["where"].this
+
+    assert _plain_filter(predicate) == "Date must be from August 2043 through November 2043"
+    assert _no_match_explanation(predicate, "date") == (
+        "No records were found from August 2043 through November 2043."
     )

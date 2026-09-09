@@ -263,40 +263,6 @@ function renderHumanReview(fragment, review) {
   if (!panel || !review) return;
   panel.hidden = false;
   panel.querySelector(".human-review-reason").textContent = review.reason || "Automated review is uncertain.";
-  const checks = panel.querySelector(".human-review-filter-checks");
-  const failedChecks = (review.filter_checks || []).filter((item) => item.status !== "MATCH");
-  if (checks && failedChecks.length) {
-    checks.hidden = false;
-    const heading = document.createElement("strong");
-    heading.textContent = "Issue";
-    checks.append(heading);
-    failedChecks.forEach((item) => {
-      const row = document.createElement("div");
-      row.className = `filter-check ${item.status === "MATCH" ? "filter-match" : "filter-no-match"}`;
-      const expression = document.createElement("span");
-      expression.className = "filter-check-description";
-      expression.textContent = item.plain_language || "A requested condition";
-      expression.title = item.filter || "";
-      const result = document.createElement("span");
-      result.textContent = item.status === "PROBE_FAILED"
-        ? "Probe unavailable"
-        : `${item.match_count ?? 0} matching rows`;
-      row.append(expression, result);
-      checks.append(row);
-    });
-  }
-  const cost = panel.querySelector(".human-review-cost");
-  if (cost && review.recovery_usage) {
-    const usage = review.recovery_usage;
-    const tokens = usage.token_usage
-      ? (usage.token_usage.input_tokens || 0) + (usage.token_usage.output_tokens || 0)
-      : 0;
-    cost.hidden = false;
-    cost.textContent = `Recovery cost: ${usage.llm_calls || 0} model calls · ${tokens.toLocaleString()} tokens · ${usage.database_probe_count || 0}/${usage.max_database_probes || 8} database probes · ${usage.latency_ms || 0}/${usage.max_recovery_ms || 8000} ms${usage.budget_exhausted ? " · budget reached" : ""}`;
-    cost.title = usage.database_cost_usd == null
-      ? (usage.database_cost_note || "Database execution cost was not reported.")
-      : `Reported database cost: $${Number(usage.database_cost_usd).toFixed(6)}`;
-  }
   panel.querySelector(".human-review-question").textContent = review.question || "Please clarify.";
   const options = panel.querySelector(".human-review-options");
   const editor = panel.querySelector(".human-review-editor");

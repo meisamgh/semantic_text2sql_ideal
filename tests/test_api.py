@@ -122,7 +122,6 @@ def test_web_chat_application_is_served() -> None:
     assert 'class="human-review-editor"' in page.text
     assert '"Enter another ID"' in script.text
     assert "Replace the unavailable ID" in script.text
-    assert 'item.status !== "MATCH"' in script.text
 
     sql_position = page.text.index('class="sql-panel"')
     result_position = page.text.index('class="result-panel"')
