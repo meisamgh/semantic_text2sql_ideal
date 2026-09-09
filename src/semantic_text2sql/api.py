@@ -617,19 +617,38 @@ def create_app(
                         allowed_tables=proposed_tables,
                         mode="NULL_RESULT",
                     )
+                    null_filter_failure = null_trace.diagnosis_code in {
+                        "FILTER_VALUE_NOT_FOUND",
+                        "FILTER_NO_MATCH",
+                        "FILTER_COMBINATION_EMPTY",
+                    }
                     human_review = HumanReviewRequest(
                         reason=(
                             f"{null_trace.diagnosis_code or 'NULL_RESULT_UNRESOLVED'}: "
                             f"{null_trace.diagnosis_summary or 'The result contains NULL.'}"
                         ),
-                        question="How should the NULL result be handled?",
-                        options=[
-                            "Confirm expected NULL",
-                            "Review all filters",
-                            "Review joins",
-                            "Review calculation",
-                            "Clarify the question",
-                        ],
+                        question=(
+                            "A filter produced no matching data. How should it be handled?"
+                            if null_filter_failure
+                            else "How should the NULL result be handled?"
+                        ),
+                        options=(
+                            [
+                                "Keep filters and accept NULL",
+                                "Change filter value",
+                                "Review date filters",
+                                "Remove a filter",
+                                "Clarify the question",
+                            ]
+                            if null_filter_failure
+                            else [
+                                "Confirm expected NULL",
+                                "Review all filters",
+                                "Review joins",
+                                "Review calculation",
+                                "Clarify the question",
+                            ]
+                        ),
                         evidence=null_trace.evidence,
                     )
                     message = (

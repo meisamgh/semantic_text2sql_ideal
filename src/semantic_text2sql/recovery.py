@@ -167,6 +167,7 @@ class RecoveryTools:
                             "semantic_type": profile.semantic_type if profile else None,
                             "observed_format": profile.observed_format if profile else None,
                             "observed_nulls": profile.null_count > 0 if profile else None,
+                            "domain_complete": bool(profile and profile.allowed_values),
                             "known_values": (
                                 profile.allowed_values[:20]
                                 if profile and profile.allowed_values
@@ -410,7 +411,7 @@ def _diagnose(
         literals = {str(value).casefold() for value in item.get("literals", [])}
         for column in item.get("columns", []):
             known = {str(value).casefold() for value in column.get("known_values", [])}
-            if known and literals and literals.isdisjoint(known):
+            if column.get("domain_complete") and known and literals and literals.isdisjoint(known):
                 return (
                     "FILTER_VALUE_NOT_FOUND",
                     f"{item['expression']} uses no value found in the profiled column domain.",

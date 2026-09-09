@@ -30,7 +30,7 @@
     {
       "term": "monthly consumption",
       "definition": "Recorded customer consumption for one YYYYMM period.",
-      "synonyms": ["consumption", "gas consumption", "usage"],
+      "synonyms": ["consumption", "consume", "consumed", "gas consumption", "usage"],
       "formula": "SUM(yearmonth.Consumption) at the requested grain",
       "columns": ["yearmonth.CustomerID", "yearmonth.Date", "yearmonth.Consumption"],
       "grain": "one row per CustomerID and YYYYMM in yearmonth",
