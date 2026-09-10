@@ -1,8 +1,9 @@
 # Semantic Text-to-SQL
 
-A governed conversational Text-to-SQL application for SQLite and PostgreSQL. It combines compact
-schema retrieval, optional model-based context selection, verified metadata grounding, SQL-only
-generation, read-only execution, bounded recovery, and human review.
+A conversational Text-to-SQL system with a bounded recovery agent. Routine questions use a fast,
+predictable generation path; failed SQL, empty results, unexpected `NULL` values and correctness
+reviews activate an agent that gathers targeted database evidence before deciding whether to
+repair the SQL, explain the result or report unresolved uncertainty.
 
 <p align="center">
   <img src="ChatGPT Image Sep 9, 2026, 10_01_37 PM.png" alt="Semantic Text-to-SQL architecture" width="1000" />
@@ -38,10 +39,12 @@ SQLGlot read-only safety validation
     v
 Read-only execution
     |
-    +-- failure / zero rows / unexpected NULL --> bounded LangGraph recovery
-    |                                               |
-    |                                               +-- focused repair
-    |                                               +-- human review when unresolved
+    +-- anomaly / correctness review --> bounded recovery agent
+    |                                      |
+    |                                      +-- inspect_schema
+    |                                      +-- query_database
+    |                                      +-- reason again
+    |                                      +-- REPAIR / INFORM / ESCALATE
     v
 Formatted SQL + result + context + attempt history
 ```
@@ -50,7 +53,55 @@ The web application lets the user select the context method and SQL model indepe
 default retrieval-only path avoids the context-model call; Model 1 can be enabled for a controlled
 A/B comparison.
 
-## Key capabilities
+## Agent-first recovery
+
+The agent is deliberately absent from successful routine queries. It activates only when additional
+reasoning and evidence are useful:
+
+```text
+Generated SQL
+    |
+    v
+Validate + execute
+    |
+    +-- ordinary result --------------------------> return
+    |
+    +-- SQL failure / zero rows / unexpected NULL
+    |                                                |
+    +-- explicit correctness review                  v
+                                             Recovery agent
+                                                  |
+                                         choose one bounded tool
+                                          /                 \
+                                 inspect_schema       query_database
+                                          \                 /
+                                           verified observation
+                                                   |
+                                              reason again
+                                                   |
+                                      REPAIR / INFORM / ESCALATE
+```
+
+`inspect_schema` returns only approved structural metadata: selected tables and columns, physical
+and semantic types, keys, grain, relationships, NULL presence, date formats and temporal coverage.
+It does not return sampled categorical values as proof. When a diagnosis depends on whether an
+identifier or category exists, the agent must use `query_database` to run a narrowly bounded,
+live diagnostic `SELECT`.
+
+The model chooses what it needs to inspect, but it never controls authorization. SQLGlot parsing,
+SELECT-only enforcement, database and table allowlists, timeouts, row limits and the four-tool-call
+ceiling are mandatory code-level controls. The agent never receives a database connection and never
+silently substitutes an explicit user value.
+
+The three terminal decisions are:
+
+| Decision | Meaning |
+|---|---|
+| `REPAIR` | Give Model 2 a focused, evidence-backed correction instruction |
+| `INFORM` | Explain a verified empty, NULL or otherwise noteworthy result |
+| `ESCALATE` | State what remains uncertain without guessing or changing the request |
+
+## Supporting capabilities
 
 - Conversational new queries, refinements, corrections, explanations and optimization requests
 - SQLite discovery and allowlisted PostgreSQL connections
@@ -65,9 +116,9 @@ A/B comparison.
 - Result-equivalence and performance gates for explicit optimization requests
 - Evidence-based correctness review and human-in-the-loop escalation
 
-## Recovery and human review
+## Recovery modes
 
-One bounded LangGraph recovery agent operates in five modes:
+The bounded LangGraph recovery agent operates in five modes:
 
 | Mode | Trigger | Purpose |
 |---|---|---|
@@ -81,16 +132,9 @@ Before SQL generation, categorical values and temporal metadata are advisory con
 hard validation rules. Sampled values never prove that another value is invalid. Data validity is
 investigated only after an execution anomaly or an explicit correctness review.
 
-Recovery uses one reasoning agent with two capability-scoped tools:
-
-- `inspect_schema`: bounded schema, grain, relationship, NULL, value and temporal metadata
-- `query_database`: SQLGlot-checked, SELECT-only probes over approved tables
-
-The agent may inspect evidence, reason again, and finish with `REPAIR`, `INFORM`, or `ESCALATE`.
-Safety remains outside model control: one statement, read-only SQL, approved tables, short timeouts,
-at most 20 returned rows and at most four recovery tool calls. It never silently changes an explicit
-value or date. Zero-row and unexpected-NULL diagnoses are displayed once as informational messages;
-users may provide a correction naturally in the normal chat.
+Zero-row and unexpected-NULL diagnoses are displayed once as informational messages. Users may
+provide a correction naturally in the normal chat, but the agent does not present a separate edit
+form or silently modify the request.
 
 ## Validation boundary
 

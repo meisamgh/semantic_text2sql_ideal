@@ -689,8 +689,9 @@ Return one JSON object only, using one of these shapes:
 {{"action":"ESCALATE","diagnosis":"plain-language uncertainty","confidence":0.0}}
 
 Rules:
-- Use inspect_schema for types, grain, keys, relationships, NULLs, values and temporal coverage.
-- Use query_database only for a necessary bounded SELECT probe over allowed tables.
+- Use inspect_schema for types, grain, keys, relationships, NULLs and temporal coverage.
+- Schema/profile examples are advisory and cannot prove that a filter value exists or is absent.
+- Use query_database whenever the diagnosis depends on actual categorical or identifier values.
 - Prefer one tool at a time and stop as soon as evidence is sufficient.
 - Before a final action, check every independent explicit filter that could explain an empty or
   NULL result. Report all confirmed issues, not only the first one discovered.
@@ -722,7 +723,6 @@ def _rich_column_metadata(data_type: str, primary_key: bool, profile: Any | None
             "minimum": profile.minimum if profile.semantic_type in {"date", "datetime"} else None,
             "maximum": profile.maximum if profile.semantic_type in {"date", "datetime"} else None,
             "range_exact": profile.range_exact,
-            "top_values": [item.value for item in profile.top_values[:5]],
         }
     )
     return {key: value for key, value in result.items() if value is not None}

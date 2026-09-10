@@ -158,6 +158,33 @@ def test_value_probe_is_select_only_and_bounded(registry) -> None:  # type: igno
     assert sorted(row[0] for row in values["rows"]) == ["Germany", "Italy"]
 
 
+def test_agent_schema_tool_does_not_expose_sampled_values_as_evidence(registry) -> None:  # type: ignore[no-untyped-def]
+    schema = registry.inspect("shop")
+    profile = DatabaseProfile(
+        db_id="shop",
+        dialect="sqlite",
+        profiled_at="2026-09-09T00:00:00Z",
+        columns=[
+            ColumnProfile(
+                table="customers",
+                column="country",
+                database_type="TEXT",
+                semantic_type="categorical",
+                row_count=2,
+                null_count=0,
+                null_ratio=0,
+                top_values=[ValueFrequency(value="Germany", count=1)],
+            )
+        ],
+    )
+
+    metadata = RecoveryTools(registry, "shop", schema, profile).inspect_schema_rich(
+        ["customers"], {"customers": ["country"]}
+    )
+
+    assert "top_values" not in metadata["tables"]["customers"]["columns"]["country"]
+
+
 def test_zero_result_recovery_inspects_every_filter(registry) -> None:  # type: ignore[no-untyped-def]
     schema = registry.inspect("shop")
     trace = RecoveryCoordinator(
