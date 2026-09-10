@@ -102,9 +102,7 @@ class MockPostgresRegistry(PostgresRegistry):
             }
         )
 
-    def explain(
-        self, db_id: str, sql: str, validation: ValidationResult
-    ) -> ValidationResult:
+    def explain(self, db_id: str, sql: str, validation: ValidationResult) -> ValidationResult:
         assert db_id == "business_postgres"
         return validation.model_copy(update={"explain_plan": ["Mock PostgreSQL aggregate"]})
 
@@ -148,9 +146,7 @@ def test_successful_question_becomes_bounded_sql_evidence(registry, tmp_path: Pa
         max_attempts=1,
     )
 
-    result = asyncio.run(
-        tool.ask(db_id="shop", question="How many customers are in each country?")
-    )
+    result = asyncio.run(tool.ask(db_id="shop", question="How many customers are in each country?"))
 
     assert result.success is True
     assert result.error is None

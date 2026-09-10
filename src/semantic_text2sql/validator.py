@@ -50,6 +50,7 @@ def validate_sql(
     schema: SchemaInfo,
     *,
     dialect: Literal["sqlite", "postgres"] = "sqlite",
+    allowed_tables: set[str] | None = None,
 ) -> ValidationResult:
     available = {table.name: [column.name for column in table.columns] for table in schema.tables}
     try:
@@ -76,6 +77,17 @@ def validate_sql(
         for table in root.find_all(exp.Table)
         if table.name and table.name.casefold() not in cte_names
     ]
+    if allowed_tables is not None:
+        unauthorized = sorted(
+            {table for table in physical_tables if table.casefold() not in allowed_tables}
+        )
+        if unauthorized:
+            return _failure(
+                "SQL_TABLE_NOT_AUTHORIZED",
+                "SQL references tables outside the authorized context: " + ", ".join(unauthorized),
+                available,
+                tables=physical_tables,
+            )
     columns = list(
         dict.fromkeys(column.sql(dialect=dialect) for column in root.find_all(exp.Column))
     )
@@ -102,9 +114,9 @@ def repair_context(result: ValidationResult) -> str:
             "or CTE, or replace the compound query with window-function ranking. Do not repeat "
             "the rejected compound-query structure."
         )
-    return (
-        f"Validation code: {result.code}\nValidation message: {result.message}{guidance}"
-    )[:12_000]
+    return (f"Validation code: {result.code}\nValidation message: {result.message}{guidance}")[
+        :12_000
+    ]
 
 
 def _failure(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from time import monotonic
 from typing import Any
@@ -60,7 +61,7 @@ class DatabaseRegistry:
             return cached[1]
         tables: list[TableInfo] = []
         relationships: list[ForeignKeyInfo] = []
-        with self.connect(db_id) as connection:
+        with closing(self.connect(db_id)) as connection:
             records = connection.execute(
                 "SELECT name, sql FROM sqlite_master "
                 "WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
@@ -126,7 +127,7 @@ class DatabaseRegistry:
         return schema
 
     def explain(self, db_id: str, sql: str, validation: ValidationResult) -> ValidationResult:
-        with self.connect(db_id) as connection:
+        with closing(self.connect(db_id)) as connection:
             try:
                 rows = connection.execute(f"EXPLAIN QUERY PLAN {sql}").fetchall()
             except sqlite3.Error as exc:
@@ -150,7 +151,7 @@ class DatabaseRegistry:
         timeout_seconds: float = 5.0,
     ) -> tuple[list[str], list[list[Any]], bool]:
         deadline = monotonic() + timeout_seconds
-        with self.connect(db_id) as connection:
+        with closing(self.connect(db_id)) as connection:
             connection.set_progress_handler(lambda: 1 if monotonic() > deadline else 0, 1_000)
             try:
                 cursor = connection.execute(sql)

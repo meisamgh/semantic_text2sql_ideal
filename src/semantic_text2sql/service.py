@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from collections.abc import Callable, Mapping
@@ -25,6 +26,7 @@ from semantic_text2sql.historical import HistoricalQueryStore
 from semantic_text2sql.hybrid_retrieval import HybridSchemaRetriever, metadata_requests
 from semantic_text2sql.llm import ModelError
 from semantic_text2sql.models import (
+    CallLedgerEntry,
     ContextRequest,
     GenerateRequest,
     GenerateResponse,
@@ -37,6 +39,9 @@ from semantic_text2sql.models import (
 )
 from semantic_text2sql.postgres import PostgresRegistry
 from semantic_text2sql.profiling import ProfileStore
+from semantic_text2sql.recovery import RecoveryCoordinator, RecoveryTools, recovery_feedback
+from semantic_text2sql.runtime import RequestBudget, RequestBudgetExceeded
+from semantic_text2sql.strategy import route_question
 from semantic_text2sql.validator import validate_sql
 
 logger = logging.getLogger(__name__)
@@ -97,15 +102,53 @@ class TextToSQLService:
         previous_sql: str | None = None,
         previous_approved_tables: list[str] | None = None,
         optimization_required: bool = False,
+        correctness_review: bool = False,
         progress: Callable[[str], None] | None = None,
     ) -> QuestionExecution:
         routing_started = perf_counter()
+        budget = RequestBudget(
+            timeout_seconds=float(os.environ.get("TEXT2SQL_REQUEST_TIMEOUT_SECONDS", "180")),
+            max_model_calls=int(os.environ.get("TEXT2SQL_REQUEST_MAX_MODEL_CALLS", "6")),
+            max_database_calls=int(os.environ.get("TEXT2SQL_REQUEST_MAX_DATABASE_CALLS", "12")),
+        )
         if progress:
             progress("retrieval")
         database = self._database(db_id)
-        schema = database.inspect(db_id)
+        schema = await budget.wait(asyncio.to_thread(database.inspect, db_id), kind="database")
         dialect = schema.dialect
-        database_profile = self.profiles.load(dialect, db_id)
+        database_profile = await budget.wait(
+            asyncio.to_thread(self.profiles.load, dialect, db_id), kind="work"
+        )
+        correctness_trace = None
+        if correctness_review and previous_sql:
+            correctness_trace = await RecoveryCoordinator(
+                RecoveryTools(database, db_id, schema, database_profile)
+            ).ainvestigate(
+                question=question,
+                failed_sql=previous_sql,
+                failure_code="CORRECTNESS_REVIEW_SCHEMA",
+                failure_message="User requested evidence-based correctness verification.",
+                allowed_tables=previous_approved_tables or [table.name for table in schema.tables],
+                mode="CORRECTNESS",
+                completer=self.agent.model,
+                provider=provider,
+                model=model,
+            )
+            evidence = "\n\n".join(
+                item
+                for item in (
+                    evidence,
+                    f"Previously accepted SQL:\n{previous_sql}",
+                    recovery_feedback(correctness_trace),
+                    "Generate an independent candidate; do not copy the previous SQL unless "
+                    "the evidence supports the same solution.",
+                )
+                if item
+            )
+        value_alias_context = self.glossaries.value_alias_context(db_id, question)
+        retrieval_evidence = (
+            "\n".join(item for item in (evidence, value_alias_context) if item) or None
+        )
         contract = semantic_contract or SemanticContract()
         retrieval_trace: RetrievalTrace | None = None
 
@@ -130,22 +173,25 @@ class TextToSQLService:
                 top_k=3,
                 min_score=float(os.environ.get("TEXT2SQL_HISTORY_ML_MIN_SCORE", "0.65")),
             )
-            planner_schema, retrieval_selection, retrieval_trace = self.retriever.retrieve(
-                question,
-                evidence,
-                schema,
-                database_profile,
-                self.glossaries.load(db_id),
-                historical_schema_evidence,
+            glossary = self.glossaries.load(db_id)
+            planner_schema, retrieval_selection, retrieval_trace = await budget.wait(
+                asyncio.to_thread(
+                    self.retriever.retrieve,
+                    question,
+                    retrieval_evidence,
+                    schema,
+                    database_profile,
+                    glossary,
+                    historical_schema_evidence,
+                ),
+                kind="work",
             )
             proposed_tables = retrieval_selection.tables
             metadata = metadata_requests(question, planner_schema, database_profile)
             context_request = ContextRequest(
                 tables=retrieval_selection.tables,
                 columns=retrieval_selection.columns,
-                business_concepts=sorted(
-                    self.glossaries.relevant_concept_ids(db_id, question)
-                ),
+                business_concepts=sorted(self.glossaries.relevant_concept_ids(db_id, question)),
                 metadata_requirements=[
                     PlannerMetadataRequirement(kind=cast(Any, kind), targets=[target])
                     for kind, target in metadata
@@ -184,19 +230,20 @@ class TextToSQLService:
         planner_call_used = False
         if context_mode == "model1" and not optimization_required:
             planner_provider = context_provider or provider
-            planner_model = (
-                context_model or os.environ.get("TEXT2SQL_CONTEXT_MODEL") or model
-            )
+            planner_model = context_model or os.environ.get("TEXT2SQL_CONTEXT_MODEL") or model
             try:
-                selection, planner_usage = await plan_context_detailed(
-                    self.context_completers[planner_provider],
-                    planner_model,
-                    question,
-                    evidence,
-                    planner_schema,
-                    self.glossaries.load(db_id),
-                    previous_intent,
-                    candidate_relationships,
+                selection, planner_usage = await budget.wait(
+                    plan_context_detailed(
+                        self.context_completers[planner_provider],
+                        planner_model,
+                        question,
+                        evidence,
+                        planner_schema,
+                        self.glossaries.load(db_id),
+                        previous_intent,
+                        candidate_relationships,
+                    ),
+                    kind="model",
                 )
                 context_request = selection_to_context_request(selection)
                 planner_call_used = True
@@ -220,6 +267,10 @@ class TextToSQLService:
             if context_request.business_concepts
             else None
         )
+        if value_alias_context:
+            business_context = "\n".join(
+                item for item in (business_context, value_alias_context) if item
+            )
         historical_examples: list[HistoricalExample] = []
         history_enabled = os.environ.get("TEXT2SQL_HISTORY_ENABLED", "false").casefold() == "true"
         if history_enabled:
@@ -243,30 +294,199 @@ class TextToSQLService:
         generation_started = perf_counter()
         if progress:
             progress("generation")
-        generated = await self.agent.generate(
-            GenerateRequest(
+        generation_request = GenerateRequest(
+            db_id=db_id,
+            question=question,
+            evidence=retrieval_evidence,
+            provider=provider,
+            model=os.environ.get("TEXT2SQL_SQL_MODEL") or model,
+            dialect=dialect,
+            execute=execute,
+            max_rows=max_rows,
+            max_attempts=max_attempts,
+            approved_tables=proposed_tables,
+            semantic_contract=contract,
+            business_context=business_context,
+            previous_sql=previous_sql,
+            optimization_required=optimization_required,
+            context_request=context_request,
+            planner_call_used=planner_call_used,
+            planner_token_usage=planner_usage,
+            historical_examples=historical_examples,
+        )
+        try:
+            generated = await budget.wait(
+                self.agent.generate(generation_request, progress=progress), kind="model"
+            )
+        except RequestBudgetExceeded as exc:
+            generated = GenerateResponse(
                 db_id=db_id,
                 question=question,
-                evidence=evidence,
                 provider=provider,
-                model=os.environ.get("TEXT2SQL_SQL_MODEL") or model,
+                model=model,
                 dialect=dialect,
-                execute=execute,
-                max_rows=max_rows,
-                max_attempts=max_attempts,
-                approved_tables=proposed_tables,
+                strategy=route_question(question),
                 semantic_contract=contract,
-                business_context=business_context,
-                previous_sql=previous_sql,
-                optimization_required=optimization_required,
-                context_request=context_request,
-                planner_call_used=planner_call_used,
-                planner_token_usage=planner_usage,
-                historical_examples=historical_examples,
-            ),
-            progress=progress,
-        )
+                sql=None,
+                accepted=False,
+                termination_reason="model_error",
+                model_error=str(exc),
+            )
+        if (
+            generated.accepted
+            and execute
+            and (
+                generated.row_count == 0
+                or any(value is None for row in generated.rows for value in row)
+            )
+        ):
+            if progress:
+                progress("result_review")
+            review_mode = "ZERO_RESULT" if generated.row_count == 0 else "NULL_RESULT"
+            review_trace = await RecoveryCoordinator(
+                RecoveryTools(database, db_id, schema, database_profile)
+            ).ainvestigate(
+                question=question,
+                failed_sql=generated.sql or "",
+                failure_code=review_mode,
+                failure_message=(
+                    "The query executed with zero rows."
+                    if review_mode == "ZERO_RESULT"
+                    else "The query returned one or more NULL values."
+                ),
+                allowed_tables=proposed_tables,
+                mode=review_mode,
+                completer=self.agent.model,
+                provider=provider,
+                model=generation_request.model,
+            )
+            budget.model_calls += review_trace.usage.llm_calls
+            budget.database_calls += review_trace.usage.database_probe_count
+            generated = generated.model_copy(update={"recovery": review_trace})
+            if (
+                review_trace.agent_action == "REPAIR"
+                and review_trace.repair_instruction
+                and len(generated.attempts) < max_attempts
+            ):
+                repair_request = generation_request.model_copy(
+                    update={
+                        "evidence": "\n\n".join(
+                            item
+                            for item in (
+                                retrieval_evidence,
+                                recovery_feedback(review_trace),
+                            )
+                            if item
+                        ),
+                        "previous_sql": generated.sql,
+                        "max_attempts": 1,
+                    }
+                )
+                try:
+                    repaired = await budget.wait(
+                        self.agent.generate(repair_request, progress=progress), kind="model"
+                    )
+                except RequestBudgetExceeded:
+                    repaired = None
+                if repaired is not None and repaired.accepted:
+                    offset = len(generated.attempts)
+                    repaired_attempts = [
+                        attempt.model_copy(update={"number": offset + index})
+                        for index, attempt in enumerate(repaired.attempts, 1)
+                        if offset + index <= 3
+                    ]
+                    repaired = repaired.model_copy(
+                        update={
+                            "attempts": [*generated.attempts, *repaired_attempts],
+                            "token_usage": _add_token_usage(
+                                generated.token_usage, repaired.token_usage
+                            ),
+                            "recovery": review_trace,
+                        }
+                    )
+                    generated = repaired
+        if correctness_trace is not None and generated.recovery is None:
+            generated = generated.model_copy(update={"recovery": correctness_trace})
         generation_ms = round((perf_counter() - generation_started) * 1_000)
+        if generated.recovery:
+            generated = generated.model_copy(
+                update={
+                    "token_usage": _add_token_usage(
+                        generated.token_usage, generated.recovery.usage.token_usage
+                    )
+                }
+            )
+        call_ledger: list[CallLedgerEntry] = [
+            CallLedgerEntry(
+                component="schema_inspection",
+                kind="DATABASE",
+                status="SUCCEEDED",
+                latency_ms=routing_ms,
+            )
+        ]
+        if planner_call_used:
+            call_ledger.append(
+                CallLedgerEntry(
+                    component="context_planner",
+                    kind="MODEL",
+                    status="SUCCEEDED",
+                    provider=str(context_provider or provider),
+                    requested_model=context_model or model,
+                    effective_model=context_model or model,
+                    input_tokens=planner_usage.input_tokens,
+                    output_tokens=planner_usage.output_tokens,
+                    latency_ms=planning_ms,
+                )
+            )
+        call_ledger.extend(
+            CallLedgerEntry(
+                component="sql_generation" if index == 0 else "sql_repair",
+                kind="MODEL",
+                status="SUCCEEDED",
+                provider=str(provider),
+                requested_model=model,
+                effective_model=generation_request.model,
+                input_tokens=attempt.token_usage.input_tokens,
+                output_tokens=attempt.token_usage.output_tokens,
+                latency_ms=attempt.latency_ms,
+            )
+            for index, attempt in enumerate(generated.attempts)
+        )
+        if generated.recovery and generated.recovery.usage.llm_calls:
+            call_ledger.append(
+                CallLedgerEntry(
+                    component="recovery_reasoning",
+                    kind="MODEL",
+                    status="SUCCEEDED",
+                    provider=str(provider),
+                    requested_model=model,
+                    effective_model=generation_request.model,
+                    input_tokens=generated.recovery.usage.token_usage.input_tokens,
+                    output_tokens=generated.recovery.usage.token_usage.output_tokens,
+                    latency_ms=generated.recovery.usage.latency_ms,
+                )
+            )
+        if execute and generated.attempts:
+            call_ledger.extend(
+                CallLedgerEntry(
+                    component="sql_execution",
+                    kind="DATABASE",
+                    status=(
+                        "FAILED" if attempt.validation.code == "DATABASE_ERROR" else "SUCCEEDED"
+                    ),
+                )
+                for attempt in generated.attempts
+                if attempt.validation.valid or attempt.validation.code == "DATABASE_ERROR"
+            )
+        if generated.recovery and generated.recovery.usage.database_probe_count:
+            call_ledger.append(
+                CallLedgerEntry(
+                    component="recovery_probes",
+                    kind="DATABASE",
+                    status="SUCCEEDED",
+                    latency_ms=generated.recovery.usage.latency_ms,
+                )
+            )
         generated = generated.model_copy(
             update={
                 "telemetry": generated.telemetry.model_copy(
@@ -287,6 +507,15 @@ class TextToSQLService:
                         "historical_similarity_scores": [
                             item.score for item in historical_examples
                         ],
+                        "call_ledger": call_ledger,
+                        "total_model_calls": sum(item.kind == "MODEL" for item in call_ledger),
+                        "total_database_calls": budget.database_calls
+                        + sum(item.component == "sql_execution" for item in call_ledger)
+                        + (
+                            generated.recovery.usage.database_probe_count
+                            if generated.recovery
+                            else 0
+                        ),
                     }
                 )
             }
@@ -309,3 +538,13 @@ class TextToSQLService:
         if self.postgres is not None and db_id in self.postgres.configured_ids():
             return self.postgres
         raise DatabaseError("DATABASE_NOT_FOUND", f"Database {db_id} was not found or configured.")
+
+
+def _add_token_usage(left: TokenUsage, right: TokenUsage) -> TokenUsage:
+    return TokenUsage(
+        input_tokens=(left.input_tokens or 0) + (right.input_tokens or 0),
+        output_tokens=(left.output_tokens or 0) + (right.output_tokens or 0),
+        cache_read_tokens=(left.cache_read_tokens or 0) + (right.cache_read_tokens or 0),
+        cache_creation_tokens=(left.cache_creation_tokens or 0)
+        + (right.cache_creation_tokens or 0),
+    )

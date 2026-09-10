@@ -54,8 +54,7 @@ def test_deterministic_join_explanation_separates_behavior_from_intention() -> N
         root_question="List every order with its customer name.",
         resolved_question="List every order with its customer name.",
         last_sql=(
-            "SELECT o.id, c.name FROM orders o "
-            "LEFT JOIN customers c ON c.id = o.customer_id"
+            "SELECT o.id, c.name FROM orders o LEFT JOIN customers c ON c.id = o.customer_id"
         ),
     )
 

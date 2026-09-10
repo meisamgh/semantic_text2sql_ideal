@@ -334,6 +334,8 @@ class ContextRelationship(StrictModel):
     right_table: str
     left_column: str
     right_column: str
+    left_columns: list[str] | None = None
+    right_columns: list[str] | None = None
     state: Literal["VERIFIED_FK", "INFERRED_KEY_RELATIONSHIP", "UNRESOLVED"]
     join_cardinality: Literal["ONE_TO_ONE", "ONE_TO_MANY", "MANY_TO_ONE", "MANY_TO_MANY", "UNKNOWN"]
     left_key_unique: bool | None = None
@@ -361,6 +363,8 @@ class VerifiedTable(StrictModel):
 class VerifiedRelationship(StrictModel):
     left: str
     right: str
+    left_columns: list[str] | None = None
+    right_columns: list[str] | None = None
     state: Literal["VERIFIED_FK", "INFERRED_KEY_RELATIONSHIP", "UNRESOLVED"]
     cardinality: Literal["ONE_TO_ONE", "ONE_TO_MANY", "MANY_TO_ONE", "MANY_TO_MANY", "UNKNOWN"]
     left_key_unique: bool | None = None
@@ -452,6 +456,18 @@ class RetrievalTrace(StrictModel):
     metadata_supplied: list[str] = Field(default_factory=list)
 
 
+class CallLedgerEntry(StrictModel):
+    component: str
+    kind: Literal["MODEL", "DATABASE", "TOOL"]
+    status: Literal["SUCCEEDED", "FAILED", "CANCELLED", "UNKNOWN"]
+    provider: str | None = None
+    requested_model: str | None = None
+    effective_model: str | None = None
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    latency_ms: int | None = Field(default=None, ge=0)
+
+
 class PipelineTelemetry(StrictModel):
     available_context_tokens: int = Field(default=0, ge=0)
     selected_context_tokens: int = Field(default=0, ge=0)
@@ -478,6 +494,9 @@ class PipelineTelemetry(StrictModel):
     historical_similarity_scores: list[float] = Field(default_factory=list, max_length=2)
     ab_context_mode: Literal["model1", "retrieval"] | None = None
     retrieval: RetrievalTrace | None = None
+    call_ledger: list[CallLedgerEntry] = Field(default_factory=list, max_length=30)
+    total_model_calls: int = Field(default=0, ge=0)
+    total_database_calls: int = Field(default=0, ge=0)
 
 
 class ContractDelta(StrictModel):
@@ -524,9 +543,7 @@ class RecoveryUsage(StrictModel):
 
 class RecoveryTrace(StrictModel):
     activated: bool = True
-    mode: Literal["FAILURE", "CORRECTNESS", "ZERO_RESULT", "NULL_RESULT", "FILTER"] = (
-        "FAILURE"
-    )
+    mode: Literal["FAILURE", "CORRECTNESS", "ZERO_RESULT", "NULL_RESULT", "FILTER"] = "FAILURE"
     failure_code: str
     failure_category: str
     diagnosis_code: str | None = None
@@ -555,9 +572,7 @@ class HumanReviewRequest(StrictModel):
 
 class OptimizationEvidence(StrictModel):
     optimizer: Literal["sqlglot", "model2"] = "model2"
-    status: Literal[
-        "optimized", "equivalent_not_faster", "no_structural_change", "rejected"
-    ]
+    status: Literal["optimized", "equivalent_not_faster", "no_structural_change", "rejected"]
     baseline_explain: list[str] = Field(default_factory=list)
     candidate_explain: list[str] = Field(default_factory=list)
     baseline_timings_ms: list[float] = Field(default_factory=list)
@@ -648,6 +663,7 @@ class ConversationState(StrictModel):
     turn_count: int = Field(default=0, ge=0)
     corrections: list[str] = Field(default_factory=list, max_length=30)
     contract_deltas: list[ContractDelta] = Field(default_factory=list, max_length=30)
+    version: int = Field(default=0, ge=0)
 
 
 class TurnInterpretation(StrictModel):
@@ -713,6 +729,7 @@ class ChatResponse(StrictModel):
     provenance: list[str] = Field(default_factory=list)
     token_usage: TokenUsage = Field(default_factory=TokenUsage)
     timings_ms: dict[str, int] = Field(default_factory=dict)
+    call_ledger: list[CallLedgerEntry] = Field(default_factory=list, max_length=40)
 
 
 class GenerateResponse(StrictModel):
@@ -733,14 +750,16 @@ class GenerateResponse(StrictModel):
         return format_sql_for_display(self.sql, self.dialect)
 
     accepted: bool
-    execution_status: Literal["NOT_EXECUTED", "EXECUTABLE", "ACCEPTED"] = "NOT_EXECUTED"
+    execution_status: Literal["NOT_EXECUTED", "SAFETY_VALIDATED", "EXECUTABLE", "ACCEPTED"] = (
+        "NOT_EXECUTED"
+    )
     attempts: list[Attempt] = Field(default_factory=list, max_length=4)
     rows: list[list[Any]] = Field(default_factory=list)
     columns: list[str] = Field(default_factory=list)
     row_count: int = Field(default=0, ge=0)
     truncated: bool = False
     termination_reason: Literal[
-        "accepted", "attempt_limit", "model_error", "database_error"
+        "accepted", "attempt_limit", "model_error", "database_error", "context_error"
     ]
     model_error: str | None = Field(default=None, max_length=500)
     token_usage: TokenUsage = Field(default_factory=TokenUsage)

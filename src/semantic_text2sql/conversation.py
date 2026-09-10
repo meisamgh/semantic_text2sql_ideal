@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
+import time
+from pathlib import Path
 from threading import Lock
 from typing import Any, Literal, Protocol, cast
 
@@ -92,23 +95,88 @@ class ConversationCompleter(Protocol):
 
 
 class ConversationStore:
-    """Process-local state; replace with durable storage for multi-worker production."""
+    """Versioned conversation state with optional durable SQLite persistence."""
 
-    def __init__(self) -> None:
+    def __init__(self, path: Path | None = None, *, ttl_seconds: int = 86_400) -> None:
         self._states: dict[str, ConversationState] = {}
         self._lock = Lock()
+        self.path = path
+        self.ttl_seconds = max(60, ttl_seconds)
+        if path is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with sqlite3.connect(path) as connection:
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS conversations ("
+                    "session_id TEXT PRIMARY KEY, version INTEGER NOT NULL, "
+                    "state_json TEXT NOT NULL, updated_at REAL NOT NULL)"
+                )
 
     def get(self, session_id: str) -> ConversationState | None:
         with self._lock:
+            if self.path is not None:
+                with sqlite3.connect(self.path) as connection:
+                    connection.execute(
+                        "DELETE FROM conversations WHERE updated_at < ?",
+                        (time.time() - self.ttl_seconds,),
+                    )
+                    row = connection.execute(
+                        "SELECT state_json FROM conversations WHERE session_id = ?",
+                        (session_id,),
+                    ).fetchone()
+                return ConversationState.model_validate_json(row[0]) if row else None
             return self._states.get(session_id)
 
-    def put(self, state: ConversationState) -> None:
+    def put(
+        self, state: ConversationState, *, expected_version: int | None = None
+    ) -> ConversationState:
         with self._lock:
-            self._states[state.session_id] = state
+            current = self._read_unlocked(state.session_id)
+            current_version = current.version if current else None
+            if expected_version != current_version:
+                raise ConversationConflict(
+                    f"Conversation changed from version {expected_version} to {current_version}."
+                )
+            saved = state.model_copy(update={"version": (current_version or 0) + 1})
+            if self.path is None:
+                self._states[state.session_id] = saved
+            else:
+                with sqlite3.connect(self.path) as connection:
+                    connection.execute(
+                        "INSERT INTO conversations(session_id, version, state_json, updated_at) "
+                        "VALUES (?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET "
+                        "version=excluded.version, state_json=excluded.state_json, "
+                        "updated_at=excluded.updated_at",
+                        (
+                            saved.session_id,
+                            saved.version,
+                            saved.model_dump_json(),
+                            time.time(),
+                        ),
+                    )
+            return saved
 
     def reset(self, session_id: str) -> None:
         with self._lock:
-            self._states.pop(session_id, None)
+            if self.path is None:
+                self._states.pop(session_id, None)
+            else:
+                with sqlite3.connect(self.path) as connection:
+                    connection.execute(
+                        "DELETE FROM conversations WHERE session_id = ?", (session_id,)
+                    )
+
+    def _read_unlocked(self, session_id: str) -> ConversationState | None:
+        if self.path is None:
+            return self._states.get(session_id)
+        with sqlite3.connect(self.path) as connection:
+            row = connection.execute(
+                "SELECT state_json FROM conversations WHERE session_id = ?", (session_id,)
+            ).fetchone()
+        return ConversationState.model_validate_json(row[0]) if row else None
+
+
+class ConversationConflict(RuntimeError):
+    """Raised when a stale asynchronous turn attempts to replace newer state."""
 
 
 def classify_operation(

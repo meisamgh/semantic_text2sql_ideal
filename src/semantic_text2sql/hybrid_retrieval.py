@@ -162,13 +162,14 @@ class HybridSchemaRetriever:
         bm25_scores = _bm25(query, documents)
         try:
             dense_scores = _dense_scores(query, documents, self.encoder)
+            dense_ranks = _ranks(dense_scores, positive_only=False)
         except Exception:
             # Dense retrieval is an optional local enhancement. A first-run model download
             # or damaged embedding cache must not prevent deterministic BM25/value retrieval.
             dense_scores = {identifier: 0.0 for identifier in documents}
+            dense_ranks = {}
         value_scores = _value_scores(query, schema, profiles)
         bm25_ranks = _ranks(bm25_scores, positive_only=True)
-        dense_ranks = _ranks(dense_scores, positive_only=False)
         value_ranks = _ranks(value_scores, positive_only=True)
         fused = _rrf((bm25_ranks, dense_ranks, value_ranks), self.rrf_k)
 

@@ -56,12 +56,12 @@ def test_offline_profiler_captures_numeric_and_categorical_data(registry, tmp_pa
             "child_column": "customer_id",
             "parent_columns": ["customer_id"],
             "child_columns": ["customer_id"],
-                "type": "ONE_TO_MANY",
-                "parent_key_unique": True,
-                "child_key_unique": False,
-                "inferred": False,
-                "confidence": 1.0,
-            }
+            "type": "ONE_TO_MANY",
+            "parent_key_unique": True,
+            "child_key_unique": False,
+            "inferred": False,
+            "confidence": 1.0,
+        }
     ]
     store = ProfileStore(tmp_path / "profiles")
     path = store.save(profile)
@@ -118,6 +118,20 @@ def test_profiler_handles_mixed_sqlite_storage_classes(tmp_path) -> None:
     assert value.minimum == "7"
     assert value.maximum == "unknown"
     assert value.null_count == 1
+
+
+def test_six_digit_identifiers_are_not_inferred_as_months(tmp_path) -> None:
+    directory = tmp_path / "identifiers"
+    directory.mkdir()
+    with sqlite3.connect(directory / "identifiers.sqlite") as connection:
+        connection.executescript(
+            "CREATE TABLE entities (code TEXT);INSERT INTO entities VALUES ('123456'), ('123457');"
+        )
+
+    profile = profile_database(DatabaseRegistry(tmp_path), "identifiers", "sqlite")
+    code = next(item for item in profile.columns if item.column == "code")
+
+    assert code.observed_format is None
 
 
 def test_bird_descriptions_enrich_profiles(registry, tmp_path) -> None:  # type: ignore[no-untyped-def]

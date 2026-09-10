@@ -129,12 +129,12 @@ def test_sota_uses_responses_api_without_storage() -> None:
 def test_sota_extracts_streamed_response_text_and_usage() -> None:
     payload = "\n".join(
         [
-            'event: response.output_text.delta',
+            "event: response.output_text.delta",
             'data: {"type":"response.output_text.delta","delta":"SELECT "}',
             'data: {"type":"response.output_text.delta","delta":"1"}',
             'data: {"type":"response.completed","response":{"usage":'
             '{"input_tokens":8,"output_tokens":2}}}',
-            'data: [DONE]',
+            "data: [DONE]",
         ]
     )
 

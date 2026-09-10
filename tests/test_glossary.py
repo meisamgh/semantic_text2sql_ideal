@@ -34,3 +34,13 @@ def test_glossary_returns_matched_structural_formula() -> None:
         "transactions_1k.Price",
         "transactions_1k.Amount",
     ]
+
+
+def test_glossary_returns_only_aliases_present_in_question() -> None:
+    root = Path(__file__).parents[1] / "data" / "business_glossaries"
+    store = GlossaryStore(root)
+
+    assert store.matched_value_aliases("debit_card_specializing", "Consumption paid in euros") == {
+        "euros": "EUR"
+    }
+    assert store.matched_value_aliases("debit_card_specializing", "Consumption paid in CZK") == {}

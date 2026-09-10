@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from sqlglot import parse_one
 
 from semantic_text2sql.models import ColumnProfile, DatabaseProfile, TokenUsage, ValueFrequency
@@ -19,7 +20,7 @@ class RecoveryReasoner:
         assert "Tool observations" in prompt
         return (
             '{"action":"INFORM","diagnosis":"The requested year is outside the dates '
-            'stored in the database. '
+            "stored in the database. "
             'Please check the year in your question.","confidence":0.93}',
             TokenUsage(input_tokens=80, output_tokens=22),
         )
@@ -46,12 +47,10 @@ class ToolSelectingReasoner:
         )
 
 
-def test_bounded_reasoner_explains_null_result_from_verified_evidence(registry) -> None:  # type: ignore[no-untyped-def]
+def test_bounded_reasoner_rejects_unsupported_data_diagnosis(registry) -> None:  # type: ignore[no-untyped-def]
     schema = registry.inspect("shop")
     trace = asyncio.run(
-        RecoveryCoordinator(
-            RecoveryTools(registry, "shop", schema, profile=None)
-        ).ainvestigate(
+        RecoveryCoordinator(RecoveryTools(registry, "shop", schema, profile=None)).ainvestigate(
             question="How much was ordered in 22134?",
             failed_sql="SELECT SUM(amount) FROM orders WHERE order_date = '22134'",
             failure_code="NULL_RESULT",
@@ -63,11 +62,9 @@ def test_bounded_reasoner_explains_null_result_from_verified_evidence(registry) 
         )
     )
 
-    assert trace.agent_diagnosis is not None
-    assert "outside the dates" in trace.agent_diagnosis
-    assert trace.agent_confidence == 0.93
-    assert trace.usage.llm_calls == 1
-    assert trace.usage.token_usage.total_tokens == 102
+    assert trace.agent_diagnosis is None
+    assert trace.diagnosis_code is not None
+    assert trace.usage.llm_calls == 0
 
 
 def test_recovery_supplies_verified_temporal_coverage(registry) -> None:  # type: ignore[no-untyped-def]
@@ -112,9 +109,7 @@ def test_recovery_supplies_verified_temporal_coverage(registry) -> None:  # type
 
     reasoner = ToolSelectingReasoner()
     agent_trace = asyncio.run(
-        RecoveryCoordinator(
-            RecoveryTools(registry, "shop", schema, profile=profile)
-        ).ainvestigate(
+        RecoveryCoordinator(RecoveryTools(registry, "shop", schema, profile=profile)).ainvestigate(
             question="How much was ordered in 22134?",
             failed_sql="SELECT SUM(amount) FROM orders WHERE amount = '22134'",
             failure_code="NULL_RESULT",
@@ -133,9 +128,7 @@ def test_recovery_supplies_verified_temporal_coverage(registry) -> None:  # type
 
 def test_recovery_graph_uses_schema_tool_for_unknown_column(registry) -> None:  # type: ignore[no-untyped-def]
     schema = registry.inspect("shop")
-    trace = RecoveryCoordinator(
-        RecoveryTools(registry, "shop", schema, profile=None)
-    ).investigate(
+    trace = RecoveryCoordinator(RecoveryTools(registry, "shop", schema, profile=None)).investigate(
         question="Count orders by customer",
         failed_sql="SELECT missing FROM orders",
         failure_code="DATABASE_ERROR",
@@ -187,9 +180,7 @@ def test_agent_schema_tool_does_not_expose_sampled_values_as_evidence(registry) 
 
 def test_zero_result_recovery_inspects_every_filter(registry) -> None:  # type: ignore[no-untyped-def]
     schema = registry.inspect("shop")
-    trace = RecoveryCoordinator(
-        RecoveryTools(registry, "shop", schema, profile=None)
-    ).investigate(
+    trace = RecoveryCoordinator(RecoveryTools(registry, "shop", schema, profile=None)).investigate(
         question="List German pending orders above 10",
         failed_sql=(
             "SELECT o.order_id FROM orders o JOIN customers c "
@@ -220,17 +211,26 @@ def test_zero_result_recovery_inspects_every_filter(registry) -> None:  # type: 
     assert trace.usage.token_usage.total_tokens == 0
     assert trace.usage.database_probe_count == 3
     assert trace.usage.latency_ms >= 0
-    assert trace.usage.max_tool_calls == 6
+    assert trace.usage.max_tool_calls == 3
     assert trace.usage.max_database_probes == 8
     assert trace.usage.max_recovery_ms == 8_000
     assert trace.usage.budget_exhausted is False
 
 
+def test_recovery_query_uses_main_validator_and_table_allowlist(registry) -> None:  # type: ignore[no-untyped-def]
+    schema = registry.inspect("shop")
+    tools = RecoveryTools(registry, "shop", schema, profile=None)
+    tools.begin_recovery()
+
+    with pytest.raises(ValueError, match="SQL_TABLE_NOT_AUTHORIZED"):
+        tools.query_database("SELECT name FROM customers", allowed_tables=["orders"])
+    with pytest.raises(ValueError, match="SQL_NOT_READ_ONLY"):
+        tools.query_database("DELETE FROM orders", allowed_tables=["orders"])
+
+
 def test_provider_failure_does_not_probe_database(registry) -> None:  # type: ignore[no-untyped-def]
     schema = registry.inspect("shop")
-    trace = RecoveryCoordinator(
-        RecoveryTools(registry, "shop", schema, profile=None)
-    ).investigate(
+    trace = RecoveryCoordinator(RecoveryTools(registry, "shop", schema, profile=None)).investigate(
         question="Count orders",
         failed_sql="",
         failure_code="MODEL_ERROR",
@@ -297,9 +297,7 @@ def test_recovery_caps_database_filter_probes(registry) -> None:  # type: ignore
 
 def test_missing_identifier_is_explained_in_plain_language(registry) -> None:  # type: ignore[no-untyped-def]
     schema = registry.inspect("shop")
-    trace = RecoveryCoordinator(
-        RecoveryTools(registry, "shop", schema, profile=None)
-    ).investigate(
+    trace = RecoveryCoordinator(RecoveryTools(registry, "shop", schema, profile=None)).investigate(
         question="How much did customer 600000 spend?",
         failed_sql="SELECT SUM(amount) FROM orders WHERE customer_id = 600000",
         failure_code="NULL_RESULT",

@@ -424,9 +424,7 @@ def _profile_column(
     )
     sentinels = _sentinels(non_null, semantic_type)
     lengths = sorted(len(value) for value in strings)
-    comparable: list[float] | list[str] = (
-        numeric if len(numeric) == len(non_null) else strings
-    )
+    comparable: list[float] | list[str] = numeric if len(numeric) == len(non_null) else strings
     null_count = len(values) - len(non_null)
     denominator = len(values) or 1
     return ColumnProfile(
@@ -539,7 +537,7 @@ def _sentinels(values: list[Any], semantic_type: str) -> list[SuspectedSentinel]
 
 def _observed_format(values: list[str]) -> str | None:
     sample = values[:20]
-    if sample and all(_COMPACT_MONTH.match(value) for value in sample):
+    if sample and all(_valid_compact_month(value) for value in sample):
         return "YYYYMM"
     if sample and all(_SLASH_DATE.match(value) for value in sample):
         return "YYYY/MM/DD"
@@ -550,6 +548,14 @@ def _observed_format(values: list[str]) -> str | None:
             return "ISO-8601 datetime"
         return "YYYY-MM-DD"
     return None
+
+
+def _valid_compact_month(value: str) -> bool:
+    if not _COMPACT_MONTH.fullmatch(value):
+        return False
+    year = int(value[:4])
+    month = int(value[4:])
+    return 1 <= year <= 9999 and 1 <= month <= 12
 
 
 def _observed_timezone(values: list[str]) -> str | None:

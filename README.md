@@ -225,6 +225,13 @@ Important settings:
 | `TEXT2SQL_HISTORY_ENABLED` | Enable strongly matched historical examples | `false` |
 | `TEXT2SQL_CONTEXT_MODEL` | Optional context-model override | selected model |
 | `TEXT2SQL_SQL_MODEL` | Optional SQL-model override | selected model |
+| `TEXT2SQL_REQUEST_TIMEOUT_SECONDS` | Shared end-to-end request deadline | `180` |
+| `TEXT2SQL_REQUEST_MAX_MODEL_CALLS` | Maximum model-call budget per request | `6` |
+| `TEXT2SQL_REQUEST_MAX_DATABASE_CALLS` | Maximum database-call budget per request | `12` |
+| `TEXT2SQL_CONVERSATION_STORE` | Optional SQLite path for durable conversation state | in memory |
+| `TEXT2SQL_CONVERSATION_TTL_SECONDS` | Durable/in-memory session lifetime | `86400` |
+| `TEXT2SQL_JOB_TTL_SECONDS` | Completed asynchronous-job lifetime | `3600` |
+| `TEXT2SQL_MAX_JOBS` | Maximum retained asynchronous jobs | `500` |
 
 See [.env.example](.env.example) for provider-specific settings. Never commit `.env`.
 

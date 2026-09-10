@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import calendar
 import json
 import re
@@ -9,7 +10,7 @@ from time import monotonic, perf_counter
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
-from sqlglot import exp, parse, parse_one
+from sqlglot import exp, parse_one
 
 from semantic_text2sql.database import DatabaseRegistry
 from semantic_text2sql.models import (
@@ -21,6 +22,10 @@ from semantic_text2sql.models import (
     TokenUsage,
 )
 from semantic_text2sql.postgres import PostgresRegistry
+from semantic_text2sql.validator import validate_sql
+
+MAX_RECOVERY_TOOL_CALLS = 3
+MAX_RECOVERY_MODEL_CALLS = 4
 
 
 class RecoveryState(TypedDict):
@@ -107,9 +112,11 @@ class RecoveryTools:
             if table.name not in allowed:
                 continue
             selected = set(requested.get(table.name, []))
-            live_columns = table.columns if not selected else [
-                item for item in table.columns if item.name in selected
-            ]
+            live_columns = (
+                table.columns
+                if not selected
+                else [item for item in table.columns if item.name in selected]
+            )
             table_profile = table_profiles.get(table.name)
             result["tables"][table.name] = {
                 "grain": table_profile.grain if table_profile else None,
@@ -132,27 +139,23 @@ class RecoveryTools:
 
     def query_database(self, sql: str, *, allowed_tables: list[str]) -> dict[str, Any]:
         """Execute one SQLGlot-checked, allowlisted, bounded read-only SELECT probe."""
-        statements = parse(sql, dialect=self.schema.dialect)
-        if len(statements) != 1 or statements[0] is None:
-            raise ValueError("The recovery query must contain exactly one statement.")
-        tree = statements[0]
-        forbidden = (
-            exp.Insert, exp.Update, exp.Delete, exp.Create, exp.Drop, exp.Alter, exp.Command
+        validation = validate_sql(
+            sql,
+            self.schema,
+            dialect=self.schema.dialect,
+            allowed_tables={item.casefold() for item in allowed_tables},
         )
-        if any(tree.find(kind) is not None for kind in forbidden):
-            raise ValueError("The recovery query must be read-only.")
-        if tree.find(exp.Select) is None:
-            raise ValueError("The recovery query must be SELECT-only.")
-        ctes = {item.alias_or_name for item in tree.find_all(exp.CTE)}
-        referenced = {item.name for item in tree.find_all(exp.Table) if item.name not in ctes}
-        if not referenced.issubset(set(allowed_tables)):
-            raise ValueError("The recovery query references a table outside the allowlist.")
+        if not validation.valid:
+            raise ValueError(f"{validation.code}: {validation.message}")
+        tree = parse_one(sql, dialect=self.schema.dialect)
         remaining = self.remaining_seconds()
         if remaining <= 0:
             self.budget_exhausted = True
             raise TimeoutError("The recovery database budget is exhausted.")
         columns, rows, truncated = self.database.execute(
-            self.db_id, tree.sql(dialect=self.schema.dialect), max_rows=self.max_rows,
+            self.db_id,
+            tree.sql(dialect=self.schema.dialect),
+            max_rows=self.max_rows,
             timeout_seconds=min(2.0, remaining),
         )
         return {"columns": columns, "rows": rows, "truncated": truncated}
@@ -210,9 +213,7 @@ class RecoveryTools:
             .limit(self.max_rows)
             .sql(dialect=dialect)
         )
-        columns, rows, truncated = self.database.execute(
-            self.db_id, query, max_rows=self.max_rows
-        )
+        columns, rows, truncated = self.database.execute(self.db_id, query, max_rows=self.max_rows)
         return {"columns": columns, "rows": rows, "truncated": truncated}
 
     def inspect_filters(self, sql: str, *, allowed_tables: list[str]) -> list[dict[str, Any]]:
@@ -298,9 +299,7 @@ class RecoveryTools:
             unique.setdefault(item["expression"], item)
         return list(unique.values())[:20]
 
-    def probe_filter_counts(
-        self, sql: str, *, allowed_tables: list[str]
-    ) -> list[dict[str, Any]]:
+    def probe_filter_counts(self, sql: str, *, allowed_tables: list[str]) -> list[dict[str, Any]]:
         """Run one bounded count probe per top-level AND filter."""
         try:
             tree = parse_one(sql, dialect=self.schema.dialect)
@@ -355,9 +354,7 @@ class RecoveryTools:
                         "plain_language": _plain_filter(predicate),
                         "subject_kind": subject_kind,
                         "no_match_explanation": (
-                            _no_match_explanation(predicate, subject_kind)
-                            if count == 0
-                            else None
+                            _no_match_explanation(predicate, subject_kind) if count == 0 else None
                         ),
                         "match_count": count,
                         "status": "MATCH" if count > 0 else "NO_MATCH",
@@ -374,6 +371,7 @@ class RecoveryTools:
                     }
                 )
         return checks
+
 
 class RecoveryCoordinator:
     """A deterministic controller expressed as a bounded LangGraph."""
@@ -397,9 +395,11 @@ class RecoveryCoordinator:
         failure_message: str,
         allowed_tables: list[str],
         mode: str = "FAILURE",
+        reset_budget: bool = True,
     ) -> RecoveryTrace:
         started = perf_counter()
-        self.tools.begin_recovery()
+        if reset_budget:
+            self.tools.begin_recovery()
         result = self.graph.invoke(
             RecoveryState(
                 mode=mode,
@@ -428,7 +428,7 @@ class RecoveryCoordinator:
                 llm_calls=0,
                 database_probe_count=len(result["filter_checks"]),
                 latency_ms=round((perf_counter() - started) * 1_000),
-                max_tool_calls=6,
+                max_tool_calls=MAX_RECOVERY_TOOL_CALLS,
                 max_database_probes=self.tools.max_database_probes,
                 max_recovery_ms=round(self.tools.max_recovery_seconds * 1_000),
                 budget_exhausted=self.tools.budget_exhausted,
@@ -453,17 +453,23 @@ class RecoveryCoordinator:
         model: str | None = None,
     ) -> RecoveryTrace:
         """Run one bounded agent with two tools; fall back to deterministic recovery."""
-        fallback = self.investigate(
-            question=question, failed_sql=failed_sql, failure_code=failure_code,
-            failure_message=failure_message, allowed_tables=allowed_tables, mode=mode,
-        )
-        if (
-            completer is None
-            or model is None
-            or fallback.failure_category in {"provider", "safety"}
-        ):
-            return fallback
+
+        async def fallback() -> RecoveryTrace:
+            return await asyncio.to_thread(
+                self.investigate,
+                question=question,
+                failed_sql=failed_sql,
+                failure_code=failure_code,
+                failure_message=failure_message,
+                allowed_tables=allowed_tables,
+                mode=mode,
+                reset_budget=False,
+            )
+
         self.tools.begin_recovery()
+        category = _failure_category(mode, failure_code, failure_message)
+        if completer is None or model is None or category in {"provider", "safety"}:
+            return await fallback()
         observations: list[dict[str, Any]] = []
         calls: list[RecoveryToolCall] = []
         total_usage = TokenUsage(input_tokens=0, output_tokens=0)
@@ -471,30 +477,49 @@ class RecoveryCoordinator:
         try:
             detailed = getattr(completer, "complete_detailed", None)
             if not callable(detailed):
-                return fallback
-            for _ in range(4):
+                return await fallback()
+            for model_call in range(MAX_RECOVERY_MODEL_CALLS):
                 prompt = _agent_recovery_prompt(
-                    question, failed_sql, failure_code, failure_message,
-                    allowed_tables, observations,
+                    question,
+                    failed_sql,
+                    failure_code,
+                    failure_message,
+                    allowed_tables,
+                    observations,
                 )
                 try:
-                    raw, usage = await detailed(provider, model, prompt)
+                    raw, usage = await asyncio.wait_for(
+                        detailed(provider, model, prompt),
+                        timeout=max(0.01, self.tools.remaining_seconds()),
+                    )
                 except TypeError:
-                    raw, usage = await detailed(model, prompt)
+                    raw, usage = await asyncio.wait_for(
+                        detailed(model, prompt),
+                        timeout=max(0.01, self.tools.remaining_seconds()),
+                    )
                 if isinstance(usage, TokenUsage):
                     total_usage = TokenUsage(
-                        input_tokens=(total_usage.input_tokens or 0)
-                        + (usage.input_tokens or 0),
-                        output_tokens=(total_usage.output_tokens or 0)
-                        + (usage.output_tokens or 0),
+                        input_tokens=(total_usage.input_tokens or 0) + (usage.input_tokens or 0),
+                        output_tokens=(total_usage.output_tokens or 0) + (usage.output_tokens or 0),
                     )
                 payload = json.loads(_strip_json_fence(raw))
                 action = str(payload.get("action") or "").upper()
                 if action in {"REPAIR", "INFORM", "ESCALATE"}:
                     diagnosis = str(payload.get("diagnosis") or "").strip()
                     if not diagnosis:
-                        return fallback
-                    return fallback.model_copy(
+                        return await fallback()
+                    if (
+                        category in {"data_grounding", "correctness"}
+                        and action in {"INFORM", "ESCALATE"}
+                        and not observations
+                    ):
+                        return await fallback()
+                    base = RecoveryTrace(
+                        mode=mode,  # type: ignore[arg-type]
+                        failure_code=failure_code,
+                        failure_category=category,
+                    )
+                    return base.model_copy(
                         update={
                             "agent_diagnosis": diagnosis[:1_000],
                             "agent_confidence": max(
@@ -510,65 +535,61 @@ class RecoveryCoordinator:
                             ],
                             "tool_calls": calls,
                             "requires_human_review": action == "ESCALATE",
-                            "usage": fallback.usage.model_copy(
-                                update={
-                                    "llm_calls": len(observations) + 1,
-                                    "token_usage": total_usage,
-                                    "database_probe_count": sum(
-                                        item["tool"] == "query_database" for item in observations
-                                    ),
-                                    "latency_ms": round((perf_counter() - started) * 1_000),
-                                }
+                            "usage": RecoveryUsage(
+                                llm_calls=model_call + 1,
+                                token_usage=total_usage,
+                                database_probe_count=sum(
+                                    item["tool"] == "query_database" for item in observations
+                                ),
+                                latency_ms=round((perf_counter() - started) * 1_000),
+                                max_tool_calls=MAX_RECOVERY_TOOL_CALLS,
+                                max_database_probes=self.tools.max_database_probes,
+                                max_recovery_ms=round(self.tools.max_recovery_seconds * 1_000),
+                                budget_exhausted=self.tools.budget_exhausted,
+                                estimated_llm_cost_usd=None,
                             ),
                         }
                     )
-                if action != "CALL_TOOL" or len(calls) >= 4:
-                    return fallback
+                if action != "CALL_TOOL" or len(calls) >= MAX_RECOVERY_TOOL_CALLS:
+                    return await fallback()
                 tool = str(payload.get("tool") or "")
                 arguments = payload.get("arguments") or {}
                 if tool == "inspect_schema":
                     requested_tables = [
-                        item for item in arguments.get("tables", allowed_tables)
+                        item
+                        for item in arguments.get("tables", allowed_tables)
                         if item in allowed_tables
                     ]
                     result = self.tools.inspect_schema_rich(
                         requested_tables, arguments.get("columns")
                     )
                 elif tool == "query_database":
-                    result = self.tools.query_database(
-                        str(arguments.get("sql") or ""), allowed_tables=allowed_tables
+                    result = await asyncio.to_thread(
+                        self.tools.query_database,
+                        str(arguments.get("sql") or ""),
+                        allowed_tables=allowed_tables,
                     )
                 else:
-                    return fallback
+                    return await fallback()
                 purpose = str(payload.get("purpose") or "Gather verified recovery evidence.")
                 observations.append({"tool": tool, "result": result})
                 calls.append(
                     RecoveryToolCall(
-                        tool=tool, purpose=purpose[:500],
+                        tool=tool,
+                        purpose=purpose[:500],
                         result_summary=f"Returned bounded {tool} evidence.",
                     )
                 )
         except Exception:
-            return fallback
-        return fallback
+            return await fallback()
+        return await fallback()
 
     def _classify(self, state: RecoveryState) -> dict[str, Any]:
-        if state["mode"] in {"ZERO_RESULT", "NULL_RESULT", "FILTER"}:
-            return {"category": "data_grounding"}
-        if state["mode"] == "CORRECTNESS":
-            return {"category": "correctness"}
-        text = f"{state['failure_code']} {state['failure_message']}".casefold()
-        if any(token in text for token in ("column", "table", "alias", "schema")):
-            category = "schema"
-        elif any(token in text for token in ("date", "type", "value", "null", "empty")):
-            category = "data_grounding"
-        elif any(token in text for token in ("timeout", "rate limit", "unavailable")):
-            category = "provider"
-        elif "safety" in text or "write" in text:
-            category = "safety"
-        else:
-            category = "sql"
-        return {"category": category}
+        return {
+            "category": _failure_category(
+                state["mode"], state["failure_code"], state["failure_message"]
+            )
+        }
 
     def _gather(self, state: RecoveryState) -> dict[str, Any]:
         evidence = [f"Failure {state['failure_code']}: {state['failure_message']}"]
@@ -669,6 +690,23 @@ def recovery_feedback(trace: RecoveryTrace) -> str:
     )
 
 
+def _failure_category(mode: str, failure_code: str, failure_message: str) -> str:
+    if mode in {"ZERO_RESULT", "NULL_RESULT", "FILTER"}:
+        return "data_grounding"
+    if mode == "CORRECTNESS":
+        return "correctness"
+    text = f"{failure_code} {failure_message}".casefold()
+    if any(token in text for token in ("column", "table", "alias", "schema")):
+        return "schema"
+    if any(token in text for token in ("date", "type", "value", "null", "empty")):
+        return "data_grounding"
+    if any(token in text for token in ("timeout", "rate limit", "unavailable")):
+        return "provider"
+    if "safety" in text or "write" in text:
+        return "safety"
+    return "sql"
+
+
 def _agent_recovery_prompt(
     question: str,
     failed_sql: str,
@@ -705,7 +743,7 @@ Rules:
 
 Question: {question}
 Failure: {failure_code}: {failure_message}
-SQL: {failed_sql or 'No SQL was produced.'}
+SQL: {failed_sql or "No SQL was produced."}
 Allowed tables: {json.dumps(allowed_tables)}
 Tool observations: {json.dumps(observations, default=str)[:12_000]}
 """
@@ -758,8 +796,7 @@ def _diagnose(
                     "selected database column.",
                 )
     no_match = [
-        item.get("no_match_explanation")
-        or item.get("plain_language", item["filter"])
+        item.get("no_match_explanation") or item.get("plain_language", item["filter"])
         for item in checks
         if item.get("status") == "NO_MATCH"
     ]
@@ -870,9 +907,7 @@ def _human_literal(value: str) -> str:
         month = int(compact_month.group("month"))
         if 1 <= month <= 12:
             return f"{calendar.month_name[month]} {compact_month.group('year')}"
-    iso_date = re.fullmatch(
-        r"(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})", value
-    )
+    iso_date = re.fullmatch(r"(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})", value)
     if iso_date:
         month = int(iso_date.group("month"))
         day = int(iso_date.group("day"))

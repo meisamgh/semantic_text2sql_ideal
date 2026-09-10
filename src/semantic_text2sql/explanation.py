@@ -65,9 +65,7 @@ def extract_sql_facts(sql: str, dialect: str) -> dict[str, Any]:
     limits = [item.expression.sql(dialect=dialect) for item in expression.find_all(exp.Limit)]
     return {
         "tables": list(dict.fromkeys(item.name for item in expression.find_all(exp.Table))),
-        "ctes": list(
-            dict.fromkeys(item.alias_or_name for item in expression.find_all(exp.CTE))
-        ),
+        "ctes": list(dict.fromkeys(item.alias_or_name for item in expression.find_all(exp.CTE))),
         "outputs": (
             [item.sql(dialect=dialect) for item in root_select.expressions]
             if root_select is not None
@@ -226,14 +224,16 @@ VERIFIED_SCHEMA_CONTEXT:
 {json.dumps(relationship_context, separators=(",", ":"))}
 
 RESULT_SUMMARY:
-{json.dumps(
-    {
-        "columns": state.last_columns,
-        "row_count": state.last_row_count,
-        "truncated": state.last_truncated,
-    },
-    separators=(",", ":"),
-)}
+{
+        json.dumps(
+            {
+                "columns": state.last_columns,
+                "row_count": state.last_row_count,
+                "truncated": state.last_truncated,
+            },
+            separators=(",", ":"),
+        )
+    }
 
 RECORDED_FAILURE:
 {state.last_failure or "None"}

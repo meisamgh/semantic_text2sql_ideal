@@ -118,6 +118,26 @@ class GlossaryStore:
             if query & _tokens(f"{item.term} {' '.join(item.synonyms)}")
         }
 
+    def matched_value_aliases(self, db_id: str, question: str) -> dict[str, str]:
+        """Return only approved aliases explicitly present in the current question."""
+        glossary = self.load(db_id)
+        if glossary is None:
+            return {}
+        matches: dict[str, str] = {}
+        for term in glossary.terms:
+            for alias, canonical in term.value_aliases.items():
+                if re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", question, re.IGNORECASE):
+                    matches[alias] = canonical
+        return matches
+
+    def value_alias_context(self, db_id: str, question: str) -> str | None:
+        matches = self.matched_value_aliases(db_id, question)
+        if not matches:
+            return None
+        return "Approved value aliases: " + "; ".join(
+            f"{alias} -> {canonical}" for alias, canonical in sorted(matches.items())
+        )
+
 
 def _score(item: GlossaryTerm, query: set[str]) -> int:
     return len(query & _tokens(f"{item.term} {' '.join(item.synonyms)} {item.definition}"))

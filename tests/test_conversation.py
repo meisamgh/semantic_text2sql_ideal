@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+import time
+from pathlib import Path
 from typing import Literal
 
+import pytest
 from fastapi.testclient import TestClient
 
 from semantic_text2sql.agent import TextToSQLAgent
 from semantic_text2sql.api import create_app
 from semantic_text2sql.conversation import (
+    ConversationConflict,
+    ConversationStore,
     classify_operation,
     requires_model_interpretation,
     resolve_turn,
@@ -271,9 +277,7 @@ def test_chat_preserves_adds_removes_and_resets_context(registry, monkeypatch) -
             "feedback_category": "missing_filter",
         },
     ).json()
-    optimized = client.post(
-        "/api/chat", json={**base, "message": "Optimize it"}
-    ).json()
+    optimized = client.post("/api/chat", json={**base, "message": "Optimize it"}).json()
     explanation = client.post(
         "/api/chat", json={**base, "message": "Why did you use these tables?"}
     ).json()
@@ -344,3 +348,45 @@ def test_stateful_action_without_previous_query_requests_clarification(
     assert explain["operation"] == "EXPLAIN_SQL"
     assert explain["clarification_required"] is True
     assert "previous query" in explain["message"]
+
+
+def test_conversation_store_is_durable_versioned_and_detects_stale_writes(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "conversations.sqlite3"
+    store = ConversationStore(path)
+    initial = ConversationState(
+        session_id="durable",
+        db_id="shop",
+        root_question="Count orders",
+        resolved_question="Count orders",
+    )
+
+    saved = store.put(initial)
+    reloaded = ConversationStore(path).get("durable")
+
+    assert saved.version == 1
+    assert reloaded is not None
+    assert reloaded.version == 1
+    with pytest.raises(ConversationConflict):
+        store.put(initial, expected_version=None)
+
+
+def test_conversation_store_removes_expired_state(tmp_path: Path) -> None:
+    path = tmp_path / "conversations.sqlite3"
+    store = ConversationStore(path, ttl_seconds=60)
+    store.put(
+        ConversationState(
+            session_id="expired",
+            db_id="shop",
+            root_question="Count orders",
+            resolved_question="Count orders",
+        )
+    )
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "UPDATE conversations SET updated_at = ? WHERE session_id = ?",
+            (time.time() - 61, "expired"),
+        )
+
+    assert store.get("expired") is None

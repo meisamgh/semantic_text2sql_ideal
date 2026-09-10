@@ -23,7 +23,9 @@ class NullRowsModel:
 
 
 def test_api_reports_executable_zero_row_result_once(
-    registry, monkeypatch, tmp_path  # type: ignore[no-untyped-def]
+    registry,
+    monkeypatch,
+    tmp_path,  # type: ignore[no-untyped-def]
 ) -> None:
     monkeypatch.setenv("TEXT2SQL_DATABASE_ROOT", str(registry.root))
     monkeypatch.setenv("TEXT2SQL_PROFILE_ROOT", str(tmp_path / "profiles"))
@@ -51,7 +53,9 @@ def test_api_reports_executable_zero_row_result_once(
 
 
 def test_api_reports_null_result_once(
-    registry, monkeypatch, tmp_path  # type: ignore[no-untyped-def]
+    registry,
+    monkeypatch,
+    tmp_path,  # type: ignore[no-untyped-def]
 ) -> None:
     monkeypatch.setenv("TEXT2SQL_DATABASE_ROOT", str(registry.root))
     monkeypatch.setenv("TEXT2SQL_PROFILE_ROOT", str(tmp_path / "profiles"))

@@ -16,9 +16,7 @@ def test_sqlglot_candidate_removes_redundant_true_predicate() -> None:
     assert candidate is not None
     assert "1 = 1" not in candidate
     assert "CustomerID > 0" in candidate
-    assert normalize_sql(candidate, dialect="sqlite") != normalize_sql(
-        original, dialect="sqlite"
-    )
+    assert normalize_sql(candidate, dialect="sqlite") != normalize_sql(original, dialect="sqlite")
 
 
 def test_sqlglot_candidate_preserves_identifier_case_and_query_shape() -> None:

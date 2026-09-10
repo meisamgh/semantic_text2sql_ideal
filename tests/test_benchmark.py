@@ -23,3 +23,15 @@ def test_execution_comparison_rejects_wrong_result(registry) -> None:  # type: i
 
     assert result.executable is True
     assert result.equivalent is False
+
+
+def test_execution_comparison_preserves_duplicate_multiplicity(registry) -> None:  # type: ignore[no-untyped-def]
+    result = compare_sql(
+        registry,
+        "shop",
+        "SELECT country FROM customers UNION ALL SELECT country FROM customers",
+        "SELECT country FROM customers",
+    )
+
+    assert result.executable is True
+    assert result.equivalent is False

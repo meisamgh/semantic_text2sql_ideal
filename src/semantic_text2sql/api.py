@@ -18,6 +18,7 @@ from semantic_text2sql.agent import TextToSQLAgent
 from semantic_text2sql.conversation import (
     EXPLANATION_OPERATIONS,
     STATE_REQUIRED_OPERATIONS,
+    ConversationConflict,
     ConversationStore,
     classify_operation,
     intent_target,
@@ -43,8 +44,7 @@ from semantic_text2sql.llm import (
     SotaSQLModel,
 )
 from semantic_text2sql.models import (
-    GROQ_QWEN_MODEL,
-    SOTA_GPT_MODEL,
+    CallLedgerEntry,
     ChatRequest,
     ChatResponse,
     CheckRequest,
@@ -60,7 +60,7 @@ from semantic_text2sql.models import (
 )
 from semantic_text2sql.postgres import PostgresRegistry, postgres_databases_from_environment
 from semantic_text2sql.profiling import ProfileStore
-from semantic_text2sql.recovery import RecoveryCoordinator, RecoveryTools, recovery_feedback
+from semantic_text2sql.provider_registry import configured_model_options
 from semantic_text2sql.service import TextToSQLService
 
 logger = logging.getLogger(__name__)
@@ -145,8 +145,39 @@ def create_app(
         agent=active_agent,
         context_completers=cast(dict[ModelProvider, Any], turn_completers),
     )
-    conversations = ConversationStore()
+    conversation_store_value = os.environ.get("TEXT2SQL_CONVERSATION_STORE")
+    conversation_path = Path(conversation_store_value) if conversation_store_value else None
+    conversations = ConversationStore(
+        conversation_path,
+        ttl_seconds=int(os.environ.get("TEXT2SQL_CONVERSATION_TTL_SECONDS", "86400")),
+    )
     chat_jobs: dict[str, dict[str, Any]] = {}
+    job_ttl_seconds = max(60, int(os.environ.get("TEXT2SQL_JOB_TTL_SECONDS", "3600")))
+    max_jobs = max(10, int(os.environ.get("TEXT2SQL_MAX_JOBS", "500")))
+
+    def cleanup_jobs() -> None:
+        now = perf_counter()
+        expired = [
+            job_id
+            for job_id, job in chat_jobs.items()
+            if job.get("status") in {"completed", "failed", "cancelled"}
+            and now - float(job.get("finished_at") or job["started_at"]) > job_ttl_seconds
+        ]
+        for job_id in expired:
+            chat_jobs.pop(job_id, None)
+            chat_tasks.pop(job_id, None)
+        if len(chat_jobs) > max_jobs:
+            terminal = sorted(
+                (
+                    (job_id, float(job.get("finished_at") or job["started_at"]))
+                    for job_id, job in chat_jobs.items()
+                    if job.get("status") in {"completed", "failed", "cancelled"}
+                ),
+                key=lambda item: item[1],
+            )
+            for job_id, _ in terminal[: len(chat_jobs) - max_jobs]:
+                chat_jobs.pop(job_id, None)
+                chat_tasks.pop(job_id, None)
 
     def set_session_stage(session_id: str, stage: str) -> None:
         for job in chat_jobs.values():
@@ -166,35 +197,7 @@ def create_app(
     @app.get("/api/models", response_model=list[ModelOption])
     async def models(response: Response) -> list[ModelOption]:
         response.headers["Cache-Control"] = "no-store"
-        justdowork_enabled = os.environ.get("JUSTDOWORK_ENABLED", "false").casefold() == "true"
-        missing_justdowork_key = None
-        if not os.environ.get("JUSTDOWORK_API_KEY"):
-            missing_justdowork_key = "JUSTDOWORK_API_KEY is not set in the environment."
-        elif not justdowork_enabled:
-            missing_justdowork_key = (
-                "JustDoWork is disabled because chat completion access has not been verified. "
-                "Set JUSTDOWORK_ENABLED=true only after a successful completion probe."
-            )
-        missing_groq_key = (
-            None
-            if os.environ.get("GROQ_API_KEY")
-            else "GROQ_API_KEY is not set in the environment."
-        )
-        sota_enabled = os.environ.get("SOTA_ENABLED", "false").casefold() == "true"
-        missing_sota_key = None
-        if not os.environ.get("SOTA_API_KEY"):
-            missing_sota_key = "SOTA_API_KEY is not set in the project environment."
-        elif not sota_enabled:
-            missing_sota_key = "True SOTA is disabled. Set SOTA_ENABLED=true after configuration."
-        return [
-            _model_option("sota", SOTA_GPT_MODEL, local=False, reason=missing_sota_key),
-            _model_option("justdowork", "gpt-5.6-sol", local=False, reason=missing_justdowork_key),
-            _model_option("justdowork", "gpt-5.6-luna", local=False, reason=missing_justdowork_key),
-            _model_option(
-                "justdowork", "gpt-5.6-terra", local=False, reason=missing_justdowork_key
-            ),
-            _model_option("groq", GROQ_QWEN_MODEL, local=False, reason=missing_groq_key),
-        ]
+        return configured_model_options()
 
     @app.get("/api/databases", response_model=list[DatabaseOption])
     async def databases() -> list[DatabaseOption]:
@@ -288,7 +291,7 @@ def create_app(
 
     @app.post("/api/check", response_model=CheckResponse)
     async def check(request: CheckRequest) -> CheckResponse:
-        return active_agent.check(request)
+        return await asyncio.to_thread(active_agent.check, request)
 
     @app.post("/api/chat", response_model=ChatResponse)
     async def chat(request: ChatRequest) -> ChatResponse:
@@ -345,6 +348,23 @@ def create_app(
                 source="rules",
             )
         conversation_ms = round((perf_counter() - conversation_started) * 1_000)
+        conversation_ledger = (
+            [
+                CallLedgerEntry(
+                    component="conversation_interpretation",
+                    kind="MODEL",
+                    status="SUCCEEDED",
+                    provider=request.provider,
+                    requested_model=request.model,
+                    effective_model=request.model,
+                    input_tokens=conversation_usage.input_tokens,
+                    output_tokens=conversation_usage.output_tokens,
+                    latency_ms=conversation_ms,
+                )
+            ]
+            if interpretation.source == "model"
+            else []
+        )
         if interpretation.operation in STATE_REQUIRED_OPERATIONS and not has_matching_state:
             clarification = _missing_state_message(interpretation.operation)
             return ChatResponse(
@@ -357,6 +377,7 @@ def create_app(
                 clarification_required=True,
                 clarification_question=clarification,
                 token_usage=conversation_usage,
+                call_ledger=conversation_ledger,
                 timings_ms={
                     "conversation_interpretation": conversation_ms,
                     "total": round((perf_counter() - started) * 1_000),
@@ -377,6 +398,7 @@ def create_app(
                 clarification_required=True,
                 clarification_question=clarification,
                 token_usage=conversation_usage,
+                call_ledger=conversation_ledger,
                 timings_ms={
                     "conversation_interpretation": conversation_ms,
                     "total": round((perf_counter() - started) * 1_000),
@@ -399,6 +421,7 @@ def create_app(
                 conversation_interpretation=interpretation,
                 message="Conversation context was reset.",
                 token_usage=conversation_usage,
+                call_ledger=conversation_ledger,
                 timings_ms={
                     "conversation_interpretation": conversation_ms,
                     "total": round((perf_counter() - started) * 1_000),
@@ -408,6 +431,7 @@ def create_app(
         if operation in EXPLANATION_OPERATIONS:
             explanation_started = perf_counter()
             explanation_usage = TokenUsage()
+            explanation_model_succeeded = False
             try:
                 explanation, explanation_usage = await explain_turn_detailed(
                     turn_completers[request.provider],
@@ -415,10 +439,15 @@ def create_app(
                     operation=operation,
                     client_message=request.message,
                     state=pending,
-                    dialect="sqlite",
+                    dialect=("sqlite" if request.db_id in sqlite.list_ids() else "postgres"),
                 )
+                explanation_model_succeeded = True
             except (ModelError, ValueError):
-                explanation = deterministic_explanation(operation, pending, "sqlite")
+                explanation = deterministic_explanation(
+                    operation,
+                    pending,
+                    "sqlite" if request.db_id in sqlite.list_ids() else "postgres",
+                )
             return ChatResponse(
                 session_id=request.session_id,
                 operation=operation,
@@ -434,46 +463,32 @@ def create_app(
                     "recorded result or failure metadata",
                 ],
                 token_usage=_add_usage(conversation_usage, explanation_usage),
+                call_ledger=[
+                    *conversation_ledger,
+                    CallLedgerEntry(
+                        component=(
+                            "explanation" if explanation_model_succeeded else "explanation_fallback"
+                        ),
+                        kind="MODEL" if explanation_model_succeeded else "TOOL",
+                        status="SUCCEEDED",
+                        provider=request.provider if explanation_model_succeeded else None,
+                        requested_model=request.model if explanation_model_succeeded else None,
+                        effective_model=request.model if explanation_model_succeeded else None,
+                        input_tokens=explanation_usage.input_tokens,
+                        output_tokens=explanation_usage.output_tokens,
+                        latency_ms=round((perf_counter() - explanation_started) * 1_000),
+                    ),
+                ],
                 timings_ms={
                     "conversation_interpretation": conversation_ms,
                     "explanation": round((perf_counter() - explanation_started) * 1_000),
                     "total": round((perf_counter() - started) * 1_000),
                 },
             )
-        correctness_trace = None
-        correctness_evidence = request.evidence
-        if operation == "CHECK_CORRECTNESS" and previous and previous.last_sql:
-            database = sqlite if request.db_id in sqlite.list_ids() else postgres
-            if database is not None:
-                review_schema = database.inspect(request.db_id)
-                review_profile = profiles.load(review_schema.dialect, request.db_id)
-                correctness_trace = await RecoveryCoordinator(
-                    RecoveryTools(database, request.db_id, review_schema, review_profile)
-                ).ainvestigate(
-                    question=previous.resolved_question,
-                    failed_sql=previous.last_sql,
-                    failure_code="CORRECTNESS_REVIEW_SCHEMA",
-                    failure_message="User requested evidence-based correctness verification.",
-                    allowed_tables=previous.approved_tables,
-                    mode="CORRECTNESS",
-                    completer=turn_completers.get(request.provider),
-                    model=request.model,
-                )
-                correctness_evidence = "\n\n".join(
-                    value
-                    for value in (
-                        request.evidence,
-                        f"Previously accepted SQL:\n{previous.last_sql}",
-                        recovery_feedback(correctness_trace),
-                        "Generate an independent SQL candidate for the original request. Do not "
-                        "copy the previous SQL unless the evidence supports the same solution.",
-                    )
-                    if value
-                )
         execution = await question_service.execute_question(
             question=pending.resolved_question,
             db_id=request.db_id,
-            evidence=correctness_evidence,
+            evidence=request.evidence,
             provider=request.provider,
             model=request.model,
             context_mode=request.context_mode,
@@ -491,11 +506,18 @@ def create_app(
                 if operation != "NEW_QUERY" and previous and previous.semantic_contract
                 else None
             ),
-            previous_sql=previous.last_sql if operation == "OPTIMIZE" and previous else None,
+            previous_sql=(
+                previous.last_sql
+                if operation in {"OPTIMIZE", "CHECK_CORRECTNESS"} and previous
+                else None
+            ),
             previous_approved_tables=(
-                previous.approved_tables if operation == "OPTIMIZE" and previous else None
+                previous.approved_tables
+                if operation in {"OPTIMIZE", "CHECK_CORRECTNESS"} and previous
+                else None
             ),
             optimization_required=operation == "OPTIMIZE",
+            correctness_review=operation == "CHECK_CORRECTNESS",
             progress=lambda stage: set_session_stage(request.session_id, stage),
         )
         generated = execution.generated
@@ -520,57 +542,33 @@ def create_app(
                     "last_failed_sql": None,
                 }
             )
-            conversations.put(pending)
-            response_state = pending
-            message = _conversational_answer(operation, generated)
-            if request.execute and generated.row_count == 0:
-                database = sqlite if request.db_id in sqlite.list_ids() else postgres
-                if database is not None:
-                    zero_schema = database.inspect(request.db_id)
-                    zero_profile = profiles.load(zero_schema.dialect, request.db_id)
-                    zero_trace = await RecoveryCoordinator(
-                        RecoveryTools(database, request.db_id, zero_schema, zero_profile)
-                    ).ainvestigate(
-                        question=pending.resolved_question,
-                        failed_sql=generated.sql or "",
-                        failure_code="ZERO_RESULT",
-                        failure_message=(
-                            "The SQL executed successfully but returned zero rows; verify filter "
-                            "values, date representations, NULL semantics, and join elimination."
-                        ),
-                        allowed_tables=proposed_tables,
-                        mode="ZERO_RESULT",
-                        completer=turn_completers.get(request.provider),
-                        model=request.model,
-                    )
-                    message = zero_trace.diagnosis_summary or (
-                        "The query returned no matching rows. No filter was changed automatically."
-                    )
-            elif request.execute and any(
-                value is None for row in generated.rows for value in row
+            if operation == "CHECK_CORRECTNESS" or (
+                generated.recovery and generated.recovery.agent_action == "ESCALATE"
             ):
-                database = sqlite if request.db_id in sqlite.list_ids() else postgres
-                if database is not None:
-                    null_schema = database.inspect(request.db_id)
-                    null_profile = profiles.load(null_schema.dialect, request.db_id)
-                    null_trace = await RecoveryCoordinator(
-                        RecoveryTools(database, request.db_id, null_schema, null_profile)
-                    ).ainvestigate(
-                        question=pending.resolved_question,
-                        failed_sql=generated.sql or "",
-                        failure_code="NULL_RESULT",
-                        failure_message=(
-                            "The SQL executed successfully but returned one or more NULL values; "
-                            "inspect all filters, joins, aggregations, zero-safe divisions, and "
-                            "stored missing-value representations."
-                        ),
-                        allowed_tables=proposed_tables,
-                        mode="NULL_RESULT",
-                        completer=turn_completers.get(request.provider),
-                        model=request.model,
+                # A review candidate is evidence, not accepted conversation state. Keep the
+                # prior SQL authoritative unless a later explicit correction replaces it.
+                response_state = previous
+            else:
+                try:
+                    response_state = conversations.put(
+                        pending,
+                        expected_version=previous.version if previous is not None else None,
                     )
-                    message = null_trace.diagnosis_summary or (
-                        "The query returned a missing value. No filter was changed automatically."
+                except ConversationConflict as exc:
+                    raise HTTPException(status_code=409, detail=str(exc)) from exc
+                pending = response_state
+            message = _conversational_answer(operation, generated)
+            if generated.recovery and generated.recovery.mode in {
+                "ZERO_RESULT",
+                "NULL_RESULT",
+            }:
+                message = generated.recovery.diagnosis_summary or message
+                if generated.recovery.agent_action == "ESCALATE":
+                    human_review = HumanReviewRequest(
+                        reason=message,
+                        question="The result requires review before it is treated as accepted.",
+                        options=[],
+                        evidence=generated.recovery.evidence,
                     )
             if operation == "CHECK_CORRECTNESS" and previous and previous.last_sql:
                 database = sqlite if request.db_id in sqlite.list_ids() else postgres
@@ -601,7 +599,7 @@ def create_app(
                         ),
                         question="Which interpretation should be trusted before replacing the SQL?",
                         options=[],
-                        evidence=correctness_trace.evidence if correctness_trace else [],
+                        evidence=generated.recovery.evidence if generated.recovery else [],
                     )
         else:
             message = _failure_message(generated)
@@ -611,10 +609,15 @@ def create_app(
                     "last_failed_sql": generated.attempts[-1].sql if generated.attempts else None,
                 }
             )
-            conversations.put(failure_state)
-            response_state = failure_state
+            try:
+                response_state = conversations.put(
+                    failure_state,
+                    expected_version=previous.version if previous is not None else None,
+                )
+            except ConversationConflict as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
             if generated.termination_reason != "model_error":
-                recovery = generated.recovery or correctness_trace
+                recovery = generated.recovery
                 human_review = HumanReviewRequest(
                     reason=(
                         recovery.diagnosis_summary
@@ -645,6 +648,7 @@ def create_app(
                 conversation_usage,
                 _add_usage(planner_usage, generated.token_usage),
             ),
+            call_ledger=[*conversation_ledger, *generated.telemetry.call_ledger],
             timings_ms={
                 "conversation_interpretation": conversation_ms,
                 "routing": routing_ms,
@@ -664,15 +668,17 @@ def create_app(
                 status="completed",
                 stage="completed",
                 response=response.model_dump(mode="json"),
+                finished_at=perf_counter(),
             )
         except asyncio.CancelledError:
-            job.update(status="cancelled", stage="cancelled")
+            job.update(status="cancelled", stage="cancelled", finished_at=perf_counter())
             raise
         except Exception as exc:  # pragma: no cover - defensive job boundary
-            job.update(status="failed", stage="failed", error=str(exc))
+            job.update(status="failed", stage="failed", error=str(exc), finished_at=perf_counter())
 
     @app.post("/api/chat/jobs", status_code=202)
     async def start_chat_job(request: ChatRequest) -> dict[str, str]:
+        cleanup_jobs()
         job_id = uuid4().hex
         chat_jobs[job_id] = {
             "job_id": job_id,
@@ -688,6 +694,7 @@ def create_app(
 
     @app.get("/api/chat/jobs/{job_id}")
     async def get_chat_job(job_id: str) -> dict[str, Any]:
+        cleanup_jobs()
         job = chat_jobs.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Chat job was not found.")
@@ -698,6 +705,7 @@ def create_app(
 
     @app.delete("/api/chat/jobs/{job_id}")
     async def cancel_chat_job(job_id: str) -> dict[str, str]:
+        cleanup_jobs()
         job = chat_jobs.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Chat job was not found.")
@@ -710,23 +718,6 @@ def create_app(
         return {"job_id": job_id, "status": "cancelled"}
 
     return app
-
-
-def _model_option(
-    provider: ModelProvider,
-    model: str,
-    *,
-    local: bool,
-    reason: str | None,
-) -> ModelOption:
-    """Advertise a catalog model, treating a stated reason as "cannot serve requests"."""
-    return ModelOption(
-        provider=provider,
-        model=model,
-        local=local,
-        configured=reason is None,
-        unavailable_reason=reason,
-    )
 
 
 def _add_usage(first: TokenUsage, second: TokenUsage) -> TokenUsage:
@@ -789,6 +780,8 @@ def _failure_message(generated: GenerateResponse) -> str:
         if detail.startswith("Model 2A"):
             return detail
         return f"The {generated.model} model could not be reached: {detail}"
+    if generated.termination_reason == "context_error":
+        return generated.model_error or "Required database context could not be verified."
     return "Query failed; previous conversation state was preserved."
 
 

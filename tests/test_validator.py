@@ -47,3 +47,14 @@ def test_validator_does_not_check_table_existence() -> None:
 
     assert result.valid is True
     assert result.code == "SQL_SAFETY_VALID"
+
+
+def test_validator_enforces_explicit_table_authorization(registry) -> None:  # type: ignore[no-untyped-def]
+    result = validate_sql(
+        "SELECT name FROM customers",
+        registry.inspect("shop"),
+        allowed_tables={"orders"},
+    )
+
+    assert result.valid is False
+    assert result.code == "SQL_TABLE_NOT_AUTHORIZED"

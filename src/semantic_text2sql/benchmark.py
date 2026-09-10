@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections import Counter
 from dataclasses import dataclass
 from time import monotonic
 
@@ -37,7 +38,7 @@ def compare_sql(
         return ExecutionComparison(False, False, None, None, f"{type(exc).__name__}: {exc}")
     return ExecutionComparison(
         executable=True,
-        equivalent=set(predicted) == set(gold),
+        equivalent=Counter(predicted) == Counter(gold),
         predicted_rows=len(predicted),
         gold_rows=len(gold),
     )

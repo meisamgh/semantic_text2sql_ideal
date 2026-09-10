@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from collections import Counter
 from collections.abc import Callable, Iterable
@@ -169,6 +170,26 @@ class TextToSQLAgent:
             request.evidence,
             request.context_request,
         )
+        if not context_plan.coverage_complete:
+            return GenerateResponse(
+                db_id=request.db_id,
+                question=request.question,
+                provider=request.provider,
+                model=request.model,
+                dialect=request.dialect,
+                strategy=strategy,
+                schema_selection=schema_selection,
+                semantic_contract=semantic_contract,
+                sql=None,
+                accepted=False,
+                termination_reason="context_error",
+                model_error=(
+                    "Grounded context is incomplete: "
+                    + ", ".join(context_plan.missing_requirements)
+                )[:500],
+                context_plan=context_plan,
+                context_request=request.context_request,
+            )
         profile_context = render_context(
             context_plan,
             retrieved_schema,
@@ -187,7 +208,9 @@ class TextToSQLAgent:
             request.question,
             request.dialect,
             request.historical_examples,
+            retrieved_schema,
         )
+        authorized_tables = {table.name.casefold() for table in retrieved_schema.tables}
         available_context_tokens = (
             estimate_tokens(schema.model_dump_json())
             + estimate_tokens(profile.model_dump_json() if profile else "")
@@ -202,7 +225,10 @@ class TextToSQLAgent:
         baseline_validation: ValidationResult | None = None
         if request.optimization_required and request.previous_sql:
             baseline_validation = validate_sql(
-                request.previous_sql, schema, dialect=request.dialect
+                request.previous_sql,
+                schema,
+                dialect=request.dialect,
+                allowed_tables=authorized_tables,
             )
         feedback = None
         if request.optimization_required:
@@ -240,10 +266,16 @@ class TextToSQLAgent:
             if sqlglot_candidate and normalize_sql(
                 sqlglot_candidate, dialect=request.dialect
             ) != normalize_sql(request.previous_sql, dialect=request.dialect):
-                validation = validate_sql(sqlglot_candidate, schema, dialect=request.dialect)
+                validation = validate_sql(
+                    sqlglot_candidate,
+                    schema,
+                    dialect=request.dialect,
+                    allowed_tables=authorized_tables,
+                )
                 if validation.valid:
                     try:
-                        validation = _validate_result_equivalence(
+                        validation = await asyncio.to_thread(
+                            _validate_result_equivalence,
                             database,
                             request.db_id,
                             request.previous_sql,
@@ -252,14 +284,17 @@ class TextToSQLAgent:
                             max_rows=max(request.max_rows, 1_000),
                         )
                         if validation.valid:
-                            optimization_evidence = _benchmark_optimization(
-                                database,
-                                request.db_id,
-                                request.previous_sql,
-                                sqlglot_candidate,
-                                baseline_validation.explain_plan,
-                                validation.explain_plan,
-                                max_rows=max(request.max_rows, 1_000),
+                            optimization_evidence = (
+                                await asyncio.to_thread(
+                                    _benchmark_optimization,
+                                    database,
+                                    request.db_id,
+                                    request.previous_sql,
+                                    sqlglot_candidate,
+                                    baseline_validation.explain_plan,
+                                    validation.explain_plan,
+                                    max_rows=max(request.max_rows, 1_000),
+                                )
                             ).model_copy(update={"optimizer": "sqlglot"})
                             if optimization_evidence.status == "optimized":
                                 final_sql = sqlglot_candidate
@@ -268,7 +303,8 @@ class TextToSQLAgent:
                                         executed_columns,
                                         executed_rows,
                                         executed_truncated,
-                                    ) = database.execute(
+                                    ) = await asyncio.to_thread(
+                                        database.execute,
                                         request.db_id,
                                         final_sql,
                                         max_rows=request.max_rows,
@@ -307,7 +343,12 @@ class TextToSQLAgent:
             fingerprint = hashlib.sha256(normalized.encode()).hexdigest()
             if progress:
                 progress("validation")
-            validation = validate_sql(sql, schema, dialect=request.dialect)
+            validation = validate_sql(
+                sql,
+                schema,
+                dialect=request.dialect,
+                allowed_tables=authorized_tables,
+            )
             if validation.valid:
                 validation = validation.model_copy(
                     update={
@@ -319,7 +360,8 @@ class TextToSQLAgent:
                     }
                 )
             if validation.valid and request.optimization_required and request.previous_sql:
-                validation = _validate_result_equivalence(
+                validation = await asyncio.to_thread(
+                    _validate_result_equivalence,
                     database,
                     request.db_id,
                     request.previous_sql,
@@ -328,7 +370,8 @@ class TextToSQLAgent:
                     max_rows=max(request.max_rows, 1_000),
                 )
             if validation.valid and request.optimization_required and request.previous_sql:
-                optimization_evidence = _benchmark_optimization(
+                measured_optimization = await asyncio.to_thread(
+                    _benchmark_optimization,
                     database,
                     request.db_id,
                     request.previous_sql,
@@ -337,7 +380,8 @@ class TextToSQLAgent:
                     validation.explain_plan,
                     max_rows=max(request.max_rows, 1_000),
                 )
-                if optimization_evidence.status != "optimized":
+                optimization_evidence = measured_optimization
+                if measured_optimization.status != "optimized":
                     validation = validation.model_copy(
                         update={
                             "valid": False,
@@ -352,9 +396,7 @@ class TextToSQLAgent:
             if validation.valid and not request.optimization_required:
                 if progress:
                     progress("optimization")
-                sqlglot_candidate = _sqlglot_optimization_candidate(
-                    sql, dialect=request.dialect
-                )
+                sqlglot_candidate = _sqlglot_optimization_candidate(sql, dialect=request.dialect)
                 if not sqlglot_candidate or normalize_sql(
                     sqlglot_candidate, dialect=request.dialect
                 ) == normalize_sql(sql, dialect=request.dialect):
@@ -366,11 +408,15 @@ class TextToSQLAgent:
                     )
                 elif request.execute:
                     candidate_validation = validate_sql(
-                        sqlglot_candidate, schema, dialect=request.dialect
+                        sqlglot_candidate,
+                        schema,
+                        dialect=request.dialect,
+                        allowed_tables=authorized_tables,
                     )
                     try:
                         if candidate_validation.valid:
-                            candidate_validation = _validate_result_equivalence(
+                            candidate_validation = await asyncio.to_thread(
+                                _validate_result_equivalence,
                                 database,
                                 request.db_id,
                                 sql,
@@ -379,14 +425,17 @@ class TextToSQLAgent:
                                 max_rows=max(request.max_rows, 1_000),
                             )
                         if candidate_validation.valid:
-                            candidate_evidence = _benchmark_optimization(
-                                database,
-                                request.db_id,
-                                sql,
-                                sqlglot_candidate,
-                                validation.explain_plan,
-                                candidate_validation.explain_plan,
-                                max_rows=max(request.max_rows, 1_000),
+                            candidate_evidence = (
+                                await asyncio.to_thread(
+                                    _benchmark_optimization,
+                                    database,
+                                    request.db_id,
+                                    sql,
+                                    sqlglot_candidate,
+                                    validation.explain_plan,
+                                    candidate_validation.explain_plan,
+                                    max_rows=max(request.max_rows, 1_000),
+                                )
                             ).model_copy(update={"optimizer": "sqlglot"})
                             optimization_evidence = candidate_evidence
                             if candidate_evidence.status == "optimized":
@@ -419,8 +468,8 @@ class TextToSQLAgent:
                 if progress:
                     progress("execution")
                 try:
-                    executed_columns, executed_rows, executed_truncated = database.execute(
-                        request.db_id, sql, max_rows=request.max_rows
+                    executed_columns, executed_rows, executed_truncated = await asyncio.to_thread(
+                        database.execute, request.db_id, sql, max_rows=request.max_rows
                     )
                 except DatabaseError as error:
                     validation = validation.model_copy(
@@ -465,6 +514,8 @@ class TextToSQLAgent:
                     provider=request.provider,
                     model=request.model,
                 )
+                if recovery_trace.agent_action in {"INFORM", "ESCALATE"}:
+                    break
                 if recovery_trace.failure_category != "provider":
                     feedback += "\n\n" + recovery_feedback(recovery_trace)
             category = failure_context_category(validation.code)
@@ -486,8 +537,11 @@ class TextToSQLAgent:
                 and optimization_evidence is not None
                 and optimization_evidence.status == "equivalent_not_faster"
             ):
-                baseline_columns, baseline_rows, baseline_truncated = database.execute(
-                    request.db_id, request.previous_sql, max_rows=request.max_rows
+                baseline_columns, baseline_rows, baseline_truncated = await asyncio.to_thread(
+                    database.execute,
+                    request.db_id,
+                    request.previous_sql,
+                    max_rows=request.max_rows,
                 )
                 return GenerateResponse(
                     db_id=request.db_id,
@@ -527,8 +581,11 @@ class TextToSQLAgent:
                 and baseline_validation is not None
                 and baseline_validation.valid
             ):
-                baseline_columns, baseline_rows, baseline_truncated = database.execute(
-                    request.db_id, request.previous_sql, max_rows=request.max_rows
+                baseline_columns, baseline_rows, baseline_truncated = await asyncio.to_thread(
+                    database.execute,
+                    request.db_id,
+                    request.previous_sql,
+                    max_rows=request.max_rows,
                 )
                 return GenerateResponse(
                     db_id=request.db_id,
@@ -608,7 +665,7 @@ class TextToSQLAgent:
             semantic_contract=semantic_contract,
             sql=final_sql,
             accepted=True,
-            execution_status="ACCEPTED" if request.execute else "EXECUTABLE",
+            execution_status="ACCEPTED" if request.execute else "SAFETY_VALIDATED",
             attempts=attempts,
             rows=rows,
             columns=columns,

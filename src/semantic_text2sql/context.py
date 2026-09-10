@@ -152,6 +152,7 @@ def render_context(
             question,
             schema.dialect,
             historical_examples,
+            schema,
         ),
         separators=(",", ":"),
     )
@@ -165,6 +166,7 @@ def model_context_payload(
     question: str,
     dialect: str,
     historical_examples: list[HistoricalExample] | None = None,
+    schema: SchemaInfo | None = None,
 ) -> dict[str, Any]:
     """Return the single authoritative JSON object supplied to SQL generation."""
     verified = _verified_context(
@@ -173,6 +175,7 @@ def model_context_payload(
         question,
         dialect,
         business_context,
+        schema,
     )
     payload: dict[str, Any] = verified.model_dump(mode="json", exclude_none=True)
     formulas = [
@@ -200,19 +203,29 @@ def _verified_context(
     question: str,
     dialect: str,
     business_context: str | None,
+    schema: SchemaInfo | None,
 ) -> VerifiedContext:
     column_profiles = (
         {(item.table, item.column): item for item in profile.columns} if profile else {}
     )
     relationship_keys: dict[str, list[str]] = {}
+    live_columns = (
+        {(table.name, column.name): column for table in schema.tables for column in table.columns}
+        if schema
+        else {}
+    )
     date_format_targets = {
         item.target
         for item in plan.requirements
         if item.kind == "PHYSICAL_DATE_FORMAT" and item.resolved
     }
     for relationship in plan.relationships:
-        relationship_keys.setdefault(relationship.left_table, []).append(relationship.left_column)
-        relationship_keys.setdefault(relationship.right_table, []).append(relationship.right_column)
+        relationship_keys.setdefault(relationship.left_table, []).extend(
+            relationship.left_columns or [relationship.left_column]
+        )
+        relationship_keys.setdefault(relationship.right_table, []).extend(
+            relationship.right_columns or [relationship.right_column]
+        )
     return VerifiedContext(
         question=question,
         dialect=cast(Any, dialect),
@@ -225,6 +238,7 @@ def _verified_context(
                 columns={
                     column: _execution_column(
                         column_profiles.get((item.name, column)),
+                        live_columns.get((item.name, column)),
                         include_format=f"{item.name}.{column}" in date_format_targets,
                     )
                     for column in plan.columns.get(item.name, [])
@@ -236,6 +250,16 @@ def _verified_context(
             VerifiedRelationship(
                 left=f"{item.left_table}.{item.left_column}",
                 right=f"{item.right_table}.{item.right_column}",
+                left_columns=(
+                    [f"{item.left_table}.{column}" for column in item.left_columns]
+                    if item.left_columns
+                    else None
+                ),
+                right_columns=(
+                    [f"{item.right_table}.{column}" for column in item.right_columns]
+                    if item.right_columns
+                    else None
+                ),
                 state=item.state,
                 cardinality=item.join_cardinality,
                 left_key_unique=item.left_key_unique,
@@ -249,16 +273,22 @@ def _verified_context(
     )
 
 
-def _execution_column(profile: Any | None, *, include_format: bool) -> VerifiedColumn:
+def _execution_column(
+    profile: Any | None, live_column: Any | None, *, include_format: bool
+) -> VerifiedColumn:
     if profile is None:
-        return VerifiedColumn(type="UNKNOWN")
+        return VerifiedColumn(
+            type=live_column.data_type if live_column is not None else "UNKNOWN",
+            observed_nulls=None,
+        )
     example_values: list[str] = []
     if profile.semantic_type in {"categorical", "text"}:
         observed = [item.value for item in profile.top_values]
         observed.extend(profile.examples)
         example_values = [str(value) for value in dict.fromkeys(observed)][:5]
     return VerifiedColumn(
-        type=profile.database_type,
+        type=profile.database_type
+        or (live_column.data_type if live_column is not None else "UNKNOWN"),
         observed_nulls=bool(profile.null_count),
         example_values=example_values,
         format=profile.observed_format if include_format else None,
@@ -407,6 +437,7 @@ def _requirements(
                     resolved=table.name in table_profiles
                     and bool(table_profiles[table.name].grain),
                     source="offline table profile" if table.name in table_profiles else None,
+                    priority="SOFT",
                 )
             )
     unique = {(item.kind, item.target, item.required_by): item for item in requirements}
@@ -465,6 +496,7 @@ def _planner_requirements(
                     required_by="verified Context Planner request",
                     resolved=resolved,
                     source="verified schema/glossary/profile" if resolved else None,
+                    priority="SOFT" if item.kind == "TABLE_GRAIN" else "HARD",
                 )
             )
     return result
@@ -500,6 +532,16 @@ def _relationships(
                     right_table=profiled_relationship.child_table,
                     left_column=profiled_relationship.parent_column,
                     right_column=profiled_relationship.child_column,
+                    left_columns=(
+                        profiled_relationship.parent_columns
+                        if len(profiled_relationship.parent_columns) > 1
+                        else None
+                    ),
+                    right_columns=(
+                        profiled_relationship.child_columns
+                        if len(profiled_relationship.child_columns) > 1
+                        else None
+                    ),
                     state=(
                         "INFERRED_KEY_RELATIONSHIP"
                         if profiled_relationship.inferred
@@ -513,10 +555,43 @@ def _relationships(
                     recommended_strategy="EXISTS" if fanout and filter_side else "JOIN",
                 )
             )
-    if relationships:
-        return relationships
+    covered_edges = {
+        (
+            item.left_table,
+            tuple(item.left_columns or [item.left_column]),
+            item.right_table,
+            tuple(item.right_columns or [item.right_column]),
+        )
+        for item in relationships
+    }
+    covered_edges |= {
+        (right_table, right_columns, left_table, left_columns)
+        for left_table, left_columns, right_table, right_columns in covered_edges
+    }
+    covered_column_pairs = {
+        (left_table, left_column, right_table, right_column)
+        for left_table, left_columns, right_table, right_columns in covered_edges
+        for left_column, right_column in zip(left_columns, right_columns, strict=False)
+    }
     for foreign_key in schema.relationships:
         if {foreign_key.from_table, foreign_key.to_table} <= selected:
+            edge = (
+                foreign_key.from_table,
+                (foreign_key.from_column,),
+                foreign_key.to_table,
+                (foreign_key.to_column,),
+            )
+            if (
+                edge in covered_edges
+                or (
+                    foreign_key.from_table,
+                    foreign_key.from_column,
+                    foreign_key.to_table,
+                    foreign_key.to_column,
+                )
+                in covered_column_pairs
+            ):
+                continue
             left_unique = _single_column_primary_key(
                 schema, foreign_key.from_table, foreign_key.from_column
             )
@@ -540,6 +615,7 @@ def _relationships(
                     recommended_strategy="EXISTS",
                 )
             )
+            covered_edges.add(edge)
     if not relationships:
         names = [item.name for item in schema.tables]
         relationships.append(
@@ -604,9 +680,7 @@ def _dependency_profile_context(
 
 def _token_budget(question: str, contract: SemanticContract) -> int:
     complexity = (
-        len(contract.aggregation_stages)
-        + len(contract.selectors)
-        + len(contract.output_operations)
+        len(contract.aggregation_stages) + len(contract.selectors) + len(contract.output_operations)
     )
     if complexity >= 4 or len(question) > 500:
         return 4_000
