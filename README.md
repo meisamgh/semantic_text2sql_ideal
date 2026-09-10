@@ -5,7 +5,7 @@ schema retrieval, optional model-based context selection, verified metadata grou
 generation, read-only execution, bounded recovery, and human review.
 
 <p align="center">
-  <img src="docs/assets/text-to-sql-architecture.png" alt="Semantic Text-to-SQL architecture" width="1000" />
+  <img src="ChatGPT Image Sep 9, 2026, 10_01_37 PM.png" alt="Semantic Text-to-SQL architecture" width="1000" />
 </p>
 
 _Visual overview of the query workflow. The architecture and runtime boundaries documented below
