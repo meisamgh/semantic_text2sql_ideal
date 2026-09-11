@@ -12,6 +12,10 @@ repair the SQL, explain the result or report unresolved uncertainty.
 _Visual overview of the query workflow. The architecture and runtime boundaries documented below
 are authoritative._
 
+## Demo
+
+https://github.com/user-attachments/assets/ac593a9c-802f-44c7-875d-02c9b4e0ca1f
+
 ## Architecture
 
 ```text
