@@ -130,17 +130,21 @@ class ConversationStore:
         self, state: ConversationState, *, expected_version: int | None = None
     ) -> ConversationState:
         with self._lock:
-            current = self._read_unlocked(state.session_id)
-            current_version = current.version if current else None
-            if expected_version != current_version:
-                raise ConversationConflict(
-                    f"Conversation changed from version {expected_version} to {current_version}."
-                )
-            saved = state.model_copy(update={"version": (current_version or 0) + 1})
-            if self.path is None:
-                self._states[state.session_id] = saved
-            else:
-                with sqlite3.connect(self.path) as connection:
+            if self.path is not None:
+                with sqlite3.connect(self.path, isolation_level=None) as connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    row = connection.execute(
+                        "SELECT version FROM conversations WHERE session_id = ?",
+                        (state.session_id,),
+                    ).fetchone()
+                    current_version = int(row[0]) if row else None
+                    if expected_version != current_version:
+                        connection.rollback()
+                        raise ConversationConflict(
+                            "Conversation changed from version "
+                            f"{expected_version} to {current_version}."
+                        )
+                    saved = state.model_copy(update={"version": (current_version or 0) + 1})
                     connection.execute(
                         "INSERT INTO conversations(session_id, version, state_json, updated_at) "
                         "VALUES (?, ?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET "
@@ -153,6 +157,16 @@ class ConversationStore:
                             time.time(),
                         ),
                     )
+                    connection.commit()
+                return saved
+            current = self._read_unlocked(state.session_id)
+            current_version = current.version if current else None
+            if expected_version != current_version:
+                raise ConversationConflict(
+                    f"Conversation changed from version {expected_version} to {current_version}."
+                )
+            saved = state.model_copy(update={"version": (current_version or 0) + 1})
+            self._states[state.session_id] = saved
             return saved
 
     def reset(self, session_id: str) -> None:

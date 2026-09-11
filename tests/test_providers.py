@@ -10,12 +10,8 @@ from semantic_text2sql.llm import (
     AgentRouterCodexModel,
     AgentRouterModel,
     GroqSQLModel,
-    JustDoWorkSQLModel,
     ModelError,
-    SotaSQLModel,
     _prompt,
-    _responses_stream_result,
-    ollama_model_status,
 )
 from semantic_text2sql.models import ColumnInfo, SchemaInfo, StrategyHints, TableInfo, TokenUsage
 
@@ -84,64 +80,6 @@ def test_agentrouter_uses_anthropic_messages_contract() -> None:
     assert "observed_format" not in prompt
     assert "METRIC DEPENDENCY RULES" not in prompt
     assert "APPROVED FORMULAS:" not in prompt
-
-
-def test_sota_uses_responses_api_without_storage() -> None:
-    captured: dict[str, object] = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["path"] = request.url.path
-        captured["authorization"] = request.headers.get("authorization")
-        captured["body"] = json.loads(request.content)
-        return httpx.Response(
-            200,
-            json={
-                "output_text": "SELECT title AS book_title FROM books",
-                "usage": {"input_tokens": 9, "output_tokens": 4},
-            },
-        )
-
-    model = SotaSQLModel(
-        "project-key",
-        "https://sota.test",
-        transport=httpx.MockTransport(handler),
-    )
-    content, usage = asyncio.run(model.complete_detailed("gpt-5.5", "Generate SQL"))
-
-    assert content == "SELECT title AS book_title FROM books"
-    assert usage.total_tokens == 13
-    assert captured["path"] == "/responses"
-    assert captured["authorization"] == "Bearer project-key"
-    assert captured["body"] == {
-        "model": "gpt-5.5",
-        "input": [
-            {
-                "role": "user",
-                "content": [{"type": "input_text", "text": "Generate SQL"}],
-            }
-        ],
-        "reasoning": {"effort": "xhigh"},
-        "store": False,
-        "stream": True,
-    }
-
-
-def test_sota_extracts_streamed_response_text_and_usage() -> None:
-    payload = "\n".join(
-        [
-            "event: response.output_text.delta",
-            'data: {"type":"response.output_text.delta","delta":"SELECT "}',
-            'data: {"type":"response.output_text.delta","delta":"1"}',
-            'data: {"type":"response.completed","response":{"usage":'
-            '{"input_tokens":8,"output_tokens":2}}}',
-            "data: [DONE]",
-        ]
-    )
-
-    content, usage = _responses_stream_result(payload)
-
-    assert content == "SELECT 1"
-    assert usage.total_tokens == 10
 
 
 def test_prompt_adds_formula_guidance_only_when_context_contains_a_formula() -> None:
@@ -417,45 +355,6 @@ def test_groq_qwen_uses_chat_completions_and_reports_usage() -> None:
     assert captured["body"]["max_completion_tokens"] == 180  # type: ignore[index]
 
 
-def test_justdowork_supports_claude_and_gpt_over_one_openai_compatible_api() -> None:
-    requested_models: list[str] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        body = json.loads(request.content)
-        requested_models.append(body["model"])
-        assert request.url.path == "/v1/chat/completions"
-        assert request.headers["authorization"] == "Bearer shared-key"
-        assert "temperature" not in body
-        return httpx.Response(
-            200,
-            json={
-                "choices": [{"message": {"content": "SELECT 1"}}],
-                "usage": {"prompt_tokens": 3, "completion_tokens": 1},
-            },
-        )
-
-    model = JustDoWorkSQLModel(
-        "shared-key",
-        "https://justdowork.test/v1",
-        transport=httpx.MockTransport(handler),
-    )
-
-    for name in ("claude-opus-5", "gpt-5.6-sol"):
-        sql, usage = asyncio.run(model.complete_detailed(name, "Return SQL only"))
-        assert sql == "SELECT 1"
-        assert usage.total_tokens == 4
-    assert requested_models == ["claude-opus-5", "gpt-5.6-sol"]
-
-
-def test_justdowork_fails_without_api_key() -> None:
-    try:
-        asyncio.run(JustDoWorkSQLModel(None).complete("claude-opus-5", "Return SQL"))
-    except ModelError as exc:
-        assert "JUSTDOWORK_API_KEY" in str(exc)
-    else:
-        raise AssertionError("Missing JustDoWork key was accepted")
-
-
 def test_groq_fails_without_api_key() -> None:
     try:
         asyncio.run(GroqSQLModel(None).complete("qwen/qwen3.6-27b", "Return SQL"))
@@ -496,67 +395,3 @@ def test_groq_retries_transient_rate_limit() -> None:
     assert text == "SELECT 1"
     assert usage.total_tokens == 3
     assert calls == 2
-
-
-def test_ollama_status_flags_a_model_that_is_not_installed() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/api/tags"
-        return httpx.Response(200, json={"models": [{"name": "llama3:latest", "size": 4_000}]})
-
-    reason = asyncio.run(
-        ollama_model_status(
-            "qwen3.8:27b",
-            base_url="http://ollama.test",
-            transport=httpx.MockTransport(handler),
-        )
-    )
-
-    assert reason is not None
-    assert "not installed" in reason
-
-
-def test_ollama_status_flags_a_model_larger_than_system_memory() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"models": [{"name": "huge:latest", "size": 10**15}]})
-
-    reason = asyncio.run(
-        ollama_model_status(
-            "huge:latest",
-            base_url="http://ollama.test",
-            transport=httpx.MockTransport(handler),
-        )
-    )
-
-    assert reason is not None
-    assert "RAM" in reason
-
-
-def test_ollama_status_accepts_an_installed_model_that_fits() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"models": [{"name": "small:latest", "size": 1_000_000}]})
-
-    reason = asyncio.run(
-        ollama_model_status(
-            "small:latest",
-            base_url="http://ollama.test",
-            transport=httpx.MockTransport(handler),
-        )
-    )
-
-    assert reason is None
-
-
-def test_ollama_status_reports_an_unreachable_daemon() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("connection refused", request=request)
-
-    reason = asyncio.run(
-        ollama_model_status(
-            "small:latest",
-            base_url="http://ollama.test",
-            transport=httpx.MockTransport(handler),
-        )
-    )
-
-    assert reason is not None
-    assert "not reachable" in reason

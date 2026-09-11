@@ -1,0 +1,87 @@
+{
+  "invalid_column_without_execution": "EXECUTABLE",
+  "approved_tables_not_enforced": [
+    [
+      "synthetic-only"
+    ]
+  ],
+  "set_comparison_loses_duplicates": {
+    "executable": true,
+    "equivalent": true,
+    "predicted_rows": 1,
+    "gold_rows": 2,
+    "error": null
+  },
+  "live_type_lost_without_profile": "REAL -> UNKNOWN",
+  "failed_dense_still_votes": {
+    "column:child.x": 1,
+    "column:child.y": 2,
+    "column:orders.amount": 3,
+    "column:orders.id": 4,
+    "column:parent.a": 5,
+    "column:parent.b": 6,
+    "column:private_data.secret": 7,
+    "table:child": 8,
+    "table:orders": 9,
+    "table:parent": 10,
+    "table:private_data": 11
+  },
+  "six_digit_id_profile": {
+    "type": "date",
+    "format": "YYYYMM"
+  },
+  "composite_relationship_drops_second_key": {
+    "left_table": "parent",
+    "right_table": "child",
+    "left_column": "a",
+    "right_column": "x",
+    "state": "VERIFIED_FK",
+    "join_cardinality": "ONE_TO_ONE",
+    "left_key_unique": true,
+    "right_key_unique": true,
+    "fanout_risk": false,
+    "filter_side": null,
+    "recommended_strategy": "JOIN"
+  },
+  "independent_filter_probe_retains_join": {
+    "filter": "p.a = 2",
+    "plain_language": "a must equal 2",
+    "subject_kind": "categorical_or_text",
+    "no_match_explanation": "The value 2 is not used by any matching record in a.",
+    "match_count": 0,
+    "status": "NO_MATCH"
+  },
+  "ungrounded_final_accepted": {
+    "action": "INFORM",
+    "tools": 0
+  },
+  "positive_usage_zero_cost": {
+    "llm_calls": 1,
+    "token_usage": {
+      "input_tokens": 20,
+      "output_tokens": 10,
+      "cache_read_tokens": null,
+      "cache_creation_tokens": null
+    },
+    "database_probe_count": 0,
+    "latency_ms": 0,
+    "max_tool_calls": 6,
+    "max_database_probes": 8,
+    "max_recovery_ms": 100,
+    "budget_exhausted": false,
+    "estimated_llm_cost_usd": 0.0,
+    "database_cost_usd": null,
+    "database_cost_note": "Database execution cost is not reported by the configured backend."
+  },
+  "failed_recovery_call_usage_lost": 0,
+  "recovery_deadline_not_enforced": {
+    "limit_ms": 100,
+    "elapsed_ms": 154
+  },
+  "function_policy_missing": "pg_sleep accepted by AST; not executed",
+  "disputed_candidate_replaces_state": "SELECT MAX(amount) AS total FROM orders",
+  "anomaly_recovery_usage_not_in_chat_total": 15,
+  "serialized_usage_has_no_total_tokens": true,
+  "anomaly_trace_not_returned": true,
+  "sqlite_connection_not_closed_by_context": true
+}

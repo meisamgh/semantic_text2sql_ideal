@@ -18,7 +18,7 @@ def test_generate_response_serializes_original_and_formatted_sql() -> None:
     response = GenerateResponse(
         db_id="db",
         question="question",
-        provider="ollama",
+        provider="agentrouter",
         model="model",
         strategy=StrategyHints(mode="exact"),
         sql=sql,

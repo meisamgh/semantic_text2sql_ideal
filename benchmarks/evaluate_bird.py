@@ -20,11 +20,12 @@ from semantic_text2sql.benchmark import compare_sql
 from semantic_text2sql.database import DatabaseRegistry
 from semantic_text2sql.llm import (
     AgentRouterClaudeModel,
+    AgentRouterCodexModel,
+    AgentRouterModel,
     GroqSQLModel,
-    OllamaSQLModel,
     RoutingSQLModel,
 )
-from semantic_text2sql.models import DEFAULT_OLLAMA_MODEL, GenerateRequest
+from semantic_text2sql.models import DEFAULT_MODEL, GenerateRequest
 from semantic_text2sql.profiling import ProfileStore
 
 PIPELINE_VERSION = "semantic-text2sql-local-v2.2-table-column-profiles"
@@ -36,9 +37,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--database-root", type=Path, required=True)
     parser.add_argument("--split-file", type=Path, required=True)
     parser.add_argument("--profile-root", type=Path, required=True)
-    parser.add_argument("--provider", choices=("ollama", "agentrouter", "groq"), default="ollama")
-    parser.add_argument("--model", default=DEFAULT_OLLAMA_MODEL)
-    parser.add_argument("--ollama-base-url", default="http://127.0.0.1:11434")
+    parser.add_argument("--provider", choices=("agentrouter", "groq"), default="agentrouter")
+    parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--agentrouter-base-url", default="https://agentrouter.org")
     parser.add_argument("--groq-base-url", default="https://api.groq.com/openai/v1")
     parser.add_argument("--max-attempts", type=int, default=3, choices=range(1, 5))
@@ -91,10 +91,15 @@ async def main() -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     registry = DatabaseRegistry(args.database_root)
     model_router = RoutingSQLModel(
-        OllamaSQLModel(args.ollama_base_url),
-        AgentRouterClaudeModel(
-            _agentrouter_key(),
-            args.agentrouter_base_url,
+        AgentRouterModel(
+            AgentRouterClaudeModel(
+                _agentrouter_key(),
+                args.agentrouter_base_url,
+            ),
+            AgentRouterCodexModel(
+                _agentrouter_key(),
+                args.agentrouter_base_url,
+            ),
         ),
         GroqSQLModel(os.environ.get("GROQ_API_KEY"), args.groq_base_url),
     )

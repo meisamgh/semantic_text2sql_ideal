@@ -8,15 +8,9 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from semantic_text2sql.sql_formatting import format_sql_for_display
 
-DEFAULT_OLLAMA_MODEL = "qwen3.5:9b"
+DEFAULT_MODEL = "gpt-5.6-sol"
 GROQ_QWEN_MODEL = "qwen/qwen3.6-27b"
-SOTA_GPT_MODEL = "gpt-5.5"
-ModelProvider = Literal["ollama", "agentrouter", "groq", "justdowork", "sota"]
-"""Single source of truth for the locally installed Ollama generation model.
-
-Sized to fit in system RAM: a model whose weights exceed memory pages to disk and
-never completes a generation, which ``/api/models`` reports as unavailable.
-"""
+ModelProvider = Literal["agentrouter", "groq"]
 
 
 class StrictModel(BaseModel):
@@ -520,6 +514,22 @@ class RecoveryToolCall(StrictModel):
     tool: str
     purpose: str
     result_summary: str
+    evidence_id: str | None = None
+
+
+class RecoveryClaim(StrictModel):
+    claim_type: Literal[
+        "SCHEMA_FACT",
+        "VALUE_EXISTS",
+        "VALUE_ABSENT",
+        "FILTER_MISMATCH",
+        "JOIN_EFFECT",
+        "NULL_CAUSE",
+        "SQL_FAILURE",
+        "UNCERTAINTY",
+    ]
+    statement: str = Field(min_length=1, max_length=500)
+    evidence_ids: list[str] = Field(min_length=1, max_length=6)
 
 
 class RecoveryUsage(StrictModel):
@@ -552,6 +562,7 @@ class RecoveryTrace(StrictModel):
     usage: RecoveryUsage = Field(default_factory=RecoveryUsage)
     tool_calls: list[RecoveryToolCall] = Field(default_factory=list, max_length=6)
     evidence: list[str] = Field(default_factory=list, max_length=20)
+    claims: list[RecoveryClaim] = Field(default_factory=list, max_length=10)
     agent_diagnosis: str | None = Field(default=None, max_length=1_000)
     agent_confidence: float | None = Field(default=None, ge=0, le=1)
     agent_action: Literal["REPAIR", "INFORM", "ESCALATE"] | None = None
@@ -596,8 +607,8 @@ class GenerateRequest(StrictModel):
     question: str = Field(min_length=1, max_length=4_000)
     evidence: str | None = Field(default=None, max_length=8_000)
     dialect: Literal["sqlite", "postgres"] = "sqlite"
-    provider: ModelProvider = "ollama"
-    model: str = Field(default=DEFAULT_OLLAMA_MODEL, min_length=1, max_length=200)
+    provider: ModelProvider = "agentrouter"
+    model: str = Field(default=DEFAULT_MODEL, min_length=1, max_length=200)
     max_attempts: int = Field(default=3, ge=1, le=3)
     execute: bool = False
     max_rows: int = Field(default=100, ge=1, le=500)
@@ -618,8 +629,8 @@ class ChatRequest(StrictModel):
     db_id: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
     message: str = Field(min_length=1, max_length=4_000)
     evidence: str | None = Field(default=None, max_length=8_000)
-    provider: ModelProvider = "ollama"
-    model: str = Field(default=DEFAULT_OLLAMA_MODEL, min_length=1, max_length=200)
+    provider: ModelProvider = "agentrouter"
+    model: str = Field(default=DEFAULT_MODEL, min_length=1, max_length=200)
     context_provider: ModelProvider | None = None
     context_model: str | None = Field(default=None, min_length=1, max_length=200)
     execute: bool = True

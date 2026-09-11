@@ -61,8 +61,8 @@ def test_database_error_is_returned_to_model_for_focused_repair(registry) -> Non
     )
 
     assert result.accepted is True
-    assert result.attempts[0].validation.code == "DATABASE_ERROR"
-    assert "DATABASE_ERROR" in (model.feedback[1] or "")
+    assert result.attempts[0].validation.code == "SQL_COLUMN_NOT_AUTHORIZED"
+    assert "SQL_COLUMN_NOT_AUTHORIZED" in (model.feedback[1] or "")
     assert result.rows == [[100.0], [50.0], [20.0]]
 
 

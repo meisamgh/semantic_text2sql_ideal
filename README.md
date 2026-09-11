@@ -42,6 +42,7 @@ Read-only execution
     +-- anomaly / correctness review --> bounded recovery agent
     |                                      |
     |                                      +-- inspect_schema
+    |                                      +-- inspect_values
     |                                      +-- query_database
     |                                      +-- reason again
     |                                      +-- REPAIR / INFORM / ESCALATE
@@ -72,10 +73,14 @@ Validate + execute
                                              Recovery agent
                                                   |
                                          choose one bounded tool
-                                          /                 \
-                                 inspect_schema       query_database
-                                          \                 /
+                                  /             |             \
+                         inspect_schema  inspect_values  query_database
+                                  \             |             /
                                            verified observation
+                                                   |
+                                            typed evidence claim
+                                                   |
+                                      deterministic evidence policy
                                                    |
                                               reason again
                                                    |
@@ -84,14 +89,19 @@ Validate + execute
 
 `inspect_schema` returns only approved structural metadata: selected tables and columns, physical
 and semantic types, keys, grain, relationships, NULL presence, date formats and temporal coverage.
-It does not return sampled categorical values as proof. When a diagnosis depends on whether an
-identifier or category exists, the agent must use `query_database` to run a narrowly bounded,
-live diagnostic `SELECT`.
+It does not return sampled categorical values as proof. The deterministic `inspect_values` tool
+checks identifier and category existence. The more general `query_database` tool is reserved for
+narrow analytical probes that value inspection cannot answer.
 
 The model chooses what it needs to inspect, but it never controls authorization. SQLGlot parsing,
-SELECT-only enforcement, database and table allowlists, timeouts, row limits and the four-tool-call
+SELECT-only enforcement, database and table allowlists, timeouts, row limits and the three-tool-call
 ceiling are mandatory code-level controls. The agent never receives a database connection and never
 silently substitutes an explicit user value.
+
+Every failure and tool observation receives a stable evidence ID. Before `REPAIR` or `INFORM` is
+accepted, the agent must emit typed claims that cite IDs from that request's evidence ledger.
+Deterministic policy rejects missing, malformed or invented citations; data-grounding and
+correctness claims must cite live tool evidence rather than relying only on the failure message.
 
 The three terminal decisions are:
 
@@ -151,10 +161,10 @@ business-correct. Returning rows is never treated as proof of correctness.
 
 ## Models
 
-The API model catalog currently supports:
+The API uses only two provider transports:
 
-- True SOTA Responses API: `gpt-5.5`
-- JustDoWork: `gpt-5.6-sol`, `claude-opus-5`, `claude-opus-4-7`
+- AgentRouter: `gpt-5.6-sol`, `glm-5.3`, `deepseek-v4-flash`, `claude-opus-5`,
+  `claude-opus-4-8`
 - Groq: `qwen/qwen3.6-27b`
 
 Only configured models are available in the interface. Credentials remain server-side and are
@@ -227,7 +237,7 @@ Important settings:
 | `TEXT2SQL_SQL_MODEL` | Optional SQL-model override | selected model |
 | `TEXT2SQL_REQUEST_TIMEOUT_SECONDS` | Shared end-to-end request deadline | `180` |
 | `TEXT2SQL_REQUEST_MAX_MODEL_CALLS` | Maximum model-call budget per request | `6` |
-| `TEXT2SQL_REQUEST_MAX_DATABASE_CALLS` | Maximum database-call budget per request | `12` |
+| `TEXT2SQL_REQUEST_MAX_DATABASE_CALLS` | Maximum database-call budget per request | `24` |
 | `TEXT2SQL_CONVERSATION_STORE` | Optional SQLite path for durable conversation state | in memory |
 | `TEXT2SQL_CONVERSATION_TTL_SECONDS` | Durable/in-memory session lifetime | `86400` |
 | `TEXT2SQL_JOB_TTL_SECONDS` | Completed asynchronous-job lifetime | `3600` |
@@ -246,7 +256,7 @@ See [.env.example](.env.example) for provider-specific settings. Never commit `.
 | `POST /api/chat/jobs` | Start a cancellable query |
 | `GET /api/chat/jobs/{job_id}` | Retrieve progress or result |
 | `DELETE /api/chat/jobs/{job_id}` | Cancel an active query |
-| `POST /api/check` | Check and optionally run supplied read-only SQL |
+| `POST /api/check` | Parse supplied SQL; execution requires administrative enablement |
 
 Example:
 
@@ -257,13 +267,14 @@ curl -X POST http://127.0.0.1:8000/api/chat \
     "session_id": "demo-1",
     "db_id": "books",
     "message": "Count the books by category.",
-    "provider": "sota",
-    "model": "gpt-5.5",
+    "provider": "agentrouter",
+    "model": "gpt-5.6-sol",
     "context_mode": "retrieval"
   }'
 ```
 
-Conversation state is process-local and resets when the API restarts.
+Conversation state is in memory by default. Set `TEXT2SQL_CONVERSATION_STORE` to retain versioned
+state in SQLite across API restarts.
 
 ## Verification
 

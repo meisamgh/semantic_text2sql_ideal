@@ -26,7 +26,7 @@ class TextToSQLTool:
         self,
         service: TextToSQLService,
         *,
-        provider: ModelProvider = "ollama",
+        provider: ModelProvider = "agentrouter",
         model: str = "qwen3.5:9b",
         context_mode: ContextMode = "retrieval",
         evidence_row_limit: int = 20,

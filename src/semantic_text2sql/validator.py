@@ -51,6 +51,7 @@ def validate_sql(
     *,
     dialect: Literal["sqlite", "postgres"] = "sqlite",
     allowed_tables: set[str] | None = None,
+    allowed_columns: dict[str, set[str]] | None = None,
 ) -> ValidationResult:
     available = {table.name: [column.name for column in table.columns] for table in schema.tables}
     try:
@@ -91,6 +92,40 @@ def validate_sql(
     columns = list(
         dict.fromkeys(column.sql(dialect=dialect) for column in root.find_all(exp.Column))
     )
+    if allowed_columns is not None:
+        normalized_columns = {
+            table.casefold(): {column.casefold() for column in names}
+            for table, names in allowed_columns.items()
+        }
+        aliases = {
+            (table.alias_or_name or table.name).casefold(): table.name.casefold()
+            for table in root.find_all(exp.Table)
+            if table.name and table.name.casefold() not in cte_names
+        }
+        select_aliases = {
+            alias.alias.casefold() for alias in root.find_all(exp.Alias) if alias.alias
+        }
+        unauthorized_columns: list[str] = []
+        for column in root.find_all(exp.Column):
+            if not column.name or column.table.casefold() in cte_names:
+                continue
+            if column.table:
+                owner = aliases.get(column.table.casefold(), column.table.casefold())
+                allowed = normalized_columns.get(owner)
+                if allowed is not None and column.name.casefold() not in allowed:
+                    unauthorized_columns.append(column.sql(dialect=dialect))
+            elif column.name.casefold() not in select_aliases and not any(
+                column.name.casefold() in names for names in normalized_columns.values()
+            ):
+                unauthorized_columns.append(column.sql(dialect=dialect))
+        if unauthorized_columns:
+            return _failure(
+                "SQL_COLUMN_NOT_AUTHORIZED",
+                "SQL references columns outside the authorized context: "
+                + ", ".join(sorted(set(unauthorized_columns))),
+                available,
+                tables=physical_tables,
+            )
     return ValidationResult(
         valid=True,
         code="SQL_SAFETY_VALID",

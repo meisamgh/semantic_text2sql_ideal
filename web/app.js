@@ -36,7 +36,13 @@ async function initialize() {
       api(`/api/models?refresh=${Date.now()}`, { cache: "no-store" }),
     ]);
     const preferredModel = models.find((item) => item.configured);
-    fillSelect("#databaseSelect", databases.filter((item) => item.configured && item.dialect === "sqlite"), "db_id", "db_id", null);
+    fillSelect(
+      "#databaseSelect",
+      databases.filter((item) => item.configured),
+      "db_id",
+      (item) => `${item.db_id} (${item.dialect})`,
+      null,
+    );
     const preferred = preferredModel && `${preferredModel.provider}|${preferredModel.model}`;
     fillContextSelect(models);
     fillSelect("#sqlModelSelect", models, (item) => `${item.provider}|${item.model}`, modelLabel, preferred);

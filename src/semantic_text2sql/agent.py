@@ -42,6 +42,7 @@ from semantic_text2sql.models import (
 from semantic_text2sql.postgres import PostgresRegistry
 from semantic_text2sql.profiling import ProfileStore
 from semantic_text2sql.recovery import RecoveryCoordinator, RecoveryTools, recovery_feedback
+from semantic_text2sql.runtime import RequestBudget
 from semantic_text2sql.strategy import route_question
 from semantic_text2sql.validator import (
     clean_model_sql,
@@ -98,11 +99,14 @@ class TextToSQLAgent:
         request: GenerateRequest,
         *,
         progress: Callable[[str], None] | None = None,
+        budget: RequestBudget | None = None,
     ) -> GenerateResponse:
         strategy = route_question(request.question)
         semantic_contract = request.semantic_contract or SemanticContract()
         try:
             database = self._database(request.dialect)
+            if budget is not None:
+                budget.claim("database")
             schema = database.inspect(request.db_id)
         except DatabaseError:
             return GenerateResponse(
@@ -211,6 +215,10 @@ class TextToSQLAgent:
             retrieved_schema,
         )
         authorized_tables = {table.name.casefold() for table in retrieved_schema.tables}
+        authorized_columns = {
+            table.name.casefold(): {column.name.casefold() for column in table.columns}
+            for table in retrieved_schema.tables
+        }
         available_context_tokens = (
             estimate_tokens(schema.model_dump_json())
             + estimate_tokens(profile.model_dump_json() if profile else "")
@@ -229,6 +237,7 @@ class TextToSQLAgent:
                 schema,
                 dialect=request.dialect,
                 allowed_tables=authorized_tables,
+                allowed_columns=authorized_columns,
             )
         feedback = None
         if request.optimization_required:
@@ -271,6 +280,7 @@ class TextToSQLAgent:
                     schema,
                     dialect=request.dialect,
                     allowed_tables=authorized_tables,
+                    allowed_columns=authorized_columns,
                 )
                 if validation.valid:
                     try:
@@ -282,6 +292,7 @@ class TextToSQLAgent:
                             sqlglot_candidate,
                             validation,
                             max_rows=max(request.max_rows, 1_000),
+                            budget=budget,
                         )
                         if validation.valid:
                             optimization_evidence = (
@@ -294,11 +305,14 @@ class TextToSQLAgent:
                                     baseline_validation.explain_plan,
                                     validation.explain_plan,
                                     max_rows=max(request.max_rows, 1_000),
+                                    budget=budget,
                                 )
                             ).model_copy(update={"optimizer": "sqlglot"})
                             if optimization_evidence.status == "optimized":
                                 final_sql = sqlglot_candidate
                                 if request.execute:
+                                    if budget is not None:
+                                        budget.claim("database")
                                     (
                                         executed_columns,
                                         executed_rows,
@@ -318,7 +332,7 @@ class TextToSQLAgent:
             if progress:
                 progress("generation")
             try:
-                generated = await self.model.generate(
+                model_operation = self.model.generate(
                     model=request.model,
                     provider=request.provider,
                     question=request.question,
@@ -331,6 +345,11 @@ class TextToSQLAgent:
                     feedback=feedback,
                     rejected_shapes=rejected_shapes,
                     generation_style=request.generation_style,
+                )
+                generated = (
+                    await budget.wait(model_operation, kind="model")
+                    if budget is not None
+                    else await model_operation
                 )
                 raw_sql, latency = generated[:2]
                 usage = generated[2] if len(generated) == 3 else TokenUsage()
@@ -348,6 +367,7 @@ class TextToSQLAgent:
                 schema,
                 dialect=request.dialect,
                 allowed_tables=authorized_tables,
+                allowed_columns=authorized_columns,
             )
             if validation.valid:
                 validation = validation.model_copy(
@@ -368,6 +388,7 @@ class TextToSQLAgent:
                     sql,
                     validation,
                     max_rows=max(request.max_rows, 1_000),
+                    budget=budget,
                 )
             if validation.valid and request.optimization_required and request.previous_sql:
                 measured_optimization = await asyncio.to_thread(
@@ -379,6 +400,7 @@ class TextToSQLAgent:
                     baseline_validation.explain_plan if baseline_validation else [],
                     validation.explain_plan,
                     max_rows=max(request.max_rows, 1_000),
+                    budget=budget,
                 )
                 optimization_evidence = measured_optimization
                 if measured_optimization.status != "optimized":
@@ -412,6 +434,7 @@ class TextToSQLAgent:
                         schema,
                         dialect=request.dialect,
                         allowed_tables=authorized_tables,
+                        allowed_columns=authorized_columns,
                     )
                     try:
                         if candidate_validation.valid:
@@ -423,6 +446,7 @@ class TextToSQLAgent:
                                 sqlglot_candidate,
                                 candidate_validation,
                                 max_rows=max(request.max_rows, 1_000),
+                                budget=budget,
                             )
                         if candidate_validation.valid:
                             candidate_evidence = (
@@ -435,6 +459,7 @@ class TextToSQLAgent:
                                     validation.explain_plan,
                                     candidate_validation.explain_plan,
                                     max_rows=max(request.max_rows, 1_000),
+                                    budget=budget,
                                 )
                             ).model_copy(update={"optimizer": "sqlglot"})
                             optimization_evidence = candidate_evidence
@@ -468,6 +493,8 @@ class TextToSQLAgent:
                 if progress:
                     progress("execution")
                 try:
+                    if budget is not None:
+                        budget.claim("database")
                     executed_columns, executed_rows, executed_truncated = await asyncio.to_thread(
                         database.execute, request.db_id, sql, max_rows=request.max_rows
                     )
@@ -503,7 +530,7 @@ class TextToSQLAgent:
                 if progress:
                     progress("recovery")
                 recovery_trace = await RecoveryCoordinator(
-                    RecoveryTools(database, request.db_id, schema, profile)
+                    RecoveryTools(database, request.db_id, schema, profile, budget=budget)
                 ).ainvestigate(
                     question=request.question,
                     failed_sql=sql,
@@ -513,6 +540,7 @@ class TextToSQLAgent:
                     completer=self.model,
                     provider=request.provider,
                     model=request.model,
+                    budget=budget,
                 )
                 if recovery_trace.agent_action in {"INFORM", "ESCALATE"}:
                     break
@@ -537,6 +565,8 @@ class TextToSQLAgent:
                 and optimization_evidence is not None
                 and optimization_evidence.status == "equivalent_not_faster"
             ):
+                if budget is not None:
+                    budget.claim("database")
                 baseline_columns, baseline_rows, baseline_truncated = await asyncio.to_thread(
                     database.execute,
                     request.db_id,
@@ -581,6 +611,8 @@ class TextToSQLAgent:
                 and baseline_validation is not None
                 and baseline_validation.valid
             ):
+                if budget is not None:
+                    budget.claim("database")
                 baseline_columns, baseline_rows, baseline_truncated = await asyncio.to_thread(
                     database.execute,
                     request.db_id,
@@ -743,10 +775,15 @@ def _validate_result_equivalence(
     validation: ValidationResult,
     *,
     max_rows: int,
+    budget: RequestBudget | None = None,
 ) -> ValidationResult:
+    if budget is not None:
+        budget.claim("database")
     baseline_columns, baseline_rows, baseline_truncated = database.execute(
         db_id, baseline_sql, max_rows=max_rows
     )
+    if budget is not None:
+        budget.claim("database")
     candidate_columns, candidate_rows, candidate_truncated = database.execute(
         db_id, candidate_sql, max_rows=max_rows
     )
@@ -804,15 +841,22 @@ def _benchmark_optimization(
     candidate_explain: list[str],
     *,
     max_rows: int,
-    repetitions: int = 3,
+    repetitions: int = 1,
+    budget: RequestBudget | None = None,
 ) -> OptimizationEvidence:
     """Benchmark equivalent queries alternately; retain baseline unless improvement is material."""
+    if budget is not None:
+        budget.claim("database")
     database.execute(db_id, baseline_sql, max_rows=max_rows)
+    if budget is not None:
+        budget.claim("database")
     database.execute(db_id, candidate_sql, max_rows=max_rows)
     baseline_times: list[float] = []
     candidate_times: list[float] = []
 
     def measure(sql: str) -> float:
+        if budget is not None:
+            budget.claim("database")
         started = perf_counter_ns()
         database.execute(db_id, sql, max_rows=max_rows)
         return (perf_counter_ns() - started) / 1_000_000

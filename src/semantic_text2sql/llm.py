@@ -1,4 +1,4 @@
-"""Mockable local Ollama boundary."""
+"""Mockable AgentRouter and Groq model-provider boundaries."""
 
 from __future__ import annotations
 
@@ -22,9 +22,6 @@ class ModelError(RuntimeError):
 
 CLAUDE_CODE_EXECUTABLE = Path.home() / ".local/bin/claude"
 """AgentRouter drives Claude through the Claude Code CLI installed at this fixed path."""
-
-_MEMORY_HEADROOM = 0.85
-"""Share of system RAM a local model may occupy before it swaps instead of generating."""
 
 _CODEX_PREAMBLE = "Do not use tools or inspect files. Return only the requested response.\n\n"
 
@@ -56,109 +53,6 @@ class SQLModel(Protocol):
         rejected_shapes: list[str],
         generation_style: Literal["reasoning", "icl", "alternative"],
     ) -> tuple[str, int] | tuple[str, int, TokenUsage]: ...
-
-
-class OllamaSQLModel:
-    def __init__(self, base_url: str = "http://127.0.0.1:11434", timeout: float = 120.0) -> None:
-        self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
-
-    async def generate(
-        self,
-        *,
-        provider: ModelProvider,
-        model: str,
-        question: str,
-        evidence: str | None,
-        schema: SchemaInfo,
-        strategy: StrategyHints,
-        dialect: Literal["sqlite", "postgres"],
-        profile_context: str,
-        previous_sql: str | None,
-        feedback: str | None,
-        rejected_shapes: list[str],
-        generation_style: Literal["reasoning", "icl", "alternative"],
-    ) -> tuple[str, int, TokenUsage]:
-        from time import perf_counter
-
-        prompt = _prompt(
-            question,
-            evidence,
-            schema,
-            strategy,
-            dialect,
-            profile_context,
-            previous_sql,
-            feedback,
-            rejected_shapes,
-            generation_style,
-        )
-        started = perf_counter()
-        try:
-            async with httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout) as client:
-                response = await client.post(
-                    "/api/chat",
-                    json={
-                        "model": model,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "stream": False,
-                        "think": False,
-                        "options": {"temperature": 0, "seed": 0, "num_predict": 1_500},
-                        "keep_alive": "5m",
-                    },
-                )
-                response.raise_for_status()
-                body = response.json()
-                content = body["message"]["content"]
-        except httpx.HTTPStatusError as exc:
-            detail = exc.response.text[-500:].strip()
-            raise ModelError(
-                f"The local Ollama generation request failed: {detail or exc.response.status_code}"
-            ) from exc
-        except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
-            raise ModelError(f"The local Ollama generation request failed: {exc}") from exc
-        if not isinstance(content, str) or not content.strip():
-            raise ModelError("Ollama returned no SQL text.")
-        return (
-            content,
-            round((perf_counter() - started) * 1_000),
-            TokenUsage(
-                input_tokens=int(body.get("prompt_eval_count") or 0),
-                output_tokens=int(body.get("eval_count") or 0),
-            ),
-        )
-
-    async def complete(self, model: str, prompt: str) -> str:
-        content, _ = await self.complete_detailed(model, prompt)
-        return content
-
-    async def complete_detailed(self, model: str, prompt: str) -> tuple[str, TokenUsage]:
-        """Use the local model as a bounded conversational/semantic interpreter."""
-        try:
-            async with httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout) as client:
-                response = await client.post(
-                    "/api/chat",
-                    json={
-                        "model": model,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "stream": False,
-                        "format": "json",
-                        "think": False,
-                        "options": {"temperature": 0, "seed": 0, "num_predict": 1_000},
-                        "keep_alive": "5m",
-                    },
-                )
-                response.raise_for_status()
-                body = response.json()
-                content = body["message"]["content"]
-        except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
-            raise ModelError("The local Ollama interpretation request failed.") from exc
-        if not isinstance(content, str) or not content.strip():
-            raise ModelError("Ollama returned no interpretation.")
-        return content, TokenUsage(
-            input_tokens=int(body.get("prompt_eval_count") or 0),
-            output_tokens=int(body.get("eval_count") or 0),
-        )
 
 
 class GroqSQLModel:
@@ -245,198 +139,6 @@ class GroqSQLModel:
         if not isinstance(content, str) or not content.strip():
             raise ModelError("Groq returned no text output.")
         return content, _token_usage(body.get("usage") or {})
-
-
-class JustDoWorkSQLModel:
-    """OpenAI-compatible client for Claude and GPT models served by JustDoWork."""
-
-    def __init__(
-        self,
-        api_key: str | None,
-        base_url: str = "https://api.justwoker.icu/v1",
-        timeout: float = 120.0,
-        transport: httpx.AsyncBaseTransport | None = None,
-    ) -> None:
-        self.api_key = api_key
-        self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
-        self.transport = transport
-
-    async def generate(self, **kwargs: object) -> tuple[str, int, TokenUsage]:
-        from time import perf_counter
-
-        prompt = _prompt(
-            str(kwargs["question"]),
-            cast(str | None, kwargs.get("evidence")),
-            cast(SchemaInfo, kwargs["schema"]),
-            cast(StrategyHints, kwargs["strategy"]),
-            cast(Literal["sqlite", "postgres"], kwargs["dialect"]),
-            str(kwargs["profile_context"]),
-            cast(str | None, kwargs.get("previous_sql")),
-            cast(str | None, kwargs.get("feedback")),
-            cast(list[str], kwargs["rejected_shapes"]),
-            cast(Literal["reasoning", "icl", "alternative"], kwargs["generation_style"]),
-        )
-        started = perf_counter()
-        content, usage = await self.complete_detailed(str(kwargs["model"]), prompt)
-        return content, round((perf_counter() - started) * 1_000), usage
-
-    async def complete(self, model: str, prompt: str) -> str:
-        content, _ = await self.complete_detailed(model, prompt)
-        return content
-
-    async def complete_detailed(self, model: str, prompt: str) -> tuple[str, TokenUsage]:
-        if not self.api_key:
-            raise ModelError("JUSTDOWORK_API_KEY is not configured.")
-        try:
-            async with httpx.AsyncClient(
-                base_url=self.base_url,
-                timeout=self.timeout,
-                transport=self.transport,
-            ) as client:
-                response = await client.post(
-                    "chat/completions",
-                    headers={
-                        "authorization": f"Bearer {self.api_key}",
-                        "content-type": "application/json",
-                    },
-                    json={
-                        "model": model,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "max_tokens": 4_000,
-                        "stream": False,
-                    },
-                )
-                response.raise_for_status()
-                body = response.json()
-                content = body["choices"][0]["message"]["content"]
-        except httpx.HTTPStatusError as exc:
-            detail = _response_detail(exc.response)
-            raise ModelError(
-                f"The JustDoWork request failed: {detail or f'HTTP {exc.response.status_code}'}"
-            ) from exc
-        except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
-            raise ModelError(f"The JustDoWork request failed: {exc}") from exc
-        if not isinstance(content, str) or not content.strip():
-            raise ModelError("JustDoWork returned no text output.")
-        return content, _token_usage(body.get("usage") or {})
-
-
-class SotaSQLModel:
-    """Responses API client for the project-scoped True SOTA provider."""
-
-    def __init__(
-        self,
-        api_key: str | None,
-        base_url: str = "https://true-sota.com",
-        timeout: float = 180.0,
-        transport: httpx.AsyncBaseTransport | None = None,
-    ) -> None:
-        self.api_key = api_key
-        self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
-        self.transport = transport
-
-    async def generate(self, **kwargs: object) -> tuple[str, int, TokenUsage]:
-        from time import perf_counter
-
-        prompt = _prompt(
-            str(kwargs["question"]),
-            cast(str | None, kwargs.get("evidence")),
-            cast(SchemaInfo, kwargs["schema"]),
-            cast(StrategyHints, kwargs["strategy"]),
-            cast(Literal["sqlite", "postgres"], kwargs["dialect"]),
-            str(kwargs["profile_context"]),
-            cast(str | None, kwargs.get("previous_sql")),
-            cast(str | None, kwargs.get("feedback")),
-            cast(list[str], kwargs["rejected_shapes"]),
-            cast(Literal["reasoning", "icl", "alternative"], kwargs["generation_style"]),
-        )
-        started = perf_counter()
-        content, usage = await self.complete_detailed(str(kwargs["model"]), prompt)
-        return content, round((perf_counter() - started) * 1_000), usage
-
-    async def complete(self, model: str, prompt: str) -> str:
-        content, _ = await self.complete_detailed(model, prompt)
-        return content
-
-    async def complete_detailed(self, model: str, prompt: str) -> tuple[str, TokenUsage]:
-        if not self.api_key:
-            raise ModelError("SOTA_API_KEY is not configured.")
-        try:
-            async with httpx.AsyncClient(
-                base_url=self.base_url,
-                timeout=self.timeout,
-                transport=self.transport,
-            ) as client:
-                response = await client.post(
-                    "/responses",
-                    headers={
-                        "authorization": f"Bearer {self.api_key}",
-                        "content-type": "application/json",
-                    },
-                    json={
-                        "model": model,
-                        "input": [
-                            {
-                                "role": "user",
-                                "content": [{"type": "input_text", "text": prompt}],
-                            }
-                        ],
-                        "reasoning": {"effort": "xhigh"},
-                        "store": False,
-                        "stream": True,
-                    },
-                )
-                response.raise_for_status()
-                if "text/event-stream" in response.headers.get("content-type", ""):
-                    content, usage = _responses_stream_result(response.text)
-                    return content, usage
-                body = response.json()
-                content = _gpt_text(body)
-        except httpx.HTTPStatusError as exc:
-            detail = _response_detail(exc.response)
-            raise ModelError(
-                f"The True SOTA request failed: {detail or f'HTTP {exc.response.status_code}'}"
-            ) from exc
-        except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
-            raise ModelError(f"The True SOTA request failed: {exc}") from exc
-        if not content:
-            raise ModelError("True SOTA returned no text output.")
-        return content, _token_usage(body.get("usage") or {})
-
-
-def _responses_stream_result(payload: str) -> tuple[str, TokenUsage]:
-    """Extract text and final usage from a buffered Responses SSE stream."""
-    parts: list[str] = []
-    usage: object = {}
-    for line in payload.splitlines():
-        if not line.startswith("data:"):
-            continue
-        data = line.removeprefix("data:").strip()
-        if not data or data == "[DONE]":
-            continue
-        try:
-            event = json.loads(data)
-        except ValueError:
-            continue
-        if not isinstance(event, dict):
-            continue
-        if event.get("type") == "response.output_text.delta":
-            delta = event.get("delta")
-            if isinstance(delta, str):
-                parts.append(delta)
-        response = event.get("response")
-        if isinstance(response, dict):
-            usage = response.get("usage") or usage
-            if not parts:
-                text = _gpt_text(response)
-                if text:
-                    parts.append(text)
-    content = "".join(parts).strip()
-    if not content:
-        raise ModelError("True SOTA returned no text output in its response stream.")
-    return content, _token_usage(usage)
 
 
 def _response_detail(response: httpx.Response) -> str:
@@ -866,21 +568,13 @@ class AgentRouterModel:
 class RoutingSQLModel:
     def __init__(
         self,
-        ollama: OllamaSQLModel,
         agentrouter: SQLModel,
         groq: GroqSQLModel,
-        justdowork: JustDoWorkSQLModel | None = None,
-        sota: SotaSQLModel | None = None,
     ) -> None:
         self.providers: dict[str, SQLModel] = {
-            "ollama": ollama,
             "agentrouter": agentrouter,
             "groq": groq,
         }
-        if justdowork is not None:
-            self.providers["justdowork"] = justdowork
-        if sota is not None:
-            self.providers["sota"] = sota
 
     async def generate(
         self,
@@ -1014,57 +708,6 @@ def codex_cli_path(override: str | None = None) -> str | None:
 def claude_code_available() -> bool:
     """Report whether the Claude Code CLI that AgentRouter Claude shells out to exists."""
     return CLAUDE_CODE_EXECUTABLE.is_file()
-
-
-def _total_memory_bytes() -> int | None:
-    try:
-        return int(os.sysconf("SC_PAGE_SIZE")) * int(os.sysconf("SC_PHYS_PAGES"))
-    except (AttributeError, OSError, ValueError):
-        return None
-
-
-async def ollama_model_status(
-    model: str,
-    *,
-    base_url: str = "http://127.0.0.1:11434",
-    timeout: float = 5.0,
-    transport: httpx.AsyncBaseTransport | None = None,
-) -> str | None:
-    """Return ``None`` when ``model`` can serve locally, otherwise why it cannot.
-
-    A model whose weights do not fit in RAM is reported unusable: Ollama accepts the
-    pull, but generation then swaps and times out instead of ever answering.
-    """
-    try:
-        async with httpx.AsyncClient(
-            base_url=base_url.rstrip("/"), timeout=timeout, transport=transport
-        ) as client:
-            response = await client.get("/api/tags")
-            response.raise_for_status()
-            body = response.json()
-    except (httpx.HTTPError, ValueError):
-        return f"Ollama is not reachable at {base_url}."
-    installed = body.get("models") if isinstance(body, dict) else None
-    entries = installed if isinstance(installed, list) else []
-    tagged = model if ":" in model else f"{model}:latest"
-    match = next(
-        (
-            entry
-            for entry in entries
-            if isinstance(entry, dict) and entry.get("name") in {model, tagged}
-        ),
-        None,
-    )
-    if match is None:
-        return f"{model} is not installed locally (run: ollama pull {model})."
-    size = match.get("size")
-    memory = _total_memory_bytes()
-    if isinstance(size, int) and memory is not None and size > memory * _MEMORY_HEADROOM:
-        return (
-            f"{model} needs about {size / 1e9:.1f} GB of weights but this machine has "
-            f"{memory / 1e9:.1f} GB of RAM, so generation swaps and times out."
-        )
-    return None
 
 
 def _prompt(

@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from semantic_text2sql.models import GROQ_QWEN_MODEL, SOTA_GPT_MODEL, ModelOption, ModelProvider
+from semantic_text2sql.models import GROQ_QWEN_MODEL, ModelOption, ModelProvider
 
 
 @dataclass(frozen=True)
@@ -36,13 +36,18 @@ class ProviderModelSpec:
 
 
 MODEL_CATALOG = (
-    ProviderModelSpec("sota", SOTA_GPT_MODEL, "SOTA_API_KEY", "SOTA_ENABLED"),
-    ProviderModelSpec("justdowork", "gpt-5.6-sol", "JUSTDOWORK_API_KEY", "JUSTDOWORK_ENABLED"),
-    ProviderModelSpec("justdowork", "gpt-5.6-luna", "JUSTDOWORK_API_KEY", "JUSTDOWORK_ENABLED"),
-    ProviderModelSpec("justdowork", "gpt-5.6-terra", "JUSTDOWORK_API_KEY", "JUSTDOWORK_ENABLED"),
+    ProviderModelSpec("agentrouter", "gpt-5.6-sol", "AGENTROUTER_API_KEY"),
+    ProviderModelSpec("agentrouter", "glm-5.3", "AGENTROUTER_API_KEY"),
+    ProviderModelSpec("agentrouter", "deepseek-v4-flash", "AGENTROUTER_API_KEY"),
+    ProviderModelSpec("agentrouter", "claude-opus-5", "AGENTROUTER_API_KEY"),
+    ProviderModelSpec("agentrouter", "claude-opus-4-8", "AGENTROUTER_API_KEY"),
     ProviderModelSpec("groq", GROQ_QWEN_MODEL, "GROQ_API_KEY"),
 )
 
 
 def configured_model_options() -> list[ModelOption]:
     return [spec.option() for spec in MODEL_CATALOG]
+
+
+def supports_model(provider: ModelProvider, model: str) -> bool:
+    return any(spec.provider == provider and spec.model == model for spec in MODEL_CATALOG)

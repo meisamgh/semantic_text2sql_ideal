@@ -15,6 +15,7 @@ from sqlglot import exp, parse_one
 from semantic_text2sql.database import DatabaseRegistry
 from semantic_text2sql.models import (
     DatabaseProfile,
+    RecoveryClaim,
     RecoveryToolCall,
     RecoveryTrace,
     RecoveryUsage,
@@ -22,6 +23,7 @@ from semantic_text2sql.models import (
     TokenUsage,
 )
 from semantic_text2sql.postgres import PostgresRegistry
+from semantic_text2sql.runtime import RequestBudget
 from semantic_text2sql.validator import validate_sql
 
 MAX_RECOVERY_TOOL_CALLS = 3
@@ -57,6 +59,7 @@ class RecoveryTools:
         max_rows: int = 20,
         max_database_probes: int = 8,
         max_recovery_seconds: float = 8.0,
+        budget: RequestBudget | None = None,
     ) -> None:
         self.database = database
         self.db_id = db_id
@@ -65,6 +68,7 @@ class RecoveryTools:
         self.max_rows = min(max_rows, 20)
         self.max_database_probes = min(max(1, max_database_probes), 8)
         self.max_recovery_seconds = min(max(0.1, max_recovery_seconds), 8.0)
+        self.request_budget = budget
         self._deadline: float | None = None
         self.budget_exhausted = False
 
@@ -152,6 +156,8 @@ class RecoveryTools:
         if remaining <= 0:
             self.budget_exhausted = True
             raise TimeoutError("The recovery database budget is exhausted.")
+        if self.request_budget is not None:
+            self.request_budget.claim("database")
         columns, rows, truncated = self.database.execute(
             self.db_id,
             tree.sql(dialect=self.schema.dialect),
@@ -159,6 +165,28 @@ class RecoveryTools:
             timeout_seconds=min(2.0, remaining),
         )
         return {"columns": columns, "rows": rows, "truncated": truncated}
+
+    def inspect_values(
+        self,
+        table: str,
+        column: str,
+        search: str,
+        *,
+        allowed_tables: list[str],
+    ) -> dict[str, Any]:
+        """Inspect a bounded value domain without accepting model-authored SQL."""
+        live_table = next((item for item in self.schema.tables if item.name == table), None)
+        if live_table is None or table not in set(allowed_tables):
+            raise ValueError("The requested table is not authorized for recovery.")
+        if column not in {item.name for item in live_table.columns}:
+            raise ValueError("The requested column does not exist in the authorized table.")
+        escaped = search.replace("'", "''")
+        sql = (
+            f'SELECT DISTINCT "{column}" FROM "{table}" '
+            f"WHERE LOWER(CAST(\"{column}\" AS TEXT)) LIKE LOWER('%{escaped}%') LIMIT 10"
+        )
+        result = self.query_database(sql, allowed_tables=allowed_tables)
+        return {"table": table, "column": column, "search": search, **result}
 
     def inspect_profiles(self, tables: list[str]) -> list[dict[str, Any]]:
         if self.profile is None:
@@ -451,6 +479,7 @@ class RecoveryCoordinator:
         completer: Any | None = None,
         provider: str | None = None,
         model: str | None = None,
+        budget: RequestBudget | None = None,
     ) -> RecoveryTrace:
         """Run one bounded agent with two tools; fall back to deterministic recovery."""
 
@@ -473,12 +502,30 @@ class RecoveryCoordinator:
         observations: list[dict[str, Any]] = []
         calls: list[RecoveryToolCall] = []
         total_usage = TokenUsage(input_tokens=0, output_tokens=0)
+        attempted_model_calls = 0
         started = perf_counter()
+
+        async def fallback_with_agent_usage() -> RecoveryTrace:
+            trace = await fallback()
+            return trace.model_copy(
+                update={
+                    "usage": trace.usage.model_copy(
+                        update={
+                            "llm_calls": attempted_model_calls,
+                            "token_usage": total_usage,
+                            "estimated_llm_cost_usd": (None if attempted_model_calls else 0.0),
+                        }
+                    ),
+                    "tool_calls": [*calls, *trace.tool_calls],
+                }
+            )
+
         try:
             detailed = getattr(completer, "complete_detailed", None)
             if not callable(detailed):
                 return await fallback()
             for model_call in range(MAX_RECOVERY_MODEL_CALLS):
+                attempted_model_calls = model_call + 1
                 prompt = _agent_recovery_prompt(
                     question,
                     failed_sql,
@@ -488,14 +535,24 @@ class RecoveryCoordinator:
                     observations,
                 )
                 try:
-                    raw, usage = await asyncio.wait_for(
-                        detailed(provider, model, prompt),
-                        timeout=max(0.01, self.tools.remaining_seconds()),
+                    operation = detailed(provider, model, prompt)
+                    raw, usage = (
+                        await budget.wait(operation, kind="model")
+                        if budget is not None
+                        else await asyncio.wait_for(
+                            operation,
+                            timeout=max(0.01, self.tools.remaining_seconds()),
+                        )
                     )
                 except TypeError:
-                    raw, usage = await asyncio.wait_for(
-                        detailed(model, prompt),
-                        timeout=max(0.01, self.tools.remaining_seconds()),
+                    operation = detailed(model, prompt)
+                    raw, usage = (
+                        await budget.wait(operation, kind="model")
+                        if budget is not None
+                        else await asyncio.wait_for(
+                            operation,
+                            timeout=max(0.01, self.tools.remaining_seconds()),
+                        )
                     )
                 if isinstance(usage, TokenUsage):
                     total_usage = TokenUsage(
@@ -507,13 +564,17 @@ class RecoveryCoordinator:
                 if action in {"REPAIR", "INFORM", "ESCALATE"}:
                     diagnosis = str(payload.get("diagnosis") or "").strip()
                     if not diagnosis:
-                        return await fallback()
-                    if (
-                        category in {"data_grounding", "correctness"}
-                        and action in {"INFORM", "ESCALATE"}
-                        and not observations
-                    ):
-                        return await fallback()
+                        return await fallback_with_agent_usage()
+                    claims = _validated_claims(
+                        payload.get("claims"),
+                        observations,
+                        require_tool_evidence=(
+                            category in {"data_grounding", "correctness"}
+                            and action in {"REPAIR", "INFORM"}
+                        ),
+                    )
+                    if action in {"REPAIR", "INFORM"} and not claims:
+                        return await fallback_with_agent_usage()
                     base = RecoveryTrace(
                         mode=mode,  # type: ignore[arg-type]
                         failure_code=failure_code,
@@ -531,8 +592,13 @@ class RecoveryCoordinator:
                             ),
                             "diagnosis_summary": diagnosis[:1_000],
                             "evidence": [
-                                f"{item['tool']}: {item['result']}" for item in observations
+                                f"failure-1 {failure_code}: {failure_message}",
+                                *[
+                                    f"{item['evidence_id']} {item['tool']}: {item['result']}"
+                                    for item in observations
+                                ],
                             ],
+                            "claims": claims,
                             "tool_calls": calls,
                             "requires_human_review": action == "ESCALATE",
                             "usage": RecoveryUsage(
@@ -551,7 +617,7 @@ class RecoveryCoordinator:
                         }
                     )
                 if action != "CALL_TOOL" or len(calls) >= MAX_RECOVERY_TOOL_CALLS:
-                    return await fallback()
+                    return await fallback_with_agent_usage()
                 tool = str(payload.get("tool") or "")
                 arguments = payload.get("arguments") or {}
                 if tool == "inspect_schema":
@@ -563,6 +629,14 @@ class RecoveryCoordinator:
                     result = self.tools.inspect_schema_rich(
                         requested_tables, arguments.get("columns")
                     )
+                elif tool == "inspect_values":
+                    result = await asyncio.to_thread(
+                        self.tools.inspect_values,
+                        str(arguments.get("table") or ""),
+                        str(arguments.get("column") or ""),
+                        str(arguments.get("search") or ""),
+                        allowed_tables=allowed_tables,
+                    )
                 elif tool == "query_database":
                     result = await asyncio.to_thread(
                         self.tools.query_database,
@@ -570,19 +644,23 @@ class RecoveryCoordinator:
                         allowed_tables=allowed_tables,
                     )
                 else:
-                    return await fallback()
+                    return await fallback_with_agent_usage()
                 purpose = str(payload.get("purpose") or "Gather verified recovery evidence.")
-                observations.append({"tool": tool, "result": result})
+                evidence_id = f"observation-{len(observations) + 1}"
+                observations.append(
+                    {"evidence_id": evidence_id, "tool": tool, "result": result}
+                )
                 calls.append(
                     RecoveryToolCall(
                         tool=tool,
                         purpose=purpose[:500],
                         result_summary=f"Returned bounded {tool} evidence.",
+                        evidence_id=evidence_id,
                     )
                 )
         except Exception:
-            return await fallback()
-        return await fallback()
+            return await fallback_with_agent_usage()
+        return await fallback_with_agent_usage()
 
     def _classify(self, state: RecoveryState) -> dict[str, Any]:
         return {
@@ -715,22 +793,33 @@ def _agent_recovery_prompt(
     allowed_tables: list[str],
     observations: list[dict[str, Any]],
 ) -> str:
-    return f"""You are one bounded Text-to-SQL recovery agent with exactly two tools.
+    return f"""You are one bounded Text-to-SQL recovery agent with exactly three tools.
 Return one JSON object only, using one of these shapes:
 {{"action":"CALL_TOOL","tool":"inspect_schema","arguments":{{"tables":["name"],
 "columns":{{"name":["column"]}}}},"purpose":"short reason"}}
+{{"action":"CALL_TOOL","tool":"inspect_values","arguments":{{"table":"name",
+"column":"name","search":"literal"}},"purpose":"short reason"}}
 {{"action":"CALL_TOOL","tool":"query_database","arguments":{{"sql":"SELECT ..."}},
 "purpose":"short reason"}}
-{{"action":"INFORM","diagnosis":"plain-language fact","confidence":0.0}}
+{{"action":"INFORM","diagnosis":"plain-language fact","confidence":0.0,
+"claims":[{{"claim_type":"VALUE_ABSENT","statement":"verified fact",
+"evidence_ids":["observation-1"]}}]}}
 {{"action":"REPAIR","diagnosis":"plain-language cause","confidence":0.0,
-"repair_instruction":"focused instruction for the SQL generator"}}
+"repair_instruction":"focused instruction for the SQL generator",
+"claims":[{{"claim_type":"FILTER_MISMATCH","statement":"verified cause",
+"evidence_ids":["observation-1"]}}]}}
 {{"action":"ESCALATE","diagnosis":"plain-language uncertainty","confidence":0.0}}
 
 Rules:
 - Use inspect_schema for types, grain, keys, relationships, NULLs and temporal coverage.
 - Schema/profile examples are advisory and cannot prove that a filter value exists or is absent.
-- Use query_database whenever the diagnosis depends on actual categorical or identifier values.
+- Use inspect_values for exact existence and bounded categorical or identifier searches.
+- Use query_database only for narrow analytical probes that inspect_values cannot answer.
 - Prefer one tool at a time and stop as soon as evidence is sufficient.
+- The original failure has evidence ID failure-1. Every tool result has its own observation-N ID.
+- INFORM and REPAIR must include typed claims. Every claim must cite existing evidence IDs.
+- For data-grounding or correctness decisions, every claim must cite at least one observation-N
+  produced by a tool. Profile examples and the failure message alone are not sufficient.
 - Before a final action, check every independent explicit filter that could explain an empty or
   NULL result. Report all confirmed issues, not only the first one discovered.
 - For temporal filters, inspect the date format and coverage. For identifier and categorical
@@ -747,6 +836,36 @@ SQL: {failed_sql or "No SQL was produced."}
 Allowed tables: {json.dumps(allowed_tables)}
 Tool observations: {json.dumps(observations, default=str)[:12_000]}
 """
+
+
+def _validated_claims(
+    raw_claims: Any,
+    observations: list[dict[str, Any]],
+    *,
+    require_tool_evidence: bool,
+) -> list[RecoveryClaim]:
+    """Accept only typed claims whose evidence references exist in this recovery trace."""
+    if not isinstance(raw_claims, list):
+        return []
+    observation_ids = {
+        str(item.get("evidence_id"))
+        for item in observations
+        if item.get("evidence_id")
+    }
+    known_ids = {"failure-1", *observation_ids}
+    validated: list[RecoveryClaim] = []
+    for item in raw_claims[:10]:
+        try:
+            claim = RecoveryClaim.model_validate(item)
+        except Exception:
+            return []
+        cited = set(claim.evidence_ids)
+        if not cited or not cited.issubset(known_ids):
+            return []
+        if require_tool_evidence and cited.isdisjoint(observation_ids):
+            return []
+        validated.append(claim)
+    return validated
 
 
 def _rich_column_metadata(data_type: str, primary_key: bool, profile: Any | None) -> dict[str, Any]:

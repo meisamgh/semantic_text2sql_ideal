@@ -64,10 +64,10 @@ def select_schema(
             for name in (required_columns or [])
             if name.casefold().startswith(table.name.casefold() + ".")
         }
-        required = semantic_required or (
-            {column.name for column in table.columns if column.primary_key}
-            | _foreign_key_columns(table.name, schema)
+        key_columns = {column.name for column in table.columns if column.primary_key} | (
+            _foreign_key_columns(table.name, schema)
         )
+        required = semantic_required | key_columns
         scores = {
             column.name: _column_score(
                 table.name,
@@ -80,11 +80,7 @@ def select_schema(
             for column in table.columns
         }
         ranked_columns = sorted(table.columns, key=lambda item: (-scores[item.name], item.name))
-        keep = (
-            required
-            if semantic_required
-            else required | {item.name for item in ranked_columns[:max_columns_per_table]}
-        )
+        keep = required | {item.name for item in ranked_columns[:max_columns_per_table]}
         columns = [item for item in table.columns if item.name in keep]
         selected_tables.append(table.model_copy(update={"columns": columns, "create_sql": ""}))
         selected_columns[table.name] = [item.name for item in columns]

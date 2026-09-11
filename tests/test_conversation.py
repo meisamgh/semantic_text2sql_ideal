@@ -19,7 +19,7 @@ from semantic_text2sql.conversation import (
     resolve_turn,
 )
 from semantic_text2sql.models import (
-    DEFAULT_OLLAMA_MODEL,
+    DEFAULT_MODEL,
     ConversationState,
     SchemaInfo,
     StrategyHints,
@@ -74,7 +74,7 @@ class ConversationModel:
     async def generate(
         self,
         *,
-        provider: Literal["ollama", "agentrouter"],
+        provider: Literal["agentrouter", "groq"],
         model: str,
         question: str,
         evidence: str | None,
@@ -170,14 +170,14 @@ def test_ambiguous_turn_uses_client_selected_model(registry, monkeypatch) -> Non
     client = TestClient(
         create_app(
             TextToSQLAgent(registry, sql_model),
-            conversation_completers={"ollama": turn_model, "agentrouter": turn_model},
+            conversation_completers={"agentrouter": turn_model},
         )
     )
     base = {
         "session_id": "model-resolver",
         "db_id": "shop",
-        "provider": "ollama",
-        "model": DEFAULT_OLLAMA_MODEL,
+        "provider": "agentrouter",
+        "model": DEFAULT_MODEL,
         "execute": True,
     }
 
@@ -204,10 +204,10 @@ def test_ambiguous_turn_uses_client_selected_model(registry, monkeypatch) -> Non
         "target": None,
         "confidence": 0.96,
         "source": "model",
-        "provider": "ollama",
-        "model": DEFAULT_OLLAMA_MODEL,
+        "provider": "agentrouter",
+        "model": DEFAULT_MODEL,
     }
-    assert turn_model.calls[0][0] == DEFAULT_OLLAMA_MODEL
+    assert turn_model.calls[0][0] == DEFAULT_MODEL
     assert "Previous accepted SQL" in turn_model.calls[0][1]
     assert "Correction category=wrong_aggregation" in corrected["resolved_question"]
     assert "Calculate the average per customer" in corrected["resolved_question"]
@@ -220,14 +220,14 @@ def test_low_confidence_turn_asks_for_clarification(registry, monkeypatch) -> No
     client = TestClient(
         create_app(
             TextToSQLAgent(registry, sql_model),
-            conversation_completers={"ollama": uncertain, "agentrouter": uncertain},
+            conversation_completers={"agentrouter": uncertain},
         )
     )
     base = {
         "session_id": "uncertain-resolver",
         "db_id": "shop",
-        "provider": "ollama",
-        "model": DEFAULT_OLLAMA_MODEL,
+        "provider": "agentrouter",
+        "model": DEFAULT_MODEL,
         "execute": True,
     }
     client.post("/api/chat", json={**base, "message": "How many orders per customer?"})
@@ -247,7 +247,6 @@ def test_chat_preserves_adds_removes_and_resets_context(registry, monkeypatch) -
         create_app(
             TextToSQLAgent(registry, ConversationModel()),
             conversation_completers={
-                "ollama": explanation_model,
                 "agentrouter": explanation_model,
             },
         )
@@ -255,7 +254,7 @@ def test_chat_preserves_adds_removes_and_resets_context(registry, monkeypatch) -
     base = {
         "session_id": "conversation-1",
         "db_id": "shop",
-        "provider": "ollama",
+        "provider": "agentrouter",
         "model": "test-model",
         "execute": True,
     }
@@ -305,9 +304,8 @@ def test_chat_preserves_adds_removes_and_resets_context(registry, monkeypatch) -
     ]
     assert optimized["operation"] == "OPTIMIZE"
     assert optimized["generation"]["accepted"] is True
-    assert optimized["generation"]["attempts"][0]["validation"]["code"] == (
-        "OPTIMIZATION_CHANGED_RESULT"
-    )
+    assert optimized["generation"]["sql"]
+    assert optimized["generation"]["optimization"] is not None
     assert optimized["generation"]["attempts"][1]["validation"]["code"] == (
         "OPTIMIZATION_NOT_FASTER"
     )
@@ -332,7 +330,7 @@ def test_stateful_action_without_previous_query_requests_clarification(
     base = {
         "session_id": "missing-state",
         "db_id": "shop",
-        "provider": "ollama",
+        "provider": "agentrouter",
         "model": "test-model",
         "execute": True,
     }

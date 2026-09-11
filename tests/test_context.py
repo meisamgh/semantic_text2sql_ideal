@@ -29,6 +29,36 @@ def test_context_plan_records_selected_dependencies(registry) -> None:  # type: 
     assert plan.coverage_complete is True
 
 
+def test_three_table_context_requires_a_connected_known_cardinality_graph() -> None:
+    schema = SchemaInfo.model_validate(
+        {
+            "db_id": "disconnected",
+            "tables": [
+                {
+                    "name": name,
+                    "create_sql": "",
+                    "columns": [{"name": "id", "data_type": "INTEGER"}],
+                }
+                for name in ("a", "b", "c")
+            ],
+            "relationships": [
+                {
+                    "from_table": "a",
+                    "from_column": "id",
+                    "to_table": "b",
+                    "to_column": "id",
+                }
+            ],
+        }
+    )
+
+    plan = build_context_plan(schema, None, SemanticContract(), "Show all records", None)
+    requirements = {item.kind: item for item in plan.requirements}
+
+    assert requirements["JOIN_PATH"].resolved is False
+    assert requirements["JOIN_CARDINALITY"].resolved is False
+
+
 def test_formula_node_emits_formula_and_physical_type_requirements(registry) -> None:  # type: ignore[no-untyped-def]
     schema = registry.inspect("shop")
     contract = apply_structural_formulas(

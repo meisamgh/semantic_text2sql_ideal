@@ -11,6 +11,7 @@ from semantic_text2sql.recovery import (
     RecoveryTools,
     _no_match_explanation,
     _plain_filter,
+    _validated_claims,
     recovery_feedback,
 )
 
@@ -42,7 +43,9 @@ class ToolSelectingReasoner:
         assert "2024-12-31" in prompt
         return (
             '{"action":"INFORM","diagnosis":"The requested year is outside the stored '
-            '2024 date range. No date was changed.","confidence":0.98}',
+            '2024 date range. No date was changed.","confidence":0.98,'
+            '"claims":[{"claim_type":"FILTER_MISMATCH","statement":"The requested year '
+            'is outside the stored date range.","evidence_ids":["observation-1"]}]}',
             TokenUsage(input_tokens=30, output_tokens=12),
         )
 
@@ -64,7 +67,40 @@ def test_bounded_reasoner_rejects_unsupported_data_diagnosis(registry) -> None: 
 
     assert trace.agent_diagnosis is None
     assert trace.diagnosis_code is not None
-    assert trace.usage.llm_calls == 0
+    assert trace.usage.llm_calls == 1
+
+
+def test_inspect_values_uses_live_bounded_database_evidence(registry) -> None:  # type: ignore[no-untyped-def]
+    schema = registry.inspect("shop")
+    result = RecoveryTools(registry, "shop", schema, profile=None).inspect_values(
+        "customers", "country", "Germ", allowed_tables=["customers"]
+    )
+
+    assert result["rows"] == [["Germany"]]
+    assert result["truncated"] is False
+
+
+def test_recovery_claim_policy_rejects_invented_and_unprobed_evidence() -> None:
+    observations = [
+        {"evidence_id": "observation-1", "tool": "inspect_values", "result": {"rows": []}}
+    ]
+    invented = [
+        {
+            "claim_type": "VALUE_ABSENT",
+            "statement": "The requested value is absent.",
+            "evidence_ids": ["observation-99"],
+        }
+    ]
+    failure_only = [
+        {
+            "claim_type": "VALUE_ABSENT",
+            "statement": "The requested value is absent.",
+            "evidence_ids": ["failure-1"],
+        }
+    ]
+
+    assert _validated_claims(invented, observations, require_tool_evidence=True) == []
+    assert _validated_claims(failure_only, observations, require_tool_evidence=True) == []
 
 
 def test_recovery_supplies_verified_temporal_coverage(registry) -> None:  # type: ignore[no-untyped-def]
@@ -122,7 +158,10 @@ def test_recovery_supplies_verified_temporal_coverage(registry) -> None:  # type
     )
     assert reasoner.calls == 2
     assert [call.tool for call in agent_trace.tool_calls] == ["inspect_schema"]
+    assert agent_trace.tool_calls[0].evidence_id == "observation-1"
     assert agent_trace.agent_action == "INFORM"
+    assert agent_trace.claims[0].evidence_ids == ["observation-1"]
+    assert agent_trace.evidence[0].startswith("failure-1 NULL_RESULT")
     assert agent_trace.usage.llm_calls == 2
 
 

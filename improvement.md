@@ -1,223 +1,259 @@
-# Recovery Agent Improvement Plan
+Act as a senior AI/ML architect, staff engineer, and critical code reviewer.
 
-This document records verified improvements for the current architecture. The normal Text-to-SQL
-path remains retrieval, context assembly, Model 2 generation, SQL safety validation and read-only
-execution. The bounded recovery agent activates only for a failed attempt, zero rows, unexpected
-`NULL`, or an explicit correctness review.
+Analyze this project deeply,
 
-## Current recovery contract
+Do NOT evaluate the project only from the README. Read and understand the actual source code, architecture, tests, configuration, benchmarks, prompts, database layer, retrieval components, model adapters, recovery logic, UI/API code, commit history, and any open/closed issues or pull requests available to you.
 
-```text
-Anomaly or correctness request
-        |
-        v
-One recovery agent
-   |              |
-inspect_schema  query_database
-   |              |
-   +------ evidence
-             |
-       reason again
-             |
- REPAIR / INFORM / ESCALATE
-```
+Your goal is to determine what this system really does, how strong it is, where it can fail, and what would make it significantly better.
 
-The model never controls SQL authorization. Diagnostic SQL remains one statement, SELECT-only,
-restricted to approved tables, row-bounded and timeout-bounded. Profile examples are advisory;
-the agent must use `query_database` when a conclusion depends on whether an identifier or category
-actually exists.
+Please perform the analysis in these areas:
 
-## P0: make the recovery contract true
+1. ARCHITECTURE
 
-### 1. Run deterministic fallback only after agent failure
+* Reconstruct the real end-to-end workflow from the code.
+* Identify deterministic components, ML components, LLM components, and agentic components.
+* Identify where state is stored and passed.
+* Identify unnecessary complexity or duplicated logic.
+* Point out places where the README and implementation disagree.
 
-`ainvestigate()` currently calls the complete deterministic recovery graph before starting the
-agent, then resets the deadline and starts again. This duplicates schema/filter work and causes
-reported latency and probe counts to omit part of the actual work.
+2. TEXT-TO-SQL QUALITY
+   Evaluate:
 
-Required flow:
+* schema linking
+* table selection
+* column selection
+* value retrieval
+* historical-query retrieval
+* business glossary handling
+* formula handling
+* PK/FK and bridge-table restoration
+* grain/cardinality/fanout handling
+* date/time semantics
+* SQL generation
+* SQL validation
+* execution feedback
+* repair/recovery
+* semantic correctness detection
 
-```text
-agent recovery
-    |
-    +-- valid terminal decision --> return agent trace
-    |
-    +-- model/tool/format failure --> run deterministic fallback once
-```
+Pay special attention to SQL that:
 
-Acceptance criteria:
+* executes successfully
+* returns plausible results
+* but answers the wrong business question.
 
-- No database probe occurs before the agent requests `query_database`.
-- Deterministic fallback runs only if the agent cannot complete safely.
-- One deadline covers the active recovery path.
-- Returned telemetry includes all work actually performed.
+Explain which failure modes the current architecture cannot reliably detect.
 
-### 2. Make agent decisions control execution
+3. RETRIEVAL
+   Analyze the BM25, dense retrieval, value matching, RRF, reranking, historical retrieval, and schema profiling pipeline.
 
-The labels currently do not fully control the pipeline. Failed SQL continues into the normal retry
-loop regardless of `INFORM` or `ESCALATE`, while zero-row/NULL handling displays a diagnosis even if
-the agent requested `REPAIR`.
+Determine:
 
-Required transitions:
+* which components materially help
+* which components probably add complexity without enough gain
+* failure modes
+* retrieval leakage risks
+* whether table-first / column-first retrieval is optimal
+* how retrieval could be improved without significantly increasing token cost.
 
-```text
-REPAIR
-  -> send repair_instruction to Model 2
-  -> generate exactly one bounded candidate
-  -> validate and execute
+4. LLM USAGE AND PROMPTS
+   Read the actual prompts.
 
-INFORM
-  -> display the evidence-based diagnosis
-  -> stop without another SQL attempt
+For every LLM call explain:
 
-ESCALATE
-  -> display the unresolved uncertainty
-  -> stop without changing the request or running more SQL
-```
+* purpose
+* input
+* output
+* approximate context size
+* whether the call is necessary
+* whether the same task could be deterministic
+* possible hallucination/failure modes
 
-Acceptance criteria:
+Identify opportunities to reduce:
 
-- `INFORM` and `ESCALATE` never trigger another Model 2 attempt.
-- `REPAIR` triggers one focused regeneration, subject to the three-total-attempt ceiling.
-- The action, repair instruction and resulting transition are visible in the recovery trace.
+* token consumption
+* number of calls
+* latency
+  without reducing accuracy.
 
-### 3. Use one SQL safety boundary
+5. CANDIDATE GENERATION
 
-`RecoveryTools.query_database()` duplicates part of the main validator and does not mirror every
-blocked construct (`MERGE`, locks, `SELECT INTO`, and root-query validation). Security logic should
-not drift between normal execution and recovery.
+Compare the current mostly-single-candidate architecture with approaches such as:
 
-Required flow:
+* one candidate
+* self-consistency
+* multiple samples from one prompt
+* different reasoning prompts
+* Divide-and-Conquer generation
+* Skeleton/Plan generation
+* retrieved-example / ICL generation
+* multiple different models
+* execution-result clustering
 
-```text
-agent diagnostic SQL
-        |
-        v
-existing validate_sql()
-        |
-validation.tables subset of approved tables
-        |
-diagnostic row/time limits
-        |
-read-only execution
-```
+Determine whether conditional multi-candidate generation would improve this project.
 
-Acceptance criteria:
+Do NOT simply recommend generating many candidates for every query.
 
-- Normal and diagnostic SQL share the same AST safety rules.
-- Diagnostic SQL rejects writes, DDL, administrative commands, locks, `MERGE`, `SELECT INTO`,
-  multiple statements and non-query roots.
-- Recovery adds only the stricter table allowlist and diagnostic resource limits.
+Design a difficulty/uncertainty gate so:
 
-### 4. Enforce the PostgreSQL recovery timeout
+* simple queries use one candidate
+* ambiguous/complex queries may use multiple candidates
+* extra LLM/database cost is incurred only when justified.
 
-`PostgresRegistry.execute(..., timeout_seconds=...)` currently discards the supplied timeout and
-uses a fixed five-second statement timeout. A requested two-second diagnostic probe can therefore
-violate the recovery budget.
+6. COST
 
-Acceptance criteria:
+Analyze the current cost structure.
 
-- PostgreSQL sets `SET LOCAL statement_timeout` from the bounded `timeout_seconds` argument.
-- The configured value cannot exceed the normal database ceiling.
-- A slow diagnostic query is cancelled within the expected tolerance.
+Estimate what determines:
 
-### 5. Separate tool-call and reasoning-call budgets
+* input tokens
+* output tokens
+* number of LLM calls
+* recovery probability
+* latency
+* database execution cost
 
-Four loop iterations cannot support four tool calls plus a final model decision. The fourth tool can
-run without a remaining model turn to interpret its result.
+Propose a pre-generation cost/risk estimator.
 
-Use explicit constants:
+Show how the project could predict:
 
-```text
-MAX_RECOVERY_TOOL_CALLS = 3
-MAX_RECOVERY_MODEL_CALLS = 4
-MAX_DIAGNOSTIC_ROWS = 20
-MAX_DATABASE_PROBES = 8
-```
+expected_llm_cost
+expected_latency
+expected_repair_probability
+expected_database_cost
 
-Three tools are sufficient for the intended workflow and leave one final reasoning call.
+before expensive execution.
 
-## P1: make evaluation and telemetry trustworthy
+7. DATABASE AND SECURITY
+   Review:
 
-### 6. Account for all recovery work
+* SQL read-only guarantees
+* SQLGlot validation
+* SQLite security
+* PostgreSQL security
+* query timeout behavior
+* expensive query protection
+* SQL injection / unsafe SQL risks
+* DB permissions
+* concurrent query risks
 
-Record every reasoning call and token, every tool and database probe, total recovery latency,
-fallback usage, budget exhaustion and estimated model cost when pricing is configured. The API
-response token total must include recovery tokens for failure, correctness, zero-row and NULL paths.
+Identify anything that is safe in a benchmark environment but unsafe in production.
 
-### 7. Preserve duplicate multiplicity in every benchmark
+8. BUG HUNTING
 
-`benchmark.compare_sql()` currently compares `set(predicted) == set(gold)`, so `[A, A, B]` and
-`[A, B]` are incorrectly equivalent. Use the same `Counter`-based comparison already used by the
-newer hard-query benchmarks. Duplicate inflation caused by join fanout must fail equivalence.
+Do a real code review.
 
-### 8. Remove failed dense retrieval from RRF
+Find:
 
-When FastEmbed fails, all dense scores become zero but still receive ranks because dense ranking is
-calculated with `positive_only=False`. An unavailable retriever must contribute no RRF score:
+* actual bugs
+* incorrect wiring
+* configuration drift
+* dead code
+* incorrect assumptions
+* timeout bugs
+* race/concurrency issues
+* memory leaks
+* inconsistent interfaces
+* benchmark bugs
+* evaluation bugs
+* provider/model routing errors
+* mismatches between tests and production behavior
 
-```text
-dense retrieval succeeds -> include dense ranks
-dense retrieval fails    -> dense_ranks = {}
-```
+For every finding provide:
 
-BM25 and value matching remain deterministic fallbacks.
+Severity: P0 / P1 / P2 / P3
+File:
+Relevant function/class:
+Problem:
+Why it matters:
+Recommended fix:
 
-## P2: operational consistency
+Do not invent bugs. Distinguish confirmed bugs from suspected risks.
 
-### 9. Expose configured PostgreSQL databases in Query Room
 
-The backend lists configured PostgreSQL databases, but the web application filters the selector to
-SQLite. Display every configured database and retain its dialect in the submitted request.
 
-### 10. Bound process-local state
 
-Completed, failed and cancelled jobs remain indefinitely in process-local dictionaries. Add TTL/LRU
-cleanup for jobs and conversations. Durable shared state remains a later production requirement.
 
-### 11. Clarify configuration semantics
+11. COMPARE WITH STRONG TEXT-TO-SQL SYSTEMS
 
-- `TEXT2SQL_HISTORY_ENABLED=false` controls examples sent to Model 2, not every use of successful
-  history in schema ranking.
-- A context token budget is an estimate, not a hard tokenizer-enforced ceiling.
-- Date format is supplied when an observed format exists; missing profile coverage is not currently
-  a generation blocker.
+Using current publicly available information if internet access is available, compare this architecture with strong systems such as:
 
-## Explicitly retained product decision
+DeepEye-SQL
+XiYan-SQL
+SIRIUS-SQL
+Agentar-Scale-SQL
+and other relevant current systems.
 
-Do not restore pre-generation categorical/date rejection. Before Model 2, profile values and date
-metadata remain advisory examples. Actual value existence is checked by the recovery agent only
-after an anomaly or during correctness review.
+Do not compare only leaderboard scores.
 
-Known consequence: if Model 2 silently replaces an explicit value and the altered query returns a
-normal-looking result, anomaly recovery may not activate. Preserve explicit literals in the prompt,
-measure this failure mode, and expose correctness review; never treat sampled profile values as an
-exhaustive domain.
+Compare architecture in terms of:
 
-## Test gate
+semantic accuracy
+schema linking
+candidate diversity
+verification
+business semantics
+cost
+latency
+database load
+security
+explainability
+production readiness.
 
-Add tests for:
+Identify specific ideas worth borrowing and ideas that should NOT be copied.
 
-- agent failure triggers fallback only afterward;
-- three tools still allow a final decision;
-- `INFORM` and `ESCALATE` stop retries;
-- `REPAIR` performs exactly one focused regeneration;
-- diagnostic SQL rejects everything blocked by the main validator;
-- outside-table probes are rejected;
-- PostgreSQL diagnostic timeout is enforced;
-- telemetry includes all reasoning calls, tokens, probes and latency;
-- result equivalence preserves duplicates;
-- failed dense retrieval contributes no RRF rank;
-- configured PostgreSQL databases appear in the web selector.
 
-## Recommended implementation order
+14. FINAL VERDICT
 
-1. Lazy deterministic fallback and accurate telemetry.
-2. Real `REPAIR` / `INFORM` / `ESCALATE` transitions.
-3. Shared SQL validator and PostgreSQL timeout enforcement.
-4. Explicit three-tool/four-model-call budget.
-5. Benchmark multiplicity and dense-RRF fixes.
-6. PostgreSQL UI exposure and process-state cleanup.
+At the end provide:
 
-Do not add more tools, another model, a vector database or proactive agent routing until these
-correctness and observability gaps are closed and measured.
+A. Architecture score /10
+B. SQL accuracy potential /10
+C. Retrieval quality /10
+D. Cost efficiency /10
+E. Production readiness /10
+F. Code quality /10
+G. Security /10
+H. Novelty /10
+
+Then answer:
+
+"What are the 5 biggest reasons this system will fail on difficult real-world questions?"
+
+"What are the 5 strongest aspects of this architecture?"
+
+"What are the 10 highest-impact improvements?"
+
+Rank improvements by:
+
+Impact
+Engineering effort
+Token/cost increase
+Expected accuracy gain
+Production value
+
+Finally give me a recommended V6 architecture.
+
+Keep the existing design philosophy where it makes sense:
+
+DETERMINISTIC FIRST
+↓
+RETRIEVE ONLY NECESSARY CONTEXT
+↓
+MINIMIZE TOKEN USAGE
+↓
+ONE MODEL CALL WHEN POSSIBLE
+↓
+ESCALATE COMPUTE ONLY WHEN UNCERTAINTY JUSTIFIES IT
+↓
+BOUNDED RECOVERY
+↓
+AUDITABLE / PRODUCTION-SAFE BEHAVIOR
+
+Do not recommend adding agents simply because agents are fashionable.
+
+For every important conclusion, cite the exact source file/function or repository evidence that led you to that conclusion.
+
+Clearly distinguish:
+CONFIRMED FROM CODE
+INFERENCE
+RECOMMENDATION

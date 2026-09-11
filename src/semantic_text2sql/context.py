@@ -106,7 +106,7 @@ def build_context_plan(
         ]
     formulas = [item.id for item in contract.structural_formulas]
     relationships = _relationships(schema, profile, tables)
-    requirements = _requirements(schema, profile, contract, relationships)
+    requirements = _requirements(schema, profile, contract, relationships, question)
     if context_request is not None:
         requirements.extend(_planner_requirements(context_request, profile, relationships))
     missing = [
@@ -359,6 +359,7 @@ def _requirements(
     profile: DatabaseProfile | None,
     contract: SemanticContract,
     relationships: list[ContextRelationship],
+    question: str,
 ) -> list[ContextRequirement]:
     requirements: list[ContextRequirement] = []
     selected_columns = {
@@ -397,6 +398,19 @@ def _requirements(
             )
     for name, item in profiles.items():
         if name in selected_columns and item.semantic_type in {"date", "datetime"}:
+            temporal_question = any(
+                token in question.casefold()
+                for token in (
+                    "date",
+                    "day",
+                    "week",
+                    "month",
+                    "quarter",
+                    "year",
+                    "today",
+                    "yesterday",
+                )
+            )
             requirements.append(
                 ContextRequirement(
                     kind="PHYSICAL_DATE_FORMAT",
@@ -404,11 +418,17 @@ def _requirements(
                     required_by="selected date or datetime column",
                     resolved=bool(item.observed_format),
                     source="offline profile" if item.observed_format else None,
+                    priority="HARD" if temporal_question else "SOFT",
                 )
             )
     if len(schema.tables) > 1:
-        has_join_path = any(item.state != "UNRESOLVED" for item in relationships)
-        has_cardinality = has_join_path
+        selected_tables = {table.name for table in schema.tables}
+        known_edges = [item for item in relationships if item.state != "UNRESOLVED"]
+        connected = _tables_connected(selected_tables, known_edges)
+        has_join_path = connected
+        has_cardinality = connected and all(
+            item.join_cardinality != "UNKNOWN" for item in known_edges
+        )
         requirements.extend(
             [
                 ContextRequirement(
@@ -442,6 +462,25 @@ def _requirements(
             )
     unique = {(item.kind, item.target, item.required_by): item for item in requirements}
     return list(unique.values())
+
+
+def _tables_connected(tables: set[str], relationships: list[ContextRelationship]) -> bool:
+    if len(tables) < 2:
+        return True
+    graph: dict[str, set[str]] = {table: set() for table in tables}
+    for relationship in relationships:
+        if relationship.left_table in tables and relationship.right_table in tables:
+            graph[relationship.left_table].add(relationship.right_table)
+            graph[relationship.right_table].add(relationship.left_table)
+    visited: set[str] = set()
+    pending = [next(iter(tables))]
+    while pending:
+        table = pending.pop()
+        if table in visited:
+            continue
+        visited.add(table)
+        pending.extend(graph[table] - visited)
+    return visited == tables
 
 
 def _planner_requirements(

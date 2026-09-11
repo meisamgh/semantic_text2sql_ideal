@@ -64,22 +64,36 @@ def test_health_endpoint() -> None:
     assert response.json() == {"status": "online"}
 
 
-def test_justdowork_catalog_matches_gateway_and_requires_verified_enablement(
-    monkeypatch,
-) -> None:  # type: ignore[no-untyped-def]
-    monkeypatch.setenv("JUSTDOWORK_API_KEY", "configured-key")
-    monkeypatch.delenv("JUSTDOWORK_ENABLED", raising=False)
+def test_model_catalog_contains_only_agentrouter_and_groq(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("AGENTROUTER_API_KEY", "configured-key")
 
     options = TestClient(create_app()).get("/api/models").json()
-    justdowork = [item for item in options if item["provider"] == "justdowork"]
-
-    assert [item["model"] for item in justdowork] == [
+    assert {item["provider"] for item in options} == {"agentrouter", "groq"}
+    agentrouter = [item for item in options if item["provider"] == "agentrouter"]
+    assert [item["model"] for item in agentrouter] == [
         "gpt-5.6-sol",
-        "gpt-5.6-luna",
-        "gpt-5.6-terra",
+        "glm-5.3",
+        "deepseek-v4-flash",
+        "claude-opus-5",
+        "claude-opus-4-8",
     ]
-    assert all(item["configured"] is False for item in justdowork)
-    assert all("not been verified" in item["unavailable_reason"] for item in justdowork)
+    assert all(item["configured"] is True for item in agentrouter)
+
+
+def test_production_api_rejects_models_outside_catalog() -> None:
+    response = TestClient(create_app()).post(
+        "/api/chat",
+        json={
+            "session_id": "unsupported-model",
+            "db_id": "books",
+            "message": "Count books",
+            "provider": "agentrouter",
+            "model": "old-model",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "not allowed" in response.json()["detail"]
 
 
 def test_public_post_surface_contains_only_current_workflow() -> None:
@@ -87,6 +101,15 @@ def test_public_post_surface_contains_only_current_workflow() -> None:
     post_paths = {route.path for route in app.routes if "POST" in getattr(route, "methods", set())}
 
     assert post_paths == {"/api/check", "/api/chat", "/api/chat/jobs"}
+
+
+def test_public_check_endpoint_does_not_execute_sql_by_default() -> None:
+    response = TestClient(create_app()).post(
+        "/api/check",
+        json={"db_id": "books", "sql": "SELECT 1", "execute": True},
+    )
+
+    assert response.status_code == 403
 
 
 def test_web_chat_application_is_served() -> None:
@@ -123,6 +146,8 @@ def test_web_chat_application_is_served() -> None:
     assert 'class="human-review-editor"' not in page.text
     assert '"Enter another ID"' in script.text
     assert "Enter the replacement ID in the chat" in script.text
+    assert 'item.dialect === "sqlite"' not in script.text
+    assert "`${item.db_id} (${item.dialect})`" in script.text
 
     sql_position = page.text.index('class="sql-panel"')
     result_position = page.text.index('class="result-panel"')
@@ -137,11 +162,14 @@ def test_chat_request_accepts_independent_context_and_sql_models() -> None:
         message="Count the books",
         provider="agentrouter",
         model="gpt-5.6-sol",
-        context_provider="ollama",
-        context_model="qwen3.5:9b",
+        context_provider="groq",
+        context_model="qwen/qwen3.6-27b",
     )
 
-    assert (request.context_provider, request.context_model) == ("ollama", "qwen3.5:9b")
+    assert (request.context_provider, request.context_model) == (
+        "groq",
+        "qwen/qwen3.6-27b",
+    )
     assert (request.provider, request.model) == ("agentrouter", "gpt-5.6-sol")
 
 

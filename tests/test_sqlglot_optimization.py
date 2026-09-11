@@ -73,7 +73,7 @@ def test_normal_generation_runs_automatic_sqlglot_stage(tmp_path: Path) -> None:
             GenerateRequest(
                 db_id=db_id,
                 question="How many orders?",
-                provider="ollama",
+                provider="agentrouter",
                 model="test",
                 execute=True,
             ),

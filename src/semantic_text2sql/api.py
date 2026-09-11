@@ -36,12 +36,12 @@ from semantic_text2sql.hybrid_retrieval import (
     LightGBMSchemaReranker,
 )
 from semantic_text2sql.llm import (
+    AgentRouterClaudeModel,
+    AgentRouterCodexModel,
+    AgentRouterModel,
     GroqSQLModel,
-    JustDoWorkSQLModel,
     ModelError,
-    OllamaSQLModel,
     RoutingSQLModel,
-    SotaSQLModel,
 )
 from semantic_text2sql.models import (
     CallLedgerEntry,
@@ -60,7 +60,7 @@ from semantic_text2sql.models import (
 )
 from semantic_text2sql.postgres import PostgresRegistry, postgres_databases_from_environment
 from semantic_text2sql.profiling import ProfileStore
-from semantic_text2sql.provider_registry import configured_model_options
+from semantic_text2sql.provider_registry import configured_model_options, supports_model
 from semantic_text2sql.service import TextToSQLService
 
 logger = logging.getLogger(__name__)
@@ -70,6 +70,7 @@ def create_app(
     agent: TextToSQLAgent | None = None,
     conversation_completers: dict[str, Any] | None = None,
 ) -> FastAPI:
+    enforce_model_catalog = agent is None
     postgres_databases = postgres_databases_from_environment()
     postgres = PostgresRegistry(postgres_databases) if postgres_databases else None
     sqlite = DatabaseRegistry(Path(os.environ.get("TEXT2SQL_DATABASE_ROOT", "data")))
@@ -82,33 +83,34 @@ def create_app(
             os.environ.get("TEXT2SQL_HISTORY_PATH", "benchmarks/data/bird_history_seed42_400.json")
         )
     )
-    ollama = OllamaSQLModel(os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434"))
+    agentrouter_key = os.environ.get("AGENTROUTER_API_KEY")
+    agentrouter_base_url = os.environ.get("AGENTROUTER_BASE_URL", "https://agentrouter.org")
+    agentrouter_timeout = float(os.environ.get("AGENTROUTER_TIMEOUT_SECONDS", "180"))
+    agentrouter = AgentRouterModel(
+        AgentRouterClaudeModel(
+            agentrouter_key,
+            agentrouter_base_url,
+            agentrouter_timeout,
+        ),
+        AgentRouterCodexModel(
+            agentrouter_key,
+            agentrouter_base_url,
+            agentrouter_timeout,
+        ),
+    )
     groq = GroqSQLModel(
         os.environ.get("GROQ_API_KEY"),
         os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
     )
-    justdowork = JustDoWorkSQLModel(
-        os.environ.get("JUSTDOWORK_API_KEY"),
-        os.environ.get("JUSTDOWORK_BASE_URL", "https://api.justwoker.icu/v1"),
-        float(os.environ.get("JUSTDOWORK_TIMEOUT_SECONDS", "120")),
-    )
-    sota = SotaSQLModel(
-        os.environ.get("SOTA_API_KEY"),
-        os.environ.get("SOTA_BASE_URL", "https://true-sota.com"),
-        float(os.environ.get("SOTA_TIMEOUT_SECONDS", "180")),
-    )
     active_agent = agent or TextToSQLAgent(
         sqlite,
-        RoutingSQLModel(ollama, justdowork, groq, justdowork, sota),
+        RoutingSQLModel(agentrouter, groq),
         postgres,
         profiles,
     )
     turn_completers = conversation_completers or {
-        "ollama": ollama,
-        "agentrouter": justdowork,
+        "agentrouter": agentrouter,
         "groq": groq,
-        "justdowork": justdowork,
-        "sota": sota,
     }
     app = FastAPI(
         title="Semantic Text-to-SQL v5",
@@ -291,10 +293,40 @@ def create_app(
 
     @app.post("/api/check", response_model=CheckResponse)
     async def check(request: CheckRequest) -> CheckResponse:
+        if (
+            request.execute
+            and os.environ.get("TEXT2SQL_ENABLE_ADMIN_CHECK_EXECUTION", "false").casefold()
+            != "true"
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Direct SQL execution is disabled. Use /api/chat or explicitly enable the "
+                    "administrative check endpoint."
+                ),
+            )
         return await asyncio.to_thread(active_agent.check, request)
 
     @app.post("/api/chat", response_model=ChatResponse)
     async def chat(request: ChatRequest) -> ChatResponse:
+        if enforce_model_catalog and not supports_model(request.provider, request.model):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Model {request.model!r} is not allowed for {request.provider}.",
+            )
+        if (
+            enforce_model_catalog
+            and request.context_provider
+            and request.context_model
+            and not supports_model(request.context_provider, request.context_model)
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Context model {request.context_model!r} is not allowed for "
+                    f"{request.context_provider}."
+                ),
+            )
         started = perf_counter()
         set_session_stage(request.session_id, "conversation")
         previous = conversations.get(request.session_id)
@@ -603,7 +635,8 @@ def create_app(
                     )
         else:
             message = _failure_message(generated)
-            failure_state = (previous or pending).model_copy(
+            prior_for_database = previous if has_matching_state else None
+            failure_state = (prior_for_database or pending).model_copy(
                 update={
                     "last_failure": message,
                     "last_failed_sql": generated.attempts[-1].sql if generated.attempts else None,
@@ -612,7 +645,9 @@ def create_app(
             try:
                 response_state = conversations.put(
                     failure_state,
-                    expected_version=previous.version if previous is not None else None,
+                    expected_version=(
+                        prior_for_database.version if prior_for_database is not None else None
+                    ),
                 )
             except ConversationConflict as exc:
                 raise HTTPException(status_code=409, detail=str(exc)) from exc

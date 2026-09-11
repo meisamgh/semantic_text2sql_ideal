@@ -109,7 +109,7 @@ class TextToSQLService:
         budget = RequestBudget(
             timeout_seconds=float(os.environ.get("TEXT2SQL_REQUEST_TIMEOUT_SECONDS", "180")),
             max_model_calls=int(os.environ.get("TEXT2SQL_REQUEST_MAX_MODEL_CALLS", "6")),
-            max_database_calls=int(os.environ.get("TEXT2SQL_REQUEST_MAX_DATABASE_CALLS", "12")),
+            max_database_calls=int(os.environ.get("TEXT2SQL_REQUEST_MAX_DATABASE_CALLS", "24")),
         )
         if progress:
             progress("retrieval")
@@ -122,7 +122,7 @@ class TextToSQLService:
         correctness_trace = None
         if correctness_review and previous_sql:
             correctness_trace = await RecoveryCoordinator(
-                RecoveryTools(database, db_id, schema, database_profile)
+                RecoveryTools(database, db_id, schema, database_profile, budget=budget)
             ).ainvestigate(
                 question=question,
                 failed_sql=previous_sql,
@@ -133,6 +133,7 @@ class TextToSQLService:
                 completer=self.agent.model,
                 provider=provider,
                 model=model,
+                budget=budget,
             )
             evidence = "\n\n".join(
                 item
@@ -316,7 +317,8 @@ class TextToSQLService:
         )
         try:
             generated = await budget.wait(
-                self.agent.generate(generation_request, progress=progress), kind="model"
+                self.agent.generate(generation_request, progress=progress, budget=budget),
+                kind="work",
             )
         except RequestBudgetExceeded as exc:
             generated = GenerateResponse(
@@ -344,7 +346,7 @@ class TextToSQLService:
                 progress("result_review")
             review_mode = "ZERO_RESULT" if generated.row_count == 0 else "NULL_RESULT"
             review_trace = await RecoveryCoordinator(
-                RecoveryTools(database, db_id, schema, database_profile)
+                RecoveryTools(database, db_id, schema, database_profile, budget=budget)
             ).ainvestigate(
                 question=question,
                 failed_sql=generated.sql or "",
@@ -359,9 +361,8 @@ class TextToSQLService:
                 completer=self.agent.model,
                 provider=provider,
                 model=generation_request.model,
+                budget=budget,
             )
-            budget.model_calls += review_trace.usage.llm_calls
-            budget.database_calls += review_trace.usage.database_probe_count
             generated = generated.model_copy(update={"recovery": review_trace})
             if (
                 review_trace.agent_action == "REPAIR"
@@ -384,7 +385,8 @@ class TextToSQLService:
                 )
                 try:
                     repaired = await budget.wait(
-                        self.agent.generate(repair_request, progress=progress), kind="model"
+                        self.agent.generate(repair_request, progress=progress, budget=budget),
+                        kind="work",
                     )
                 except RequestBudgetExceeded:
                     repaired = None
@@ -405,6 +407,17 @@ class TextToSQLService:
                         }
                     )
                     generated = repaired
+                else:
+                    generated = generated.model_copy(
+                        update={
+                            "accepted": False,
+                            "execution_status": "NOT_EXECUTED",
+                            "termination_reason": "attempt_limit",
+                            "rows": [],
+                            "columns": [],
+                            "row_count": 0,
+                        }
+                    )
         if correctness_trace is not None and generated.recovery is None:
             generated = generated.model_copy(update={"recovery": correctness_trace})
         generation_ms = round((perf_counter() - generation_started) * 1_000)
@@ -453,18 +466,22 @@ class TextToSQLService:
             for index, attempt in enumerate(generated.attempts)
         )
         if generated.recovery and generated.recovery.usage.llm_calls:
-            call_ledger.append(
+            call_ledger.extend(
                 CallLedgerEntry(
-                    component="recovery_reasoning",
+                    component=f"recovery_reasoning_{index + 1}",
                     kind="MODEL",
                     status="SUCCEEDED",
                     provider=str(provider),
                     requested_model=model,
                     effective_model=generation_request.model,
-                    input_tokens=generated.recovery.usage.token_usage.input_tokens,
-                    output_tokens=generated.recovery.usage.token_usage.output_tokens,
-                    latency_ms=generated.recovery.usage.latency_ms,
+                    input_tokens=(
+                        generated.recovery.usage.token_usage.input_tokens if index == 0 else None
+                    ),
+                    output_tokens=(
+                        generated.recovery.usage.token_usage.output_tokens if index == 0 else None
+                    ),
                 )
+                for index in range(generated.recovery.usage.llm_calls)
             )
         if execute and generated.attempts:
             call_ledger.extend(
@@ -479,13 +496,13 @@ class TextToSQLService:
                 if attempt.validation.valid or attempt.validation.code == "DATABASE_ERROR"
             )
         if generated.recovery and generated.recovery.usage.database_probe_count:
-            call_ledger.append(
+            call_ledger.extend(
                 CallLedgerEntry(
-                    component="recovery_probes",
+                    component=f"recovery_probe_{index + 1}",
                     kind="DATABASE",
                     status="SUCCEEDED",
-                    latency_ms=generated.recovery.usage.latency_ms,
                 )
+                for index in range(generated.recovery.usage.database_probe_count)
             )
         generated = generated.model_copy(
             update={
