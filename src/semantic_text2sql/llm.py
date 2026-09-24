@@ -1,4 +1,4 @@
-"""Mockable AgentRouter and Groq model-provider boundaries."""
+"""Mockable AgentRouter, Groq, and JustDoWork model-provider boundaries."""
 
 from __future__ import annotations
 
@@ -138,6 +138,89 @@ class GroqSQLModel:
             raise ModelError(f"The Groq request failed: {exc}") from exc
         if not isinstance(content, str) or not content.strip():
             raise ModelError("Groq returned no text output.")
+        return content, _token_usage(body.get("usage") or {})
+
+
+class JustDoWorkSQLModel:
+    """Anthropic Messages-compatible client for project-scoped JustDoWork models."""
+
+    def __init__(
+        self,
+        api_key: str | None,
+        base_url: str | None,
+        timeout: float = 120.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self.api_key = api_key
+        self.base_url = (base_url or "").rstrip("/")
+        self.timeout = timeout
+        self.transport = transport
+
+    async def generate(self, **kwargs: object) -> tuple[str, int, TokenUsage]:
+        from time import perf_counter
+
+        prompt = _prompt(
+            str(kwargs["question"]),
+            cast(str | None, kwargs.get("evidence")),
+            cast(SchemaInfo, kwargs["schema"]),
+            cast(StrategyHints, kwargs["strategy"]),
+            cast(Literal["sqlite", "postgres"], kwargs["dialect"]),
+            str(kwargs["profile_context"]),
+            cast(str | None, kwargs.get("previous_sql")),
+            cast(str | None, kwargs.get("feedback")),
+            cast(list[str], kwargs["rejected_shapes"]),
+            cast(Literal["reasoning", "icl", "alternative"], kwargs["generation_style"]),
+        )
+        started = perf_counter()
+        content, usage = await self.complete_detailed(str(kwargs["model"]), prompt)
+        return content, round((perf_counter() - started) * 1_000), usage
+
+    async def complete(self, model: str, prompt: str) -> str:
+        content, _ = await self.complete_detailed(model, prompt)
+        return content
+
+    async def complete_detailed(self, model: str, prompt: str) -> tuple[str, TokenUsage]:
+        if not self.api_key:
+            raise ModelError("JUSTDOWORK_API_KEY is not configured.")
+        if not self.base_url:
+            raise ModelError("JUSTDOWORK_BASE_URL is not configured.")
+        try:
+            async with httpx.AsyncClient(
+                base_url=self.base_url,
+                timeout=self.timeout,
+                transport=self.transport,
+            ) as client:
+                response = await client.post(
+                    "messages",
+                    headers={
+                        "x-api-key": self.api_key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "max_tokens": 4_000,
+                        "temperature": 0,
+                    },
+                )
+                response.raise_for_status()
+                body = response.json()
+                blocks = body["content"]
+                content = "\n".join(
+                    str(block["text"])
+                    for block in blocks
+                    if block.get("type") == "text" and block.get("text")
+                )
+        except httpx.HTTPStatusError as exc:
+            detail = _response_detail(exc.response)
+            raise ModelError(
+                f"The JustDoWork request failed: {detail or f'HTTP {exc.response.status_code}'}"
+            ) from exc
+        except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
+            raise ModelError(f"The JustDoWork request failed: {exc}") from exc
+        if not isinstance(content, str) or not content.strip():
+            raise ModelError("JustDoWork returned no text output.")
         return content, _token_usage(body.get("usage") or {})
 
 
@@ -570,10 +653,12 @@ class RoutingSQLModel:
         self,
         agentrouter: SQLModel,
         groq: GroqSQLModel,
+        justdowork: JustDoWorkSQLModel,
     ) -> None:
         self.providers: dict[str, SQLModel] = {
             "agentrouter": agentrouter,
             "groq": groq,
+            "justdowork": justdowork,
         }
 
     async def generate(

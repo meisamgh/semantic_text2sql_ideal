@@ -3,7 +3,8 @@ const sessionId = localStorage.getItem("queryRoomSession") || crypto.randomUUID(
 localStorage.setItem("queryRoomSession", sessionId);
 $("#sessionId").textContent = sessionId;
 
-const state = { busy: false, jobId: null, cancelled: false };
+const state = { busy: false, jobId: null, cancelled: false, currentQuestion: "", ready: false };
+const recentStorageKey = "queryRoomRecentQueries";
 const postSafetyOptimizationCodes = new Set([
   "OPTIMIZATION_NOT_FASTER",
   "OPTIMIZATION_CHANGED_RESULT",
@@ -31,11 +32,8 @@ async function initialize() {
     await api("/api/health");
     $("#healthStatus").classList.add("online");
     $("#healthStatus").lastChild.textContent = " Online";
-    const [databases, models] = await Promise.all([
-      api("/api/databases"),
-      api(`/api/models?refresh=${Date.now()}`, { cache: "no-store" }),
-    ]);
-    const preferredModel = models.find((item) => item.configured);
+    $("#connectionStatus").textContent = "API online";
+    const databases = await api("/api/databases");
     fillSelect(
       "#databaseSelect",
       databases.filter((item) => item.configured),
@@ -43,14 +41,155 @@ async function initialize() {
       (item) => `${item.db_id} (${item.dialect})`,
       null,
     );
+    await loadDatabaseSchema();
+    const models = await api(`/api/models?refresh=${Date.now()}`, { cache: "no-store" });
+    const preferredModel = models.find((item) => item.configured);
     const preferred = preferredModel && `${preferredModel.provider}|${preferredModel.model}`;
     fillContextSelect(models);
     fillSelect("#sqlModelSelect", models, (item) => `${item.provider}|${item.model}`, modelLabel, preferred);
+    state.ready = !!$("#databaseSelect").value && !!preferredModel;
+    $("#sendButton").disabled = !state.ready;
     if (!preferredModel) showError("No model can serve queries right now. Hover an entry in the model list to see why.");
+    renderRecentQueries();
   } catch (error) {
     $("#healthStatus").lastChild.textContent = " Offline";
+    $("#connectionStatus").textContent = "Connection issue";
     showError(error.message);
   }
+}
+
+let schemaRequest = 0;
+let browserTables = [];
+let browserRelationships = [];
+let selectedExploreTable = null;
+
+function setView(view, tableName = null) {
+  const explore = view === "explore";
+  $("#exploreView").hidden = !explore;
+  document.querySelectorAll(".workspace-only").forEach(element => { element.hidden = explore; });
+  document.querySelectorAll(".side-nav a[data-view]").forEach(link => {
+    link.classList.toggle("active", link.dataset.view === view);
+  });
+  if (tableName) {
+    selectedExploreTable = tableName;
+    $("#exploreSearch").value = "";
+  }
+  if (explore) renderExplore();
+  window.scrollTo({ top: 0, behavior: "instant" });
+}
+
+function renderExplore() {
+  const container = $("#exploreTables");
+  const relations = $("#exploreRelationships");
+  container.replaceChildren();
+  relations.replaceChildren();
+  const dbId = $("#databaseSelect").value;
+  const term = $("#exploreSearch").value.trim().toLowerCase();
+  const tables = browserTables.filter(table => table.name.toLowerCase().includes(term)
+    || table.columns.some(column => column.name.toLowerCase().includes(term)));
+  $("#exploreTitle").textContent = dbId ? `Explore ${dbId}` : "Explore database";
+  $("#exploreSummary").textContent = dbId
+    ? `${browserTables.length} tables · ${browserRelationships.length} relationships${term ? ` · ${tables.length} matching tables` : ""}`
+    : "Select a configured database in Connections to inspect its schema.";
+  if (!tables.length) {
+    const empty = document.createElement("p");
+    empty.className = "explore-empty";
+    empty.textContent = term ? "No tables or columns match this search." : "No tables are available.";
+    container.append(empty);
+  }
+  tables.forEach(table => {
+    const card = document.createElement("section");
+    card.className = "explore-table-card";
+    if (table.name === selectedExploreTable) card.classList.add("selected");
+    const header = document.createElement("header");
+    const name = document.createElement("h3");
+    name.textContent = table.name;
+    const count = document.createElement("span");
+    count.textContent = `${table.columns.length} columns`;
+    header.append(name, count);
+    const columns = document.createElement("ul");
+    table.columns.forEach(column => {
+      const row = document.createElement("li");
+      const label = document.createElement("strong");
+      label.textContent = column.name;
+      const meta = document.createElement("span");
+      meta.textContent = `${column.type}${column.primary_key ? " · Primary key" : ""}`;
+      row.append(label, meta);
+      columns.append(row);
+    });
+    card.append(header, columns);
+    container.append(card);
+  });
+  const visibleTables = new Set(tables.map(table => table.name));
+  const matchingRelations = browserRelationships.filter(item =>
+    !term || visibleTables.has(item.from_table) || visibleTables.has(item.to_table));
+  if (!matchingRelations.length) {
+    const empty = document.createElement("p");
+    empty.className = "explore-empty";
+    empty.textContent = term
+      ? "No relationships connect the matching tables. Clear the search to see all relationships."
+      : "No declared or profiled relationships are available for this database.";
+    relations.append(empty);
+  }
+  matchingRelations.forEach(item => {
+    const row = document.createElement("div");
+    row.className = "explore-relationship";
+    const path = document.createElement("strong");
+    path.textContent = `${item.from_table}.${item.from_column} → ${item.to_table}.${item.to_column}`;
+    const source = document.createElement("span");
+    source.textContent = item.source === "declared_foreign_key" ? "Declared foreign key"
+      : `Profile inference${item.cardinality ? ` · ${item.cardinality.replaceAll("_", " ").toLowerCase()}` : ""}`;
+    row.append(path, source);
+    relations.append(row);
+  });
+}
+
+async function loadDatabaseSchema() {
+  const request = ++schemaRequest;
+  const dbId = $("#databaseSelect").value;
+  browserTables = [];
+  browserRelationships = [];
+  selectedExploreTable = null;
+  $("#exploreSearch").value = "";
+  if ($("#databaseTables")) $("#databaseTables").replaceChildren();
+  if ($("#schemaCount")) $("#schemaCount").textContent = dbId || "No database selected";
+  if ($("#schemaStatus")) $("#schemaStatus").textContent = dbId ? "Loading table and column names…"
+    : "No database files were found. Check TEXT2SQL_DATABASE_ROOT in the project's .env file, then restart the server. Profiles alone do not contain queryable data.";
+  if (!dbId) { renderExplore(); return; }
+  try {
+    const schema = await api(`/api/databases/${encodeURIComponent(dbId)}/schema`);
+    if (request !== schemaRequest) return;
+    browserTables = schema.tables || [];
+    browserRelationships = schema.relationships || [];
+    if ($("#schemaCount")) $("#schemaCount").textContent = `${dbId} · ${browserTables.length} tables`;
+    renderDatabaseTables();
+    renderExplore();
+  } catch (error) {
+    if (request === schemaRequest && $("#schemaStatus")) $("#schemaStatus").textContent = `Could not load tables: ${error.message}. Use Refresh to retry.`;
+    renderExplore();
+  }
+}
+
+function renderDatabaseTables() {
+  if (!$("#schemaSearch") || !$("#databaseTables")) return;
+  const term = $("#schemaSearch").value.trim().toLowerCase();
+  const container = $("#databaseTables");
+  container.replaceChildren();
+  const matches = browserTables.filter(table => table.name.toLowerCase().includes(term)
+    || table.columns.some(column => column.name.toLowerCase().includes(term)));
+  $("#schemaStatus").textContent = matches.length
+    ? "Select a table to inspect its columns and relationships in Explore."
+    : "No tables match your search.";
+  matches.forEach(table => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "database-table-link";
+    button.textContent = `${table.name} · ${table.columns.length} columns`;
+    button.addEventListener("click", () => {
+      setView("explore", table.name);
+    });
+    container.append(button);
+  });
 }
 
 function fillSelect(selector, items, valueKey, labelKey, preferred) {
@@ -63,6 +202,17 @@ function fillSelect(selector, items, valueKey, labelKey, preferred) {
     option.disabled = item.configured === false;
     if (item.unavailable_reason) option.title = item.unavailable_reason;
     option.selected = option.value === preferred;
+    select.append(option);
+  }
+  if (!select.value) {
+    const first = [...select.options].find(option => !option.disabled);
+    if (first) select.value = first.value;
+  }
+  if (!items.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No configured databases";
+    option.disabled = true;
     select.append(option);
   }
 }
@@ -187,6 +337,8 @@ function renderSqlTokens(element, sql) {
 
 function appendUser(message) {
   $("#emptyState").hidden = true;
+  state.currentQuestion = message;
+  saveRecentQuery(message);
   const article = document.createElement("article");
   article.className = "message user-message";
   const bubble = document.createElement("div");
@@ -227,15 +379,23 @@ function appendAssistant(body, elapsed) {
   const failureSummary = rejectedAttempts.length
     ? `${rejectedAttempts.length} candidate${rejectedAttempts.length === 1 ? " was" : "s were"} rejected; details are available under Issues.`
     : "";
-  const responseMessage = body.explanation || body.message || "";
+  const responseMessage = body.explanation || body.presentation?.summary || body.message || "";
   fragment.querySelector(".response-note").textContent = [responseMessage, failureSummary].filter(Boolean).join(" ");
+  renderResultChart(fragment.querySelector(".answer-pane"), body.presentation, generation);
+  fragment.querySelector(".response-heading h3").textContent = modelUnavailable
+    ? "Model unavailable" : explanatory ? "Explanation" : accepted ? "Answer" : "Query issue";
+  fragment.querySelector(".response-status-icon").textContent = accepted ? "✓" : "!";
+  fragment.querySelector(".response-status-icon").classList.toggle("error", !accepted);
   renderTokenAccounting(fragment, body, generation);
+  renderPipelineDetails(fragment, timings, body, generation);
   if (Object.keys(timings).length) {
     fragment.querySelector(".response-note").title = `Routing ${timings.routing || 0} ms · Planning ${timings.planning || 0} ms · Generation/validation/execution ${timings.generation_validation_execution || 0} ms`;
   }
   if (explanatory || modelUnavailable || body.clarification_required) {
     fragment.querySelector(".sql-panel").hidden = true;
     fragment.querySelector(".result-panel").hidden = true;
+    fragment.querySelector('[data-tab="sql"]').hidden = true;
+    fragment.querySelector('[data-tab="result"]').hidden = true;
   }
   if (body.clarification_required) {
     fragment.querySelector(".feedback-panel").hidden = true;
@@ -250,9 +410,12 @@ function appendAssistant(body, elapsed) {
   });
   renderTable(fragment.querySelector(".table-wrap"), generation.columns || [], generation.rows || []);
   fragment.querySelector(".row-count").textContent = `${generation.row_count || 0} rows${generation.truncated ? " · truncated" : ""}`;
+  fragment.querySelector(".csv-button").addEventListener("click", () => {
+    downloadCsv(generation.columns || [], generation.rows || []);
+  });
   renderModelContext(fragment, body, generation);
   renderHumanReview(fragment, body.human_review);
-  setupTechnicalTabs(fragment, rejectedAttempts.length);
+  setupTechnicalTabs(fragment, rejectedAttempts.length, body.presentation ? "answer" : accepted && !explanatory && generation.columns?.length ? "result" : "answer");
   $("#messages").append(fragment);
   const correctionButton = article?.querySelector(".correction-button");
   correctionButton?.addEventListener("click", () => {
@@ -263,6 +426,9 @@ function appendAssistant(body, elapsed) {
   });
   article?.querySelector(".correctness-button")?.addEventListener("click", () => {
     send("Check whether the previous SQL and result are correct.");
+  });
+  article?.querySelector(".optimize-button")?.addEventListener("click", () => {
+    send("Optimize the previous SQL without changing its result.");
   });
   article?.scrollIntoView({ behavior: "smooth", block: "end" });
 }
@@ -316,14 +482,15 @@ function sumKnown(values) {
 }
 
 function renderTokenAccounting(fragment, body, generation) {
-  const panel = fragment.querySelector(".token-panel");
+  const panel = fragment.querySelector(".token-card");
   const grid = fragment.querySelector(".token-grid");
   const note = fragment.querySelector(".token-note");
   if (!panel || !grid || !note) return;
 
   const attempts = generation.attempts || [];
   const telemetry = generation.telemetry || {};
-  const total = usageTotal(body.token_usage || generation.token_usage);
+  const usage = body.token_usage || generation.token_usage || {};
+  const total = usageTotal(usage);
   const context = telemetry.planner_call_used ? usageTotal(telemetry.planner_call) : 0;
   const attemptTotals = attempts.map((attempt) => usageTotal(attempt.token_usage));
   const sql = attempts.length ? sumKnown(attemptTotals) : 0;
@@ -334,15 +501,23 @@ function renderTokenAccounting(fragment, body, generation) {
     : Math.max(0, total - context - sql);
   const cacheRead = body.token_usage?.cache_read_tokens ?? generation.token_usage?.cache_read_tokens ?? null;
   const cacheCreation = body.token_usage?.cache_creation_tokens ?? generation.token_usage?.cache_creation_tokens ?? null;
+  const sentTokens = telemetry.selected_model_context_tokens ?? null;
+  const avoidedTokens = telemetry.pruned_tokens ?? null;
+  const fullTokens = sentTokens == null || avoidedTokens == null ? null : sentTokens + avoidedTokens;
+  const reduction = fullTokens ? Math.round((avoidedTokens / fullTokens) * 1000) / 10 : null;
+  const reductionBox = fragment.querySelector(".token-reduction");
+  if (reductionBox) {
+    reductionBox.innerHTML = `<div class="token-reduction-grid"><div><strong>${fullTokens == null ? "—" : fullTokens.toLocaleString()}</strong><small>Full schema estimate</small></div><b>→</b><div><strong>${sentTokens == null ? "—" : sentTokens.toLocaleString()}</strong><small>Sent to LLM</small></div></div><div class="reduction-pill">${reduction == null ? "Reduction unavailable" : `${reduction}% fewer context tokens`}</div>`;
+  }
 
   const rows = [
     ["Total provider tokens", total],
-    ["Conversation resolver", conversation],
+    ["Other calls (resolver / recovery / presentation)", conversation],
     ["Context model", context],
     ["SQL attempts", sql],
     ["Discarded-attempt tokens", wasted],
-    ["Model context estimate", telemetry.selected_model_context_tokens ?? null],
-    ["Tokens avoided by pruning", telemetry.pruned_tokens ?? null],
+    ["Input tokens", usage.input_tokens ?? null],
+    ["Output tokens", usage.output_tokens ?? null],
     ["Cache read", cacheRead],
     ["Cache creation", cacheCreation],
   ];
@@ -381,8 +556,11 @@ function renderAttempts(fragment, attempts) {
   const list = fragment.querySelector(".attempts-list");
   const summary = fragment.querySelector(".attempts-summary");
   const visibleAttempts = attempts.filter((attempt) => attemptOutcome(attempt) !== "passed");
-  if (!panel || !list || !summary || !visibleAttempts.length) {
-    if (panel) panel.hidden = true;
+  if (!panel || !list || !summary) return;
+  if (!visibleAttempts.length) {
+    summary.textContent = attempts.length
+      ? `${attempts.length} attempt${attempts.length === 1 ? "" : "s"} passed validation.`
+      : "No SQL validation attempt was required for this response.";
     return;
   }
 
@@ -424,29 +602,25 @@ function renderAttempts(fragment, attempts) {
   });
 }
 
-function setupTechnicalTabs(fragment, issueCount) {
-  const panel = fragment.querySelector(".technical-panel");
-  if (!panel) return;
-  const issueTab = panel.querySelector('[data-tab="issues"]');
-  if (!issueCount) issueTab.hidden = true;
-  else {
-    issueTab.classList.add("has-issues");
-    issueTab.textContent = `Issues · ${issueCount}`;
-  }
+function setupTechnicalTabs(fragment, issueCount, initialTab = "answer") {
+  const article = fragment.querySelector(".assistant-message");
+  if (!article) return;
+  const validationTab = article.querySelector('[data-tab="validation"]');
+  validationTab.textContent = issueCount ? `Validation · ${issueCount}` : "Validation";
+  validationTab.classList.toggle("has-issues", issueCount > 0);
 
   const activate = (name) => {
-    panel.querySelectorAll(".technical-tab").forEach((tab) => {
+    article.querySelectorAll(".response-tab").forEach((tab) => {
       tab.classList.toggle("active", tab.dataset.tab === name);
     });
-    panel.querySelectorAll(".tab-pane").forEach((pane) => {
+    article.querySelectorAll(".response-pane").forEach((pane) => {
       pane.classList.toggle("active", pane.dataset.tabPanel === name);
     });
   };
-  panel.querySelectorAll(".technical-tab").forEach((tab) => {
+  article.querySelectorAll(".response-tab").forEach((tab) => {
     tab.addEventListener("click", () => activate(tab.dataset.tab));
   });
-  const initial = panel.querySelector('[data-tab="context"]')?.hidden ? "tokens" : "context";
-  activate(initial);
+  activate(initialTab);
 }
 
 function renderModelContext(fragment, body, generation) {
@@ -455,10 +629,19 @@ function renderModelContext(fragment, body, generation) {
   const modelContext = generation.model_context || null;
   if (!modelContext) {
     panel.hidden = true;
+    fragment.querySelector(".context-card").hidden = true;
+    fragment.querySelector('[data-tab="context"]').hidden = true;
     return;
   }
   renderSchemaVisual(fragment.querySelector(".schema-visual"), modelContext);
   fragment.querySelector(".context-json").textContent = JSON.stringify(modelContext, null, 2);
+  const tables = modelContext.tables || modelContext.execution_context?.tables || {};
+  const relationships = modelContext.relationships || [];
+  const columnCount = Object.values(tables).reduce((count, table) => {
+    const columns = table.columns || {};
+    return count + (Array.isArray(columns) ? columns.length : Object.keys(columns).length);
+  }, 0);
+  fragment.querySelector(".context-summary").textContent = `${Object.keys(tables).length} tables · ${columnCount} columns · ${relationships.length} relationships`;
 }
 
 function renderSchemaVisual(container, modelContext) {
@@ -554,6 +737,96 @@ function renderTable(container, columns, rows) {
   container.append(table);
 }
 
+function downloadCsv(columns, rows) {
+  if (!columns.length) return;
+  const escape = (value) => {
+    if (value === null || value === undefined) return "";
+    const text = String(value);
+    return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+  };
+  const csv = [columns, ...rows].map((row) => row.map(escape).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `query-result-${new Date().toISOString().slice(0, 10)}.csv`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+function renderPipelineDetails(fragment, timings, body, generation) {
+  const container = fragment.querySelector(".pipeline-details");
+  if (!container) return;
+  const stages = [
+    ["Conversation routing", timings.routing],
+    ["Context planning", timings.planning],
+    ["Generation / validation / execution", timings.generation_validation_execution],
+    ["Total request", timings.total],
+  ];
+  stages.forEach(([label, milliseconds]) => {
+    const row = document.createElement("div");
+    row.className = `pipeline-row${milliseconds == null ? " unmeasured" : ""}`;
+    const status = document.createElement("span");
+    status.textContent = label;
+    const duration = document.createElement("span");
+    duration.textContent = milliseconds == null ? "Not reported" : `${Number(milliseconds).toLocaleString()} ms`;
+    row.append(status, duration);
+    container.append(row);
+  });
+  if (body.progress_events?.length) {
+    const history = document.createElement("details");
+    history.className = "progress-history";
+    const summary = document.createElement("summary");
+    summary.textContent = "Request activity";
+    const list = document.createElement("ol");
+    body.progress_events.forEach(event => {
+      const item = document.createElement("li");
+      item.textContent = `${(event.elapsed_ms / 1000).toFixed(1)}s · ${progressLabels[event.stage] || event.stage}`;
+      list.append(item);
+    });
+    history.append(summary, list);
+    container.append(history);
+  }
+}
+
+function getRecentQueries() {
+  try { return JSON.parse(localStorage.getItem(recentStorageKey) || "[]"); }
+  catch { return []; }
+}
+
+function saveRecentQuery(question) {
+  const recent = getRecentQueries().filter((item) => item !== question);
+  recent.unshift(question);
+  try { localStorage.setItem(recentStorageKey, JSON.stringify(recent.slice(0, 7))); }
+  catch { /* Browser storage restrictions must not prevent submitting a question. */ }
+  renderRecentQueries();
+}
+
+function renderRecentQueries() {
+  const container = $("#recentQueries");
+  if (!container) return;
+  container.replaceChildren();
+  const recent = getRecentQueries();
+  if (!recent.length) {
+    const empty = document.createElement("p");
+    empty.className = "recent-empty";
+    empty.textContent = "Your recent questions will appear here.";
+    container.append(empty);
+    return;
+  }
+  recent.forEach((question) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "recent-item";
+    button.textContent = `◯  ${question}`;
+    button.title = question;
+    button.addEventListener("click", () => {
+      $("#messageInput").value = question;
+      $("#messageInput").focus();
+    });
+    container.append(button);
+  });
+}
+
 function showError(message) {
   appendAssistant({ operation: "ERROR", message, generation: { accepted: false, attempts: [] } }, 0);
 }
@@ -565,13 +838,39 @@ const pipelineStages = [
   ["grounding", "Grounding"],
   ["generation", "Generate SQL"],
   ["validation", "Validate"],
+  ["execution", "Run query"],
+  ["result_review", "Review result"],
   ["recovery", "Recovery"],
+  ["presentation", "Explain & chart"],
 ];
+
+const progressLabels = {
+  queued: "Waiting to start…",
+  presentation: "Preparing a plain-language answer and choosing a chart",
+  conversation: "Understanding your request",
+  retrieval: "Finding relevant tables and columns",
+  context_selection: "Selecting context with your context model",
+  grounding: "Verifying schema and metadata",
+  generation: "Generating SQL — waiting for the model",
+  validation: "Checking SQL safety",
+  optimization: "Checking a possible SQL optimization",
+  execution: "Running the read-only query",
+  result_review: "Reviewing an empty or NULL result",
+  recovery: "Investigating the query issue",
+  recovery_reasoning: "Recovery agent: deciding what evidence to check",
+  recovery_schema: "Recovery agent: inspecting schema",
+  recovery_values: "Recovery agent: checking actual database values",
+  recovery_probe: "Recovery agent: running a bounded read-only check",
+  recovery_checks: "Running bounded diagnostic checks",
+  recovery_decision: "Recovery agent: evaluating evidence",
+  completed: "Finished",
+};
 
 function appendProgress(provider, model, contextMode) {
   const article = document.createElement("article");
   article.className = "message assistant-message progress-message";
-  article.innerHTML = '<div class="avatar">Q</div><div class="message-content"><p class="progress-stage">Queued…</p><div class="pipeline-tracker"></div><p class="progress-detail"></p></div>';
+  article.setAttribute("role", "status");
+  article.innerHTML = '<div class="message-content"><div class="progress-heading"><span class="progress-spinner" aria-hidden="true"></span><p class="progress-stage">Queued…</p></div><p class="progress-detail"></p><div class="pipeline-tracker"></div><details class="progress-history"><summary>Activity log</summary><ol></ol></details></div>';
   const tracker = article.querySelector(".pipeline-tracker");
   pipelineStages.forEach(([stage, label]) => {
     if (stage === "context_selection" && contextMode === "retrieval") return;
@@ -594,35 +893,56 @@ async function waitForJob(jobId, progress) {
   while (true) {
     const job = await api(`/api/chat/jobs/${jobId}`);
     const seconds = ((job.elapsed_ms || 0) / 1000).toFixed(1);
-    updatePipeline(progress, job.stage, job.status);
-    const label = job.status === "queued" ? "Queued…" : "Building and executing your query…";
+    updatePipeline(progress, job.stage, job.status, job.events || []);
+    const label = progressLabels[job.stage] || "Processing your request";
     progress.querySelector(".progress-stage").textContent = label;
-    progress.querySelector(".progress-detail").textContent = `${seconds}s elapsed`;
-    if (job.status === "completed") return job.response;
+    progress.querySelector(".progress-detail").textContent = `${seconds}s elapsed · ${Number(seconds) > 20 ? "Still working. You can cancel without changing your previous result." : "You can cancel at any time."}`;
+    const log = progress.querySelector(".progress-history ol");
+    log.replaceChildren();
+    (job.events || []).forEach(event => {
+      const item = document.createElement("li");
+      item.textContent = `${(event.elapsed_ms / 1000).toFixed(1)}s · ${progressLabels[event.stage] || event.stage}`;
+      log.append(item);
+    });
+    if (job.status === "completed") return { ...job.response, progress_events: job.events || [] };
     if (job.status === "cancelled") throw new Error("Request cancelled.");
     if (job.status === "failed") throw new Error(job.error || "Chat job failed.");
     await wait(500);
   }
 }
 
-function updatePipeline(progress, currentStage, jobStatus) {
-  // Optimization and execution still run internally, but the compact user-facing
-  // path intentionally ends at validation.
-  const visibleStage = ["optimization", "execution"].includes(currentStage)
-    ? "validation"
-    : currentStage;
-  const activeIndex = pipelineStages.findIndex(([stage]) => stage === visibleStage);
+function visiblePipelineStage(stage) {
+  if (stage.startsWith("recovery_")) return "recovery";
+  if (stage === "optimization") return "validation";
+  return stage;
+}
+
+function updatePipeline(progress, currentStage, jobStatus, events = []) {
+  const visibleStage = visiblePipelineStage(currentStage);
+  const seen = new Set(JSON.parse(progress.dataset.seenStages || "[]"));
+  events.forEach((event) => seen.add(visiblePipelineStage(event.stage)));
+  if (progress.dataset.activeStage && progress.dataset.activeStage !== visibleStage) seen.add(progress.dataset.activeStage);
+  seen.add(visibleStage);
+  progress.dataset.activeStage = visibleStage;
+  progress.dataset.seenStages = JSON.stringify([...seen]);
   progress.querySelectorAll(".pipeline-tracker span").forEach((step) => {
-    const index = pipelineStages.findIndex(([stage]) => stage === step.dataset.stage);
-    step.classList.toggle("complete", jobStatus === "completed" || (activeIndex >= 0 && index < activeIndex));
-    step.classList.toggle("active", jobStatus !== "completed" && index === activeIndex);
+    const completed = seen.has(step.dataset.stage)
+      && (jobStatus === "completed" || step.dataset.stage !== visibleStage);
+    step.classList.toggle("complete", completed);
+    step.classList.toggle("active", jobStatus !== "completed" && step.dataset.stage === visibleStage);
   });
 }
 
 async function send(message, feedbackCategory = null) {
   if (state.busy || !message.trim()) return;
+  setView("workspace");
+  if (!state.ready) {
+    showError("A configured database and SQL model are required before asking a question.");
+    return;
+  }
   state.busy = true;
   $("#sendButton").disabled = true;
+  ["#databaseSelect", "#sqlModelSelect", "#contextModelSelect", "#resetButton"].forEach(id => { $(id).disabled = true; });
   appendUser(message.trim());
   const [provider, model] = $("#sqlModelSelect").value.split("|");
   const contextSelection = $("#contextModelSelect").value;
@@ -652,6 +972,7 @@ async function send(message, feedbackCategory = null) {
       }),
     });
     state.jobId = created.job_id;
+    if (state.cancelled) await api(`/api/chat/jobs/${created.job_id}`, { method: "DELETE" });
     const body = await waitForJob(created.job_id, progress);
     progress.remove();
     appendAssistant(body, (performance.now() - started) / 1000);
@@ -661,18 +982,22 @@ async function send(message, feedbackCategory = null) {
   } finally {
     state.busy = false;
     state.jobId = null;
-    $("#sendButton").disabled = false;
+    $("#sendButton").disabled = !state.ready;
+    ["#databaseSelect", "#sqlModelSelect", "#contextModelSelect", "#resetButton"].forEach(id => { $(id).disabled = false; });
     $("#cancelButton").hidden = true;
     $("#messageInput").focus();
   }
 }
 
 $("#cancelButton").addEventListener("click", async () => {
-  if (!state.jobId || state.cancelled) return;
+  if (state.cancelled) return;
   state.cancelled = true;
   $("#cancelButton").disabled = true;
   try {
-    await api(`/api/chat/jobs/${state.jobId}`, { method: "DELETE" });
+    if (state.jobId) await api(`/api/chat/jobs/${state.jobId}`, { method: "DELETE" });
+  } catch (error) {
+    state.cancelled = false;
+    showError(`Could not cancel: ${error.message}`);
   } finally {
     $("#cancelButton").disabled = false;
   }
@@ -693,6 +1018,25 @@ $("#messageInput").addEventListener("keydown", (event) => {
   }
 });
 
+document.querySelectorAll("[data-example]").forEach((button) => {
+  button.addEventListener("click", () => {
+    $("#messageInput").value = button.dataset.example;
+    $("#messageInput").focus();
+  });
+});
+
+$("#clearRecent").addEventListener("click", () => {
+  localStorage.removeItem(recentStorageKey);
+  renderRecentQueries();
+});
+
+document.addEventListener("keydown", (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+    event.preventDefault();
+    $("#resetButton").click();
+  }
+});
+
 $("#resetButton").addEventListener("click", async () => {
   try {
     await api("/api/chat", {
@@ -701,7 +1045,27 @@ $("#resetButton").addEventListener("click", async () => {
     });
     $("#messages").replaceChildren();
     $("#emptyState").hidden = false;
+    $("#messageInput").focus();
   } catch (error) { showError(error.message); }
 });
 
 initialize();
+
+$("#databaseSelect").addEventListener("change", loadDatabaseSchema);
+if ($("#refreshSchema")) $("#refreshSchema").addEventListener("click", loadDatabaseSchema);
+if ($("#schemaSearch")) $("#schemaSearch").addEventListener("input", renderDatabaseTables);
+$("#exploreSearch").addEventListener("input", renderExplore);
+document.querySelectorAll(".side-nav a[data-view]").forEach(link => {
+  link.addEventListener("click", event => {
+    event.preventDefault();
+    if (link.dataset.view === "connections") {
+      setView("workspace");
+      $("#connectionCard").scrollIntoView({ behavior: "smooth", block: "center" });
+      document.querySelectorAll(".side-nav a[data-view]").forEach(item => {
+        item.classList.toggle("active", item === link);
+      });
+    } else {
+      setView(link.dataset.view);
+    }
+  });
+});

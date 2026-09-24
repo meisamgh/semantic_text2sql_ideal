@@ -4,12 +4,14 @@ import asyncio
 import json
 
 import httpx
+import pytest
 
 from semantic_text2sql.llm import (
     AgentRouterClaudeModel,
     AgentRouterCodexModel,
     AgentRouterModel,
     GroqSQLModel,
+    JustDoWorkSQLModel,
     ModelError,
     _prompt,
 )
@@ -362,6 +364,43 @@ def test_groq_fails_without_api_key() -> None:
         assert "GROQ_API_KEY" in str(exc)
     else:
         raise AssertionError("Missing Groq key was accepted")
+
+
+def test_justdowork_uses_anthropic_messages_and_reports_usage() -> None:
+    requested_models: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/messages"
+        assert request.headers["x-api-key"] == "shared-key"
+        assert request.headers["anthropic-version"] == "2023-06-01"
+        payload = json.loads(request.content)
+        requested_models.append(payload["model"])
+        return httpx.Response(
+            200,
+            json={
+                "content": [{"type": "text", "text": "SELECT 1"}],
+                "usage": {"input_tokens": 3, "output_tokens": 1},
+            },
+        )
+
+    model = JustDoWorkSQLModel(
+        "shared-key",
+        "https://justdowork.test/v1",
+        transport=httpx.MockTransport(handler),
+    )
+    for name in ("claude-opus-5", "gpt-5.6-sol"):
+        sql, usage = asyncio.run(model.complete_detailed(name, "Return SQL only"))
+        assert sql == "SELECT 1"
+        assert usage.total_tokens == 4
+    assert requested_models == ["claude-opus-5", "gpt-5.6-sol"]
+
+
+def test_justdowork_fails_without_api_key() -> None:
+    with pytest.raises(ModelError, match="JUSTDOWORK_API_KEY"):
+        asyncio.run(JustDoWorkSQLModel(None, None).complete("claude-opus-5", "Return SQL"))
+
+    with pytest.raises(ModelError, match="JUSTDOWORK_BASE_URL"):
+        asyncio.run(JustDoWorkSQLModel("configured-key", None).complete("claude-opus-5", "SQL"))
 
 
 def test_groq_retries_transient_rate_limit() -> None:

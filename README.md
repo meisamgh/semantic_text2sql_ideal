@@ -58,6 +58,18 @@ The web application lets the user select the context method and SQL model indepe
 default retrieval-only path avoids the context-model call; Model 1 can be enabled for a controlled
 A/B comparison.
 
+### Client workspace
+
+- Browse and search database tables and columns before asking a question.
+- View the result table, formatted SQL, selected context and validation issues separately.
+- Follow live backend stages and a timestamped activity log, including recovery schema/value
+  checks and read-only probes. Timings are observations, not predicted completion percentages.
+- Cancel a running request; model/database selection stays locked until it finishes.
+
+If the table selector is empty, check `TEXT2SQL_DATABASE_ROOT` in `.env`. It must contain
+`<db_id>/<db_id>.sqlite`; profile JSON files do not replace the database files.
+Frontend rendering regressions can be checked with `node --test tests/frontend_rendering.cjs`.
+
 ## Agent-first recovery
 
 The agent is deliberately absent from successful routine queries. It activates only when additional
@@ -94,8 +106,9 @@ Validate + execute
 `inspect_schema` returns only approved structural metadata: selected tables and columns, physical
 and semantic types, keys, grain, relationships, NULL presence, date formats and temporal coverage.
 It does not return sampled categorical values as proof. The deterministic `inspect_values` tool
-checks identifier and category existence. The more general `query_database` tool is reserved for
-narrow analytical probes that value inspection cannot answer.
+checks identifier and category existence in `EXACT` mode; its separate `SEARCH` mode returns only
+advisory candidates and cannot prove existence or absence. The more general `query_database` tool
+is reserved for narrow analytical probes that value inspection cannot answer.
 
 The model chooses what it needs to inspect, but it never controls authorization. SQLGlot parsing,
 SELECT-only enforcement, database and table allowlists, timeouts, row limits and the three-tool-call
@@ -106,6 +119,9 @@ Every failure and tool observation receives a stable evidence ID. Before `REPAIR
 accepted, the agent must emit typed claims that cite IDs from that request's evidence ledger.
 Deterministic policy rejects missing, malformed or invented citations; data-grounding and
 correctness claims must cite live tool evidence rather than relying only on the failure message.
+It also enforces evidence compatibility: schema claims require matching schema output, value claims
+require a matching exact-value probe, filter mismatches require a zero-count probe, NULL causes
+require an observed NULL, and join effects require differing before/after counts.
 
 The three terminal decisions are:
 
@@ -165,14 +181,16 @@ business-correct. Returning rows is never treated as proof of correctness.
 
 ## Models
 
-The API uses only two provider transports:
+The API supports three project-scoped provider transports:
 
 - AgentRouter: `gpt-5.6-sol`, `glm-5.3`, `deepseek-v4-flash`, `claude-opus-5`,
   `claude-opus-4-8`
 - Groq: `qwen/qwen3.6-27b`
+- JustDoWork: `gpt-5.6-sol`, `claude-opus-5`
 
 Only configured models are available in the interface. Credentials remain server-side and are
-never returned to the browser.
+never returned to the browser. JustDoWork has no hard-coded endpoint: set both
+`JUSTDOWORK_API_KEY` and an endpoint you have verified in `JUSTDOWORK_BASE_URL`.
 
 ## Quick start
 
@@ -314,3 +332,16 @@ tests/                 unit and integration tests
 This repository is suitable for controlled analytics pilots where database access, providers and
 business definitions are governed. It is not presented as unrestricted autonomous production SQL,
 and it does not claim semantic correctness solely from successful execution.
+# Stakeholder answers and charts
+
+Successful query results now open in **Answer**, with a short plain-language explanation
+and a model-selected bar, time-series, or scatter chart when appropriate. Single values
+and unsuitable results stay as text. SQL and the exact result table remain accessible.
+
+Presentation uses the selected SQL model in one additional call, bounded by the shared
+request budget and a 15-second timeout. It sends the question, accepted SQL, column names,
+and up to 40 returned rows to that provider. Partial results are labelled. Chart values
+come directly from those rows; model-generated code is never executed. Token usage is
+included in the request total and call ledger. A failed presentation call leaves the
+query result intact. Generated explanations are interpretations, not correctness proofs;
+anomaly/recovery messages retain priority.

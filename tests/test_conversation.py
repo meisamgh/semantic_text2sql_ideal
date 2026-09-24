@@ -208,7 +208,7 @@ def test_ambiguous_turn_uses_client_selected_model(registry, monkeypatch) -> Non
         "model": DEFAULT_MODEL,
     }
     assert turn_model.calls[0][0] == DEFAULT_MODEL
-    assert "Previous accepted SQL" in turn_model.calls[0][1]
+    assert any("Previous accepted SQL" in prompt for _, prompt in turn_model.calls)
     assert "Correction category=wrong_aggregation" in corrected["resolved_question"]
     assert "Calculate the average per customer" in corrected["resolved_question"]
 
@@ -316,7 +316,7 @@ def test_chat_preserves_adds_removes_and_resets_context(registry, monkeypatch) -
     assert explanation["explanation"] == (
         "The query joins orders to customers to apply the country filter."
     )
-    assert "VERIFIED_SQL_FACTS" in explanation_model.calls[0][1]
+    assert any("VERIFIED_SQL_FACTS" in prompt for _, prompt in explanation_model.calls)
     assert explanation["token_usage"]["input_tokens"] == 20
     assert reset["operation"] == "RESET_CONTEXT"
     assert reset["state"] is None

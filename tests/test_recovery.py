@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from time import monotonic
 
 import pytest
 from sqlglot import parse_one
@@ -14,6 +15,30 @@ from semantic_text2sql.recovery import (
     _validated_claims,
     recovery_feedback,
 )
+from semantic_text2sql.runtime import RequestBudget
+
+
+def test_recovery_local_deadline_applies_with_shared_budget(registry) -> None:  # type: ignore[no-untyped-def]
+    class SlowReasoner:
+        async def complete_detailed(self, *args: object) -> tuple[str, TokenUsage]:
+            await asyncio.sleep(2)
+            return "{}", TokenUsage(input_tokens=1, output_tokens=1)
+
+    budget = RequestBudget(timeout_seconds=10)
+    tools = RecoveryTools(
+        registry, "shop", registry.inspect("shop"),
+        profile=None, max_recovery_seconds=0.1, budget=budget,
+    )
+    started = monotonic()
+    trace = asyncio.run(RecoveryCoordinator(tools).ainvestigate(
+        question="Check this result", failed_sql="SELECT SUM(amount) FROM orders",
+        failure_code="NULL_RESULT", failure_message="Unexpected NULL",
+        allowed_tables=["orders"], mode="NULL_RESULT",
+        completer=SlowReasoner(), model="test-model", budget=budget,
+    ))
+    assert monotonic() - started < 1
+    assert budget.model_calls == 1
+    assert trace.usage.llm_calls == 1
 
 
 class RecoveryReasoner:
@@ -44,9 +69,51 @@ class ToolSelectingReasoner:
         return (
             '{"action":"INFORM","diagnosis":"The requested year is outside the stored '
             '2024 date range. No date was changed.","confidence":0.98,'
-            '"claims":[{"claim_type":"FILTER_MISMATCH","statement":"The requested year '
-            'is outside the stored date range.","evidence_ids":["observation-1"]}]}',
+            '"claims":[{"claim_type":"SCHEMA_FACT","statement":"The requested year '
+            'is outside the stored date range.","table":"orders","column":"amount",'
+            '"evidence_ids":["observation-1"]}]}',
             TokenUsage(input_tokens=30, output_tokens=12),
+        )
+
+
+class ExactValueReasoner:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete_detailed(self, model: str, prompt: str):  # type: ignore[no-untyped-def]
+        self.calls += 1
+        if self.calls == 1:
+            return (
+                '{"action":"CALL_TOOL","tool":"inspect_values","arguments":'
+                '{"table":"customers","column":"country","value":"Germany",'
+                '"mode":"EXACT"},"purpose":"Verify the requested value."}',
+                TokenUsage(input_tokens=20, output_tokens=10),
+            )
+        return (
+            '{"action":"INFORM","diagnosis":"Germany exists in the customer country column.",'
+            '"confidence":0.99,"claims":[{"claim_type":"VALUE_EXISTS",'
+            '"statement":"Germany exists.","table":"customers","column":"country",'
+            '"value":"Germany","evidence_ids":["observation-1"]}]}',
+            TokenUsage(input_tokens=30, output_tokens=12),
+        )
+
+
+class UnsupportedClaimAfterToolReasoner:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete_detailed(self, model: str, prompt: str):  # type: ignore[no-untyped-def]
+        self.calls += 1
+        if self.calls == 1:
+            return (
+                '{"action":"CALL_TOOL","tool":"inspect_values","arguments":'
+                '{"table":"customers","column":"country","value":"Germ",'
+                '"mode":"SEARCH"},"purpose":"Find similar values."}',
+                TokenUsage(input_tokens=20, output_tokens=10),
+            )
+        return (
+            '{"action":"INFORM","diagnosis":"The value is absent.","confidence":0.9}',
+            TokenUsage(input_tokens=20, output_tokens=8),
         )
 
 
@@ -73,11 +140,22 @@ def test_bounded_reasoner_rejects_unsupported_data_diagnosis(registry) -> None: 
 def test_inspect_values_uses_live_bounded_database_evidence(registry) -> None:  # type: ignore[no-untyped-def]
     schema = registry.inspect("shop")
     result = RecoveryTools(registry, "shop", schema, profile=None).inspect_values(
-        "customers", "country", "Germ", allowed_tables=["customers"]
+        "customers", "country", "Germ", allowed_tables=["customers"], mode="SEARCH"
     )
 
     assert result["rows"] == [["Germany"]]
+    assert result["mode"] == "SEARCH"
+    assert result["exact_match"] is None
     assert result["truncated"] is False
+
+    exact = RecoveryTools(registry, "shop", schema, profile=None).inspect_values(
+        "customers", "country", "Germany", allowed_tables=["customers"], mode="EXACT"
+    )
+    absent = RecoveryTools(registry, "shop", schema, profile=None).inspect_values(
+        "customers", "country", "Germ", allowed_tables=["customers"], mode="EXACT"
+    )
+    assert exact["exact_match"] is True
+    assert absent["exact_match"] is False
 
 
 def test_recovery_claim_policy_rejects_invented_and_unprobed_evidence() -> None:
@@ -101,6 +179,146 @@ def test_recovery_claim_policy_rejects_invented_and_unprobed_evidence() -> None:
 
     assert _validated_claims(invented, observations, require_tool_evidence=True) == []
     assert _validated_claims(failure_only, observations, require_tool_evidence=True) == []
+
+
+def test_recovery_claim_policy_matches_claim_type_and_exact_value_evidence() -> None:
+    observations = [
+        {
+            "evidence_id": "observation-1",
+            "tool": "inspect_values",
+            "result": {
+                "table": "customers",
+                "column": "country",
+                "value": "Germany",
+                "mode": "EXACT",
+                "exact_match": True,
+            },
+        }
+    ]
+    supported = [
+        {
+            "claim_type": "VALUE_EXISTS",
+            "statement": "Germany exists.",
+            "table": "customers",
+            "column": "country",
+            "value": "Germany",
+            "evidence_ids": ["observation-1"],
+        }
+    ]
+    wrong_truth = [{**supported[0], "claim_type": "VALUE_ABSENT"}]
+    wrong_value = [{**supported[0], "value": "Italy"}]
+
+    assert len(_validated_claims(supported, observations, require_tool_evidence=True)) == 1
+    assert _validated_claims(wrong_truth, observations, require_tool_evidence=True) == []
+    assert _validated_claims(wrong_value, observations, require_tool_evidence=True) == []
+
+    schema_only = [
+        {
+            "evidence_id": "observation-1",
+            "tool": "inspect_schema",
+            "result": {"tables": {"customers": {"columns": {"country": {"type": "TEXT"}}}}},
+        }
+    ]
+    assert _validated_claims(supported, schema_only, require_tool_evidence=True) == []
+
+
+def test_probe_claims_require_observable_results() -> None:
+    def validate(claim_type: str, result: dict[str, object]) -> int:
+        claims = [
+            {
+                "claim_type": claim_type,
+                "statement": "Verified probe conclusion.",
+                "evidence_ids": ["observation-1"],
+            }
+        ]
+        observations = [
+            {"evidence_id": "observation-1", "tool": "query_database", "result": result}
+        ]
+        return len(_validated_claims(claims, observations, require_tool_evidence=True))
+
+    assert validate(
+        "FILTER_MISMATCH",
+        {"sql": "SELECT COUNT(*) FROM customers WHERE country = 'UK'", "rows": [[0]]},
+    ) == 1
+    assert validate(
+        "FILTER_MISMATCH",
+        {"sql": "SELECT COUNT(*) FROM customers WHERE country = 'UK'", "rows": [[2]]},
+    ) == 0
+    assert validate(
+        "NULL_CAUSE",
+        {"sql": "SELECT SUM(amount) FROM orders WHERE amount > 100", "rows": [[None]]},
+    ) == 1
+    assert validate(
+        "JOIN_EFFECT",
+        {
+            "sql": "SELECT COUNT(*) AS base_count, COUNT(o.order_id) AS joined_count "
+            "FROM customers c LEFT JOIN orders o ON o.customer_id = c.customer_id",
+            "columns": ["base_count", "joined_count"],
+            "rows": [[5, 7]],
+        },
+    ) == 1
+
+
+def test_inspect_values_counts_as_database_probe_in_agent_telemetry(registry) -> None:  # type: ignore[no-untyped-def]
+    schema = registry.inspect("shop")
+    stages: list[str] = []
+    trace = asyncio.run(
+        RecoveryCoordinator(RecoveryTools(registry, "shop", schema, profile=None)).ainvestigate(
+            question="Does Germany exist?",
+            failed_sql="SELECT * FROM customers WHERE country = 'Germany'",
+            failure_code="ZERO_RESULT",
+            failure_message="Executed with zero rows",
+            allowed_tables=["customers"],
+            mode="ZERO_RESULT",
+            completer=ExactValueReasoner(),
+            model="test-model",
+            progress=stages.append,
+        )
+    )
+
+    assert trace.agent_action == "INFORM"
+    assert trace.usage.database_probe_count == 1
+    assert stages == [
+        "recovery_reasoning", "recovery_values", "recovery_reasoning", "recovery_decision"
+    ]
+
+
+def test_agent_observation_is_preserved_when_claim_policy_falls_back(registry) -> None:  # type: ignore[no-untyped-def]
+    schema = registry.inspect("shop")
+    trace = asyncio.run(
+        RecoveryCoordinator(RecoveryTools(registry, "shop", schema, profile=None)).ainvestigate(
+            question="Why was nothing returned?",
+            failed_sql="SELECT customer_id FROM customers",
+            failure_code="ZERO_RESULT",
+            failure_message="Executed with zero rows",
+            allowed_tables=["customers"],
+            mode="ZERO_RESULT",
+            completer=UnsupportedClaimAfterToolReasoner(),
+            model="test-model",
+        )
+    )
+
+    assert trace.agent_action is None
+    assert any(item.startswith("observation-1 inspect_values:") for item in trace.evidence)
+    assert trace.usage.database_probe_count == 1
+
+
+def test_deterministic_filter_probes_use_shared_request_budget(registry) -> None:  # type: ignore[no-untyped-def]
+    schema = registry.inspect("shop")
+    budget = RequestBudget(timeout_seconds=10, max_database_calls=1)
+    tools = RecoveryTools(registry, "shop", schema, profile=None, budget=budget)
+    trace = RecoveryCoordinator(tools).investigate(
+        question="Find matching orders",
+        failed_sql="SELECT order_id FROM orders WHERE amount > 1 AND amount < 100",
+        failure_code="ZERO_RESULT",
+        failure_message="Executed with zero rows",
+        allowed_tables=["orders"],
+        mode="ZERO_RESULT",
+    )
+
+    assert budget.database_calls == 1
+    assert trace.usage.database_probe_count == 1
+    assert trace.usage.budget_exhausted is True
 
 
 def test_recovery_supplies_verified_temporal_coverage(registry) -> None:  # type: ignore[no-untyped-def]

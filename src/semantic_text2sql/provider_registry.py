@@ -13,6 +13,7 @@ class ProviderModelSpec:
     provider: ModelProvider
     model: str
     api_key_env: str
+    endpoint_env: str | None = None
     enabled_env: str | None = None
     supports_sql: bool = True
     supports_reasoning: bool = True
@@ -21,6 +22,8 @@ class ProviderModelSpec:
         reason: str | None = None
         if not os.environ.get(self.api_key_env):
             reason = f"{self.api_key_env} is not set in the project environment."
+        elif self.endpoint_env and not os.environ.get(self.endpoint_env):
+            reason = f"{self.endpoint_env} is not set in the project environment."
         elif self.enabled_env and os.environ.get(self.enabled_env, "false").casefold() != "true":
             reason = (
                 f"{self.provider} is disabled because access has not been verified; "
@@ -42,6 +45,12 @@ MODEL_CATALOG = (
     ProviderModelSpec("agentrouter", "claude-opus-5", "AGENTROUTER_API_KEY"),
     ProviderModelSpec("agentrouter", "claude-opus-4-8", "AGENTROUTER_API_KEY"),
     ProviderModelSpec("groq", GROQ_QWEN_MODEL, "GROQ_API_KEY"),
+    ProviderModelSpec(
+        "justdowork", "gpt-5.6-sol", "JUSTDOWORK_API_KEY", "JUSTDOWORK_BASE_URL"
+    ),
+    ProviderModelSpec(
+        "justdowork", "claude-opus-5", "JUSTDOWORK_API_KEY", "JUSTDOWORK_BASE_URL"
+    ),
 )
 
 

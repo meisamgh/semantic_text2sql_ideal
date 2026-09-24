@@ -3,130 +3,65 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="Conversational, glossary-grounded Text-to-SQL client" />
-    <title>Query Room · Text-to-SQL</title>
-    <link rel="stylesheet" href="/static/styles.css?v=query-room-4" />
+    <meta name="description" content="Query your database safely in natural language" />
+    <title>Query · Text-to-SQL workspace</title>
+    <link rel="stylesheet" href="/static/styles.css?v=query-studio-6" />
   </head>
   <body>
     <div class="app-shell">
-      <header class="topbar">
-        <div class="brand">
-          <span class="brand-mark" aria-hidden="true">Q</span>
-          <div>
-            <h1>Query Room</h1>
-            <p>Ask the database in plain language</p>
-          </div>
-        </div>
-        <div class="status" id="healthStatus"><span></span> Connecting</div>
-      </header>
-
-      <aside class="sidebar" aria-label="Query configuration">
-        <div class="sidebar-heading">
-          <span>Connection</span>
-          <button class="icon-button" id="resetButton" type="button" title="Reset conversation">↻</button>
-        </div>
-
-        <section class="configuration-card">
-          <label for="databaseSelect">Database</label>
-          <select id="databaseSelect"></select>
-
-          <label for="contextModelSelect">Context method</label>
-          <select id="contextModelSelect"></select>
-
-          <label for="sqlModelSelect">SQL generator</label>
-          <select id="sqlModelSelect"></select>
-        </section>
-
-        <div class="session-card">
-          <div class="session-status"><span></span><strong>Conversation ready</strong></div>
+      <aside class="sidebar" aria-label="Query navigation and configuration">
+        <div class="brand"><span class="brand-mark">✦</span><div><h1>Query</h1><p>Natural language. Real data.</p></div></div>
+        <button class="new-query" id="resetButton" type="button"><span>＋</span> New query <kbd>⌘ K</kbd></button>
+        <nav class="side-nav"><a class="active" href="#composer" data-view="workspace">⌂ <span>Workspace</span></a><a href="#exploreView" data-view="explore">⌕ <span>Explore</span></a><a href="#connectionCard" data-view="connections">▱ <span>Connections</span></a></nav>
+        <section class="recent-section"><div class="section-title"><span>Recent queries</span><button id="clearRecent" type="button">Clear</button></div><div class="recent-list" id="recentQueries"><p class="recent-empty">Your recent questions will appear here.</p></div></section>
+        <section class="connection-card" id="connectionCard">
+          <div class="connection-heading"><span class="database-icon">▤</span><div><strong>Connection</strong><small id="healthStatus"><i></i> Connecting</small></div></div>
+          <label for="contextModelSelect">Context method</label><select id="contextModelSelect"></select>
+          <label for="sqlModelSelect">SQL generator</label><select id="sqlModelSelect"></select>
           <code id="sessionId" title="Conversation session"></code>
-          <p>Follow-up questions reuse the last successful semantic context.</p>
-        </div>
-
+        </section>
       </aside>
 
-      <main class="conversation">
-        <section class="hero" id="emptyState">
-          <span class="hero-kicker">CONVERSATIONAL ANALYTICS</span>
-          <h2>What do you want to know?</h2>
-          <p>Ask a complete question, then refine it naturally.</p>
+      <main class="main-content">
+        <header class="page-header workspace-only"><div><p class="eyebrow">TEXT-TO-SQL WORKSPACE</p><h2>Ask your database in plain language</h2><p>Explore your schema, ask a question, and inspect the answer.</p></div><span class="header-status" id="connectionStatus">Connecting…</span></header>
+        <section class="ask-area workspace-only" id="composer">
+          <form class="composer" id="chatForm"><span class="composer-icon">◯</span><textarea id="messageInput" rows="1" placeholder="Ask a question about your data…" required></textarea><button type="button" id="cancelButton" class="cancel-button" hidden>Cancel</button><button type="submit" id="sendButton" aria-label="Run query">→</button></form>
+          <div class="examples"><span>Enter to send · Shift + Enter for a new line</span></div>
         </section>
-        <section id="messages" class="messages" aria-live="polite"></section>
+        <section class="hero workspace-only" id="emptyState"><div class="hero-orb">✦</div><h3>Your answer workspace is ready</h3><p>Ask a question above to see the answer, SQL, result data, grounded context, validation, and execution details.</p></section>
+        <section id="messages" class="messages workspace-only" aria-live="polite"></section>
+        <section id="exploreView" class="explore-view" hidden aria-labelledby="exploreTitle">
+          <header class="page-header"><div><p class="eyebrow">DATABASE EXPLORER</p><h2 id="exploreTitle">Explore database</h2><p>Inspect tables, columns, and the relationships available for this connection.</p></div></header>
+          <div class="explore-toolbar"><div class="explore-database-choice"><label for="databaseSelect">Database</label><select id="databaseSelect"></select></div><div id="exploreSummary" role="status">Loading database schema…</div><label for="exploreSearch">Search tables or columns</label><input id="exploreSearch" type="search" placeholder="Search this database…" /></div>
+          <div id="exploreTables" class="explore-tables"></div>
+          <section class="explore-relations"><h3>Relationships</h3><p>Declared foreign keys come from the live schema. Profile inferences are labeled separately.</p><div id="exploreRelationships" class="explore-relationships"></div></section>
+        </section>
       </main>
-
-      <form class="composer" id="chatForm">
-        <textarea id="messageInput" rows="1" placeholder="Ask a question about your data…" required></textarea>
-        <button type="submit" id="sendButton" aria-label="Send question"><span>Ask</span><b aria-hidden="true">↑</b></button>
-        <button type="button" id="cancelButton" class="cancel-button" hidden>Cancel</button>
-        <p>Enter to send · Shift + Enter for a new line</p>
-      </form>
     </div>
+
     <template id="assistantTemplate">
       <article class="message assistant-message">
-        <div class="avatar">Q</div>
-        <div class="message-content">
-          <div class="response-meta"></div>
-          <p class="response-note"></p>
-          <section class="sql-panel">
-            <div class="panel-header"><span>Generated SQL</span><button type="button" class="copy-button">Copy</button></div>
-            <pre><code class="language-sql"></code></pre>
+        <header class="response-header"><div class="response-status-icon">✓</div><div class="response-heading"><h3>Answer</h3><div class="response-meta"></div></div></header>
+        <div class="response-layout">
+          <section class="response-workspace">
+            <nav class="response-tabs"><button type="button" class="response-tab active" data-tab="answer">Answer</button><button type="button" class="response-tab" data-tab="sql">SQL</button><button type="button" class="response-tab" data-tab="result">Result table</button><button type="button" class="response-tab" data-tab="context">Context</button><button type="button" class="response-tab validation-tab" data-tab="validation">Validation</button></nav>
+            <div class="response-pane answer-pane active" data-tab-panel="answer"><p class="response-note"></p><div class="answer-actions"><button class="correctness-button" type="button">Check correctness</button></div></div>
+            <div class="response-pane sql-panel" data-tab-panel="sql"><div class="panel-header"><div><strong>Generated SQL</strong><span>Validated read-only query</span></div><div class="sql-actions"><button type="button" class="optimize-button">Optimize SQL</button><button type="button" class="copy-button">Copy</button></div></div><pre><code class="language-sql"></code></pre></div>
+            <div class="response-pane result-panel" data-tab-panel="result"><div class="panel-header"><div><strong>Query result</strong><span class="row-count"></span></div><button type="button" class="csv-button">Download CSV</button></div><div class="table-wrap"></div></div>
+            <div class="response-pane context-panel" data-tab-panel="context"><details class="context-json-panel" open><summary>Verified context sent to the SQL model</summary><pre><code class="context-json"></code></pre></details></div>
+            <div class="response-pane attempts-panel" data-tab-panel="validation"><div class="attempts-summary"></div><div class="attempts-list"></div></div>
+            <details class="feedback-panel"><summary>Correct or refine this answer</summary><div class="feedback-form"><select class="feedback-category"><option value="wrong_result">Wrong result</option><option value="wrong_interpretation">Wrong interpretation</option><option value="missing_filter">Missing filter</option><option value="wrong_table_column">Wrong table or column</option><option value="wrong_aggregation">Wrong aggregation</option><option value="wrong_datetime">Wrong date/time logic</option><option value="wrong_output">Wrong output columns</option><option value="wrong_grain">Wrong grouping/grain</option><option value="duplicate_rows">Duplicate rows</option><option value="missing_rows">Missing rows</option><option value="other">Other</option></select><input class="correction-input" placeholder="Describe what should change…" /><button class="correction-button" type="button">Correct & rerun</button></div></details>
+            <section class="human-review-panel" hidden><strong>Human review required</strong><p class="human-review-reason"></p><p class="human-review-question"></p><div class="human-review-options"></div></section>
           </section>
-          <section class="result-panel">
-            <div class="panel-header"><span>Query result</span><span class="row-count"></span></div>
-            <div class="table-wrap"></div>
-          </section>
-          <section class="technical-panel">
-            <nav class="technical-tabs" aria-label="Query details">
-              <button type="button" class="technical-tab active" data-tab="context">Context</button>
-              <button type="button" class="technical-tab issues-tab" data-tab="issues">Issues</button>
-              <button type="button" class="technical-tab" data-tab="tokens">Tokens</button>
-            </nav>
-            <div class="context-panel tab-pane active" data-tab-panel="context">
-              <div class="schema-visual"></div>
-              <details class="context-json-panel">
-                <summary>Raw context JSON</summary>
-                <pre><code class="context-json"></code></pre>
-              </details>
-            </div>
-            <div class="attempts-panel tab-pane" data-tab-panel="issues">
-              <div class="attempts-summary"></div>
-              <div class="attempts-list"></div>
-            </div>
-            <div class="token-panel tab-pane" data-tab-panel="tokens">
-              <div class="token-grid"></div>
-              <p class="token-note"></p>
-            </div>
-          </section>
-          <details class="feedback-panel">
-            <summary>Review or correct this answer</summary>
-            <div class="feedback-form">
-              <button class="correctness-button" type="button">Check correctness</button>
-              <select class="feedback-category" aria-label="Problem category">
-                <option value="wrong_result">Wrong result</option>
-                <option value="wrong_interpretation">Wrong interpretation</option>
-                <option value="missing_filter">Missing filter</option>
-                <option value="wrong_table_column">Wrong table or column</option>
-                <option value="wrong_aggregation">Wrong aggregation</option>
-                <option value="wrong_datetime">Wrong date/time logic</option>
-                <option value="wrong_output">Wrong output columns</option>
-                <option value="wrong_grain">Wrong grouping/grain</option>
-                <option value="duplicate_rows">Duplicate rows</option>
-                <option value="missing_rows">Missing rows</option>
-                <option value="other">Other</option>
-              </select>
-              <input class="correction-input" placeholder="Explain what should change…" />
-              <button class="correction-button" type="button">Correct & rerun</button>
-            </div>
-          </details>
-          <section class="human-review-panel" hidden>
-            <strong>Human review required</strong>
-            <p class="human-review-reason"></p>
-            <p class="human-review-question"></p>
-            <div class="human-review-options"></div>
-          </section>
+          <aside class="insight-rail">
+            <section class="insight-card context-card"><div class="insight-title"><strong>Context used</strong><span class="context-summary"></span></div><div class="schema-visual"></div></section>
+            <section class="insight-card pipeline-card"><div class="insight-title"><strong>Query pipeline</strong></div><div class="pipeline-details"></div></section>
+            <section class="insight-card token-card"><div class="insight-title"><strong>Token consumption</strong></div><div class="token-reduction"></div><div class="token-grid"></div><p class="token-note"></p></section>
+          </aside>
         </div>
       </article>
     </template>
-    <script src="/static/app.js?v=query-room-11" defer></script>
+    <script src="/static/charts.js?v=1" defer></script>
+    <script src="/static/app.js?v=query-studio-12" defer></script>
   </body>
 </html>

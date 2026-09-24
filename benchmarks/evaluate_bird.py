@@ -23,6 +23,7 @@ from semantic_text2sql.llm import (
     AgentRouterCodexModel,
     AgentRouterModel,
     GroqSQLModel,
+    JustDoWorkSQLModel,
     RoutingSQLModel,
 )
 from semantic_text2sql.models import DEFAULT_MODEL, GenerateRequest
@@ -37,10 +38,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--database-root", type=Path, required=True)
     parser.add_argument("--split-file", type=Path, required=True)
     parser.add_argument("--profile-root", type=Path, required=True)
-    parser.add_argument("--provider", choices=("agentrouter", "groq"), default="agentrouter")
+    parser.add_argument(
+        "--provider", choices=("agentrouter", "groq", "justdowork"), default="agentrouter"
+    )
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--agentrouter-base-url", default="https://agentrouter.org")
     parser.add_argument("--groq-base-url", default="https://api.groq.com/openai/v1")
+    parser.add_argument("--justdowork-base-url", default=os.environ.get("JUSTDOWORK_BASE_URL", ""))
     parser.add_argument("--max-attempts", type=int, default=3, choices=range(1, 5))
     parser.add_argument("--timeout-seconds", type=float, default=30.0)
     parser.add_argument("--limit", type=int, default=100, choices=range(1, 101))
@@ -102,6 +106,9 @@ async def main() -> int:
             ),
         ),
         GroqSQLModel(os.environ.get("GROQ_API_KEY"), args.groq_base_url),
+        JustDoWorkSQLModel(
+            os.environ.get("JUSTDOWORK_API_KEY"), args.justdowork_base_url
+        ),
     )
     agent = TextToSQLAgent(registry, model_router, profiles=ProfileStore(args.profile_root))
     completed = {int(item["dataset_index"]) for item in results}

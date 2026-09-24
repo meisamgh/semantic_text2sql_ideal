@@ -536,6 +536,7 @@ class TextToSQLAgent:
                     failed_sql=sql,
                     failure_code=validation.code,
                     failure_message=validation.message,
+                    progress=progress,
                     allowed_tables=[table.name for table in retrieved_schema.tables],
                     completer=self.model,
                     provider=request.provider,

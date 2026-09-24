@@ -40,6 +40,7 @@ from semantic_text2sql.llm import (
     AgentRouterCodexModel,
     AgentRouterModel,
     GroqSQLModel,
+    JustDoWorkSQLModel,
     ModelError,
     RoutingSQLModel,
 )
@@ -59,8 +60,10 @@ from semantic_text2sql.models import (
     TurnInterpretation,
 )
 from semantic_text2sql.postgres import PostgresRegistry, postgres_databases_from_environment
+from semantic_text2sql.presentation import present_result
 from semantic_text2sql.profiling import ProfileStore
 from semantic_text2sql.provider_registry import configured_model_options, supports_model
+from semantic_text2sql.runtime import RequestBudget
 from semantic_text2sql.service import TextToSQLService
 
 logger = logging.getLogger(__name__)
@@ -102,15 +105,21 @@ def create_app(
         os.environ.get("GROQ_API_KEY"),
         os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
     )
+    justdowork = JustDoWorkSQLModel(
+        os.environ.get("JUSTDOWORK_API_KEY"),
+        os.environ.get("JUSTDOWORK_BASE_URL"),
+        float(os.environ.get("JUSTDOWORK_TIMEOUT_SECONDS", "120")),
+    )
     active_agent = agent or TextToSQLAgent(
         sqlite,
-        RoutingSQLModel(agentrouter, groq),
+        RoutingSQLModel(agentrouter, groq, justdowork),
         postgres,
         profiles,
     )
     turn_completers = conversation_completers or {
         "agentrouter": agentrouter,
         "groq": groq,
+        "justdowork": justdowork,
     }
     app = FastAPI(
         title="Semantic Text-to-SQL v5",
@@ -184,6 +193,11 @@ def create_app(
     def set_session_stage(session_id: str, stage: str) -> None:
         for job in chat_jobs.values():
             if job.get("session_id") == session_id and job.get("status") == "running":
+                if job.get("stage") != stage:
+                    job.setdefault("events", []).append({
+                        "stage": stage,
+                        "elapsed_ms": round((perf_counter() - float(job["started_at"])) * 1000),
+                    })
                 job["stage"] = stage
 
     chat_tasks: dict[str, asyncio.Task[None]] = {}
@@ -217,6 +231,72 @@ def create_app(
                 DatabaseOption(db_id="books_postgres", dialect="postgres", configured=False)
             )
         return options
+
+    @app.get("/api/databases/{db_id}/schema")
+    async def database_schema(db_id: str) -> dict[str, Any]:
+        """Browse live schema and labeled profile relationships without exposing rows."""
+        if db_id in sqlite.list_ids():
+            schema = await asyncio.to_thread(sqlite.inspect, db_id)
+        elif postgres is not None and db_id in postgres.configured_ids():
+            schema = await asyncio.to_thread(postgres.inspect, db_id)
+        else:
+            raise HTTPException(status_code=404, detail="Database was not found or configured.")
+        live_columns = {
+            (table.name, column.name)
+            for table in schema.tables
+            for column in table.columns
+        }
+        relationships = [
+            {
+                "from_table": item.from_table,
+                "from_column": item.from_column,
+                "to_table": item.to_table,
+                "to_column": item.to_column,
+                "source": "declared_foreign_key",
+                "cardinality": None,
+            }
+            for item in schema.relationships
+        ]
+        declared = {
+            (item.from_table, item.from_column, item.to_table, item.to_column)
+            for item in schema.relationships
+        }
+        try:
+            profile = profiles.load(schema.dialect, db_id)
+        except (OSError, ValueError):
+            profile = None
+            logger.warning("Could not read schema profile for %s", db_id, exc_info=True)
+        if profile is not None:
+            for item in profile.relationships:
+                key = (
+                    item.child_table, item.child_column,
+                    item.parent_table, item.parent_column,
+                )
+                if key in declared or any(part not in live_columns for part in (
+                    (item.child_table, item.child_column),
+                    (item.parent_table, item.parent_column),
+                )):
+                    continue
+                relationships.append({
+                    "from_table": item.child_table,
+                    "from_column": item.child_column,
+                    "to_table": item.parent_table,
+                    "to_column": item.parent_column,
+                    "source": "profile_inference",
+                    "cardinality": item.type,
+                })
+        return {
+            "db_id": db_id,
+            "dialect": schema.dialect,
+            "tables": [
+                {"name": table.name, "columns": [
+                    {"name": col.name, "type": col.data_type, "primary_key": col.primary_key}
+                    for col in table.columns
+                ]}
+                for table in schema.tables
+            ],
+            "relationships": relationships,
+        }
 
     @app.get("/api/databases/{db_id}/analytics-capabilities")
     async def analytics_capabilities(db_id: str) -> dict[str, Any]:
@@ -517,7 +597,13 @@ def create_app(
                     "total": round((perf_counter() - started) * 1_000),
                 },
             )
+        request_budget = RequestBudget(
+            timeout_seconds=float(os.environ.get("TEXT2SQL_REQUEST_TIMEOUT_SECONDS", "180")),
+            max_model_calls=int(os.environ.get("TEXT2SQL_REQUEST_MAX_MODEL_CALLS", "6")),
+            max_database_calls=int(os.environ.get("TEXT2SQL_REQUEST_MAX_DATABASE_CALLS", "24")),
+        )
         execution = await question_service.execute_question(
+            request_budget=request_budget,
             question=pending.resolved_question,
             db_id=request.db_id,
             evidence=request.evidence,
@@ -663,6 +749,22 @@ def create_app(
                     options=[],
                     evidence=recovery.evidence if recovery else [],
                 )
+        presentation = None
+        presentation_usage = TokenUsage()
+        presentation_ledger = []
+        if (
+            generated.accepted and generated.rows and not human_review
+            and operation not in {"CHECK_CORRECTNESS", "OPTIMIZE"}
+            and not generated.recovery
+        ):
+            set_session_stage(request.session_id, "presentation")
+            presentation, presentation_usage, entry = await present_result(
+                turn_completers.get(request.provider), question=pending.resolved_question,
+                sql=generated.sql or "", columns=generated.columns, rows=generated.rows,
+                truncated=generated.truncated, model=request.model, provider=request.provider,
+                budget=request_budget,
+            )
+            presentation_ledger.append(entry)
         return ChatResponse(
             session_id=request.session_id,
             operation=operation,
@@ -670,6 +772,7 @@ def create_app(
             conversation_interpretation=interpretation,
             state=response_state,
             generation=generated,
+            presentation=presentation,
             message=message,
             human_review=human_review,
             provenance=[
@@ -681,9 +784,11 @@ def create_app(
             ],
             token_usage=_add_usage(
                 conversation_usage,
-                _add_usage(planner_usage, generated.token_usage),
+                _add_usage(presentation_usage, _add_usage(planner_usage, generated.token_usage)),
             ),
-            call_ledger=[*conversation_ledger, *generated.telemetry.call_ledger],
+            call_ledger=[
+                *conversation_ledger, *generated.telemetry.call_ledger, *presentation_ledger,
+            ],
             timings_ms={
                 "conversation_interpretation": conversation_ms,
                 "routing": routing_ms,
@@ -697,6 +802,7 @@ def create_app(
         job = chat_jobs[job_id]
         job["status"] = "running"
         job["stage"] = "conversation"
+        job["events"].append({"stage": "conversation", "elapsed_ms": 0})
         try:
             response = await chat(request)
             job.update(
@@ -723,6 +829,7 @@ def create_app(
             "started_at": perf_counter(),
             "response": None,
             "error": None,
+            "events": [],
         }
         chat_tasks[job_id] = asyncio.create_task(run_chat_job(job_id, request))
         return {"job_id": job_id, "status": "queued"}
@@ -735,7 +842,9 @@ def create_app(
             raise HTTPException(status_code=404, detail="Chat job was not found.")
         return {
             **job,
-            "elapsed_ms": round((perf_counter() - float(job["started_at"])) * 1_000),
+            "elapsed_ms": round(
+                (float(job.get("finished_at", perf_counter())) - float(job["started_at"])) * 1_000
+            ),
         }
 
     @app.delete("/api/chat/jobs/{job_id}")

@@ -64,11 +64,41 @@ def test_health_endpoint() -> None:
     assert response.json() == {"status": "online"}
 
 
-def test_model_catalog_contains_only_agentrouter_and_groq(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_schema_browser_returns_tables_and_types_without_rows() -> None:
+    client = TestClient(create_app())
+    response = client.get("/api/databases/books/schema")
+    assert response.status_code == 200
+    schema = response.json()
+    assert schema["tables"]
+    for table in schema["tables"]:
+        assert set(table) == {"name", "columns"}
+        assert table["columns"]
+        for column in table["columns"]:
+            assert set(column) == {"name", "type", "primary_key"}
+    assert client.get("/api/databases/not_configured/schema").status_code == 404
+
+
+def test_schema_browser_exposes_declared_relationships(registry, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("TEXT2SQL_DATABASE_ROOT", str(registry.root))
+    response = TestClient(create_app()).get("/api/databases/shop/schema")
+    assert response.status_code == 200
+    assert {
+        "from_table": "orders",
+        "from_column": "customer_id",
+        "to_table": "customers",
+        "to_column": "customer_id",
+        "source": "declared_foreign_key",
+        "cardinality": None,
+    } in response.json()["relationships"]
+
+
+def test_model_catalog_contains_configured_remote_providers(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setenv("AGENTROUTER_API_KEY", "configured-key")
+    monkeypatch.setenv("JUSTDOWORK_API_KEY", "configured-key")
+    monkeypatch.setenv("JUSTDOWORK_BASE_URL", "https://justdowork.test/v1")
 
     options = TestClient(create_app()).get("/api/models").json()
-    assert {item["provider"] for item in options} == {"agentrouter", "groq"}
+    assert {item["provider"] for item in options} == {"agentrouter", "groq", "justdowork"}
     agentrouter = [item for item in options if item["provider"] == "agentrouter"]
     assert [item["model"] for item in agentrouter] == [
         "gpt-5.6-sol",
@@ -78,6 +108,10 @@ def test_model_catalog_contains_only_agentrouter_and_groq(monkeypatch) -> None: 
         "claude-opus-4-8",
     ]
     assert all(item["configured"] is True for item in agentrouter)
+    assert [item["model"] for item in options if item["provider"] == "justdowork"] == [
+        "gpt-5.6-sol",
+        "claude-opus-5",
+    ]
 
 
 def test_production_api_rejects_models_outside_catalog() -> None:
@@ -119,17 +153,20 @@ def test_web_chat_application_is_served() -> None:
     script = client.get("/static/app.js")
 
     assert page.status_code == 200
-    assert "Query Room" in page.text
+    assert "Ask your database in plain language" in page.text
     assert 'id="chatForm"' in page.text
     assert 'id="contextModelSelect"' in page.text
     assert 'id="sqlModelSelect"' in page.text
     assert 'id="contextModeSelect"' not in page.text
     assert 'id="suggestions"' not in page.text
     assert "How many records are in each category?" not in page.text
-    assert 'class="technical-panel"' in page.text
+    assert 'class="response-tabs"' in page.text
+    assert 'data-tab="answer"' in page.text
+    assert 'data-tab="sql"' in page.text
+    assert 'data-tab="result"' in page.text
     assert 'data-tab="context"' in page.text
-    assert 'data-tab="issues"' in page.text
-    assert 'data-tab="tokens"' in page.text
+    assert 'data-tab="validation"' in page.text
+    assert "Download CSV" in page.text
     assert "Validation attempts" not in page.text
     assert script.status_code == 200
     assert 'api("/api/chat"' in script.text
@@ -149,9 +186,9 @@ def test_web_chat_application_is_served() -> None:
     assert 'item.dialect === "sqlite"' not in script.text
     assert "`${item.db_id} (${item.dialect})`" in script.text
 
-    sql_position = page.text.index('class="sql-panel"')
-    result_position = page.text.index('class="result-panel"')
-    details_position = page.text.index('class="technical-panel"')
+    sql_position = page.text.index('class="response-pane sql-panel"')
+    result_position = page.text.index('class="response-pane result-panel"')
+    details_position = page.text.index('class="response-pane attempts-panel"')
     assert sql_position < result_position < details_position
 
 
@@ -230,3 +267,7 @@ def test_chat_job_reports_progress_and_completion() -> None:
     assert job["status"] == "completed"
     assert job["response"]["operation"] == "RESET_CONTEXT"
     assert job["elapsed_ms"] >= 0
+    assert "events" in job
+    assert job["events"][0] == {"stage": "conversation", "elapsed_ms": 0}
+    time.sleep(0.02)
+    assert client.get(f"/api/chat/jobs/{job_id}").json()["elapsed_ms"] == job["elapsed_ms"]

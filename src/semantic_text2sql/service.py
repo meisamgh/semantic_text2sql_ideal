@@ -104,9 +104,10 @@ class TextToSQLService:
         optimization_required: bool = False,
         correctness_review: bool = False,
         progress: Callable[[str], None] | None = None,
+        request_budget: RequestBudget | None = None,
     ) -> QuestionExecution:
         routing_started = perf_counter()
-        budget = RequestBudget(
+        budget = request_budget or RequestBudget(
             timeout_seconds=float(os.environ.get("TEXT2SQL_REQUEST_TIMEOUT_SECONDS", "180")),
             max_model_calls=int(os.environ.get("TEXT2SQL_REQUEST_MAX_MODEL_CALLS", "6")),
             max_database_calls=int(os.environ.get("TEXT2SQL_REQUEST_MAX_DATABASE_CALLS", "24")),
@@ -130,6 +131,7 @@ class TextToSQLService:
                 failure_message="User requested evidence-based correctness verification.",
                 allowed_tables=previous_approved_tables or [table.name for table in schema.tables],
                 mode="CORRECTNESS",
+                progress=progress,
                 completer=self.agent.model,
                 provider=provider,
                 model=model,
@@ -358,6 +360,7 @@ class TextToSQLService:
                 ),
                 allowed_tables=proposed_tables,
                 mode=review_mode,
+                progress=progress,
                 completer=self.agent.model,
                 provider=provider,
                 model=generation_request.model,

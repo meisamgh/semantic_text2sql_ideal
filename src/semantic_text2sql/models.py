@@ -9,8 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field
 from semantic_text2sql.sql_formatting import format_sql_for_display
 
 DEFAULT_MODEL = "gpt-5.6-sol"
-GROQ_QWEN_MODEL = "qwen/qwen3.6-27b"
-ModelProvider = Literal["agentrouter", "groq"]
+GROQ_QWEN_MODEL = "qwen/qwen3.8-27b"
+ModelProvider = Literal["agentrouter", "groq", "justdowork"]
 
 
 class StrictModel(BaseModel):
@@ -530,6 +530,9 @@ class RecoveryClaim(StrictModel):
     ]
     statement: str = Field(min_length=1, max_length=500)
     evidence_ids: list[str] = Field(min_length=1, max_length=6)
+    table: str | None = Field(default=None, max_length=128)
+    column: str | None = Field(default=None, max_length=128)
+    value: str | None = Field(default=None, max_length=500)
 
 
 class RecoveryUsage(StrictModel):
@@ -707,6 +710,16 @@ class TurnInterpretation(StrictModel):
     model: str | None = None
 
 
+class ResultPresentation(StrictModel):
+    summary: str = Field(max_length=1800)
+    chart_type: Literal["none", "bar", "line", "scatter"] = "none"
+    x: str | None = None
+    y: str | None = None
+    title: str = Field(default="", max_length=160)
+    note: str = "Based on returned rows only; not independent verification of correctness."
+    source: Literal["model", "fallback"] = "model"
+
+
 class ChatResponse(StrictModel):
     session_id: str
     operation: Literal[
@@ -734,6 +747,7 @@ class ChatResponse(StrictModel):
     generation: GenerateResponse | None = None
     message: str
     explanation: str | None = None
+    presentation: ResultPresentation | None = None
     clarification_required: bool = False
     clarification_question: str | None = None
     human_review: HumanReviewRequest | None = None
