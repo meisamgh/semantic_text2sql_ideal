@@ -1,9 +1,10 @@
 # Semantic Text-to-SQL
 
-A conversational Text-to-SQL system with a bounded recovery agent. Routine questions use a fast,
-predictable generation path; failed SQL, empty results, unexpected `NULL` values and correctness
-reviews activate an agent that gathers targeted database evidence before deciding whether to
-repair the SQL, explain the result or report unresolved uncertainty.
+A conversational Text-to-SQL application for SQLite and allowlisted PostgreSQL databases. The
+normal path retrieves and grounds a compact schema, generates read-only SQL, and executes it.
+Failures, empty or unexpected `NULL` results, and explicit correctness reviews can activate a
+bounded evidence-gathering recovery agent. For ordinary successful results, the selected model
+chooses a chart before writing a plain-language answer.
 
 <p align="center">
   <img src="ChatGPT Image Sep 9, 2026, 10_01_37 PM.png" alt="Semantic Text-to-SQL architecture" width="1000" />
@@ -19,47 +20,52 @@ https://github.com/user-attachments/assets/ac593a9c-802f-44c7-875d-02c9b4e0ca1f
 ## Architecture
 
 ```text
-User question
-    |
-    v
-Conversation resolver
-    |
-    v
-Hybrid schema retrieval
-BM25 + dense embeddings + value matching + RRF
-    |
-    +-- optional Model 1 context selector
-    |
-    v
-Deterministic grounding
-PK/FK, bridges, grain, cardinality, types, values and date formats
-    |
-    v
-Model 2: SQL reasoning and generation
-    |
-    v
-SQLGlot read-only safety validation
-    |
-    v
-Read-only execution
-    |
-    +-- anomaly / correctness review --> bounded recovery agent
-    |                                      |
-    |                                      +-- inspect_schema
-    |                                      +-- inspect_values
-    |                                      +-- query_database
-    |                                      +-- reason again
-    |                                      +-- REPAIR / INFORM / ESCALATE
-    v
-Formatted SQL + result + context + attempt history
-    |
-    v
-Model-selected chart (or none) -> validated chart spec -> stakeholder explanation
+Question -> conversation resolver
+                 |
+                 v
+Hybrid schema retrieval (BM25 + dense + value matching -> RRF)
+                 |  optional Model 1 context selection
+                 v
+Deterministic grounding (keys, join paths, grain, types, date formats, glossary)
+                 |  optional, strongly matched historical SQL examples
+                 v
+Selected SQL model -> SQLGlot safety -> EXPLAIN -> read-only execution
+                 |
+       +---------+--------------------+
+       |                              |
+ ordinary result               failure / anomalous result /
+       |                       explicit correctness review
+       v                              |
+ selected model chooses chart          v
+       |                       bounded recovery agent
+ validate chart against rows          | inspect_schema / inspect_values /
+       |                       | query_database -> REPAIR / INFORM / ESCALATE
+ selected model explains result        |       |
+       |                               +-- focused SQL retry when justified
+       v
+ SQL + exact rows + answer + optional chart + context + attempt/usage history
 ```
 
-The web application lets the user select the context method and SQL model independently. The
-default retrieval-only path avoids the context-model call; Model 1 can be enabled for a controlled
-A/B comparison.
+The default context method is retrieval-only. Users may select optional Model 1 context selection
+and choose the SQL model separately. Model 1 selects context; it does not write SQL. Historical SQL
+examples are disabled by default and, when enabled, are admitted only after compatibility checks.
+The same selected SQL model handles chart choice and result explanation; the chart is never used as
+evidence that the generated SQL is business-correct.
+
+### Stakeholder answers and charts
+
+For an ordinary successful result, the selected model first proposes `bar`, `line`, `scatter`, or
+`none` from the question, accepted SQL and up to 40 returned rows. Code verifies the proposed
+columns, numeric values, date axis and row grain; invalid choices become `none`, not another
+guessed chart. A second model call then explains the result using that validated choice. The UI
+renders only actual returned rows and never runs model-generated chart code. SQL and the exact
+result table remain available beside the answer.
+
+Both calls share the request-wide model-call budget and have a 15-second timeout each. Their token
+usage and outcomes appear separately in the call ledger. A model failure or exhausted budget leaves
+the query result available with a factual fallback. Partial results are labelled, and explanations
+are interpretations of returned data—not correctness proofs. Recovery and human-review messages
+take precedence over this presentation path.
 
 ### Client workspace
 
@@ -311,9 +317,13 @@ uv run mypy src
 git diff --check
 ```
 
-Current local verification: **115 passed, 1 skipped**. These are software tests, not a claim of
-Text-to-SQL execution accuracy. Model quality must be measured on a frozen dataset, database state,
-provider, prompt and result-equivalence protocol.
+The automated suite checks software behavior; it is not a claim of Text-to-SQL execution accuracy.
+Model quality must be measured on a frozen dataset, database state, provider, prompt and
+result-equivalence protocol. The optional browser-rendering smoke test requires Node.js:
+
+```bash
+node --test tests/frontend_rendering.cjs
+```
 
 ## Project structure
 
@@ -326,7 +336,8 @@ src/semantic_text2sql/
   llm.py               provider adapters and generation prompts
   validator.py         SQLGlot syntax and read-only safety checks
   recovery.py          bounded LangGraph evidence recovery
-  presentation.py      model-selected chart, chart checks and result interpretation
+  presentation.py      chart-first model calls, chart checks and result interpretation
+  runtime.py           shared request deadline and model/database call budget
   agent.py             generation, repair and execution orchestration
 web/                   conversational interface
 tests/                 unit and integration tests
@@ -337,18 +348,3 @@ tests/                 unit and integration tests
 This repository is suitable for controlled analytics pilots where database access, providers and
 business definitions are governed. It is not presented as unrestricted autonomous production SQL,
 and it does not claim semantic correctness solely from successful execution.
-## Stakeholder answers and charts
-
-Successful query results now open in **Answer**, with a short plain-language explanation
-and a model-selected bar, time-series, or scatter chart when appropriate. Single values
-and unsuitable results stay as text. SQL and the exact result table remain accessible.
-
-Presentation uses the selected SQL model in two sequential, bounded calls: first it chooses
-the best supported chart (or no chart) from the question and executed rows; then it writes
-the stakeholder explanation using the validated chart choice. Each call has a 15-second
-timeout and shares the request budget. The model receives the question, accepted SQL, column
-names, and up to 40 returned rows. Partial results are labelled. Chart values
-come directly from those rows; model-generated code is never executed. Token usage is
-included in the request total and call ledger. A failed presentation call leaves the
-query result intact. Generated explanations are interpretations, not correctness proofs;
-anomaly/recovery messages retain priority.
