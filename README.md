@@ -52,6 +52,9 @@ Read-only execution
     |                                      +-- REPAIR / INFORM / ESCALATE
     v
 Formatted SQL + result + context + attempt history
+    |
+    v
+Model-selected chart (or none) -> validated chart spec -> stakeholder explanation
 ```
 
 The web application lets the user select the context method and SQL model independently. The
@@ -62,6 +65,7 @@ A/B comparison.
 
 - Browse and search database tables and columns before asking a question.
 - View the result table, formatted SQL, selected context and validation issues separately.
+- See a model-selected chart and plain-language answer when the returned data supports them.
 - Follow live backend stages and a timestamped activity log, including recovery schema/value
   checks and read-only probes. Timings are observations, not predicted completion percentages.
 - Cancel a running request; model/database selection stays locked until it finishes.
@@ -322,6 +326,7 @@ src/semantic_text2sql/
   llm.py               provider adapters and generation prompts
   validator.py         SQLGlot syntax and read-only safety checks
   recovery.py          bounded LangGraph evidence recovery
+  presentation.py      model-selected chart, chart checks and result interpretation
   agent.py             generation, repair and execution orchestration
 web/                   conversational interface
 tests/                 unit and integration tests
@@ -332,7 +337,7 @@ tests/                 unit and integration tests
 This repository is suitable for controlled analytics pilots where database access, providers and
 business definitions are governed. It is not presented as unrestricted autonomous production SQL,
 and it does not claim semantic correctness solely from successful execution.
-# Stakeholder answers and charts
+## Stakeholder answers and charts
 
 Successful query results now open in **Answer**, with a short plain-language explanation
 and a model-selected bar, time-series, or scatter chart when appropriate. Single values
