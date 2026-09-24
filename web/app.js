@@ -492,13 +492,18 @@ function renderTokenAccounting(fragment, body, generation) {
   const usage = body.token_usage || generation.token_usage || {};
   const total = usageTotal(usage);
   const context = telemetry.planner_call_used ? usageTotal(telemetry.planner_call) : 0;
+  const chartCall = (body.call_ledger || []).find((entry) => entry.component === "chart_selection");
+  const interpretationCall = (body.call_ledger || []).find((entry) => entry.component === "result_interpretation");
+  const chartTokens = chartCall ? usageTotal(chartCall) : 0;
+  const interpretationTokens = interpretationCall ? usageTotal(interpretationCall) : 0;
   const attemptTotals = attempts.map((attempt) => usageTotal(attempt.token_usage));
   const sql = attempts.length ? sumKnown(attemptTotals) : 0;
   const discardedAttempts = generation.accepted ? attemptTotals.slice(0, -1) : attemptTotals;
   const wasted = discardedAttempts.length ? sumKnown(discardedAttempts) : 0;
   const conversation = total == null || context == null || sql == null
+    || chartTokens == null || interpretationTokens == null
     ? null
-    : Math.max(0, total - context - sql);
+    : Math.max(0, total - context - sql - chartTokens - interpretationTokens);
   const cacheRead = body.token_usage?.cache_read_tokens ?? generation.token_usage?.cache_read_tokens ?? null;
   const cacheCreation = body.token_usage?.cache_creation_tokens ?? generation.token_usage?.cache_creation_tokens ?? null;
   const sentTokens = telemetry.selected_model_context_tokens ?? null;
@@ -512,9 +517,11 @@ function renderTokenAccounting(fragment, body, generation) {
 
   const rows = [
     ["Total provider tokens", total],
-    ["Other calls (resolver / recovery / presentation)", conversation],
+    ["Other calls (resolver / recovery)", conversation],
     ["Context model", context],
     ["SQL attempts", sql],
+    ["Chart selection", chartTokens],
+    ["Result interpretation", interpretationTokens],
     ["Discarded-attempt tokens", wasted],
     ["Input tokens", usage.input_tokens ?? null],
     ["Output tokens", usage.output_tokens ?? null],
@@ -841,12 +848,12 @@ const pipelineStages = [
   ["execution", "Run query"],
   ["result_review", "Review result"],
   ["recovery", "Recovery"],
-  ["presentation", "Explain & chart"],
+  ["presentation", "Choose chart & explain"],
 ];
 
 const progressLabels = {
   queued: "Waiting to start…",
-  presentation: "Preparing a plain-language answer and choosing a chart",
+  presentation: "Choosing the chart, then preparing a plain-language answer",
   conversation: "Understanding your request",
   retrieval: "Finding relevant tables and columns",
   context_selection: "Selecting context with your context model",

@@ -61,5 +61,12 @@ function renderResultChart(container, presentation, generation) {
   });
   mark('text',{x:400,y:363,'text-anchor':'middle',fill:'#334155','font-size':13},presentation.x);
   mark('text',{x:80,y:20,fill:'#334155','font-size':13},presentation.y);
-  figure.append(svg); container.append(figure);
+  figure.append(svg);
+  if (presentation.chart_reason) {
+    const reason = document.createElement('p');
+    reason.className = 'chart-reason';
+    reason.textContent = presentation.chart_reason;
+    figure.append(reason);
+  }
+  container.append(figure);
 }

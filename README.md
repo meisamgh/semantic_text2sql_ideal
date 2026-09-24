@@ -338,9 +338,11 @@ Successful query results now open in **Answer**, with a short plain-language exp
 and a model-selected bar, time-series, or scatter chart when appropriate. Single values
 and unsuitable results stay as text. SQL and the exact result table remain accessible.
 
-Presentation uses the selected SQL model in one additional call, bounded by the shared
-request budget and a 15-second timeout. It sends the question, accepted SQL, column names,
-and up to 40 returned rows to that provider. Partial results are labelled. Chart values
+Presentation uses the selected SQL model in two sequential, bounded calls: first it chooses
+the best supported chart (or no chart) from the question and executed rows; then it writes
+the stakeholder explanation using the validated chart choice. Each call has a 15-second
+timeout and shares the request budget. The model receives the question, accepted SQL, column
+names, and up to 40 returned rows. Partial results are labelled. Chart values
 come directly from those rows; model-generated code is never executed. Token usage is
 included in the request total and call ledger. A failed presentation call leaves the
 query result intact. Generated explanations are interpretations, not correctness proofs;

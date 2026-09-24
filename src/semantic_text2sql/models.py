@@ -716,6 +716,7 @@ class ResultPresentation(StrictModel):
     x: str | None = None
     y: str | None = None
     title: str = Field(default="", max_length=160)
+    chart_reason: str = Field(default="", max_length=300)
     note: str = "Based on returned rows only; not independent verification of correctness."
     source: Literal["model", "fallback"] = "model"
 

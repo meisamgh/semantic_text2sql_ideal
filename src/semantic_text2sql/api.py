@@ -758,13 +758,13 @@ def create_app(
             and not generated.recovery
         ):
             set_session_stage(request.session_id, "presentation")
-            presentation, presentation_usage, entry = await present_result(
+            presentation, presentation_usage, presentation_entries = await present_result(
                 turn_completers.get(request.provider), question=pending.resolved_question,
                 sql=generated.sql or "", columns=generated.columns, rows=generated.rows,
                 truncated=generated.truncated, model=request.model, provider=request.provider,
                 budget=request_budget,
             )
-            presentation_ledger.append(entry)
+            presentation_ledger.extend(presentation_entries)
         return ChatResponse(
             session_id=request.session_id,
             operation=operation,
