@@ -7,7 +7,7 @@ bounded evidence-gathering recovery agent. For ordinary successful results, the 
 chooses a chart before writing a plain-language answer.
 
 <p align="center">
-  <img src="ChatGPT Image Sep 9, 2026, 10_01_37 PM.png" alt="Semantic Text-to-SQL architecture" width="1000" />
+  <img src="Arch-pic" alt="Semantic Text-to-SQL architecture" width="1000" />
 </p>
 
 _Visual overview of the query workflow. The architecture and runtime boundaries documented below
