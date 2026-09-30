@@ -15,7 +15,7 @@ are authoritative._
 
 ## Demo
 
-https://github.com/user-attachments/assets/ac593a9c-802f-44c7-875d-02c9b4e0ca1f
+[https://github.com/user-attachments/assets/ac593a9c-802f-44c7-875d-02c9b4e0ca1f](https://github.com/meisamgh/semantic_text2sql_ideal/issues/1#issuecomment-5911937752)
 
 ## Architecture
 
