@@ -2,14 +2,14 @@
 
 The existing LangGraph assistant owns conversation and analytical changes. Its
 `ai_dashboard_designer` tool is a bounded specialist, not another agent. The
-Phase 1 deterministic dashboard remains the default UI option and fallback.
+Phase 1 deterministic dashboard remains the backend fallback. Phase 4 removes
+manual creation/design-mode controls; see AGENTIC_DASHBOARDS.md for the current UX.
 
 ## Usage
 
 After an accepted query, ask **“Design a professional dashboard from this data”**.
-Alternatively choose **AI design** beside **Create dashboard**. Configure an
-existing provider adapter with `TEXT2SQL_DASHBOARD_PROVIDER` and
-`TEXT2SQL_DASHBOARD_MODEL` for that explicit UI action. Conversational design
+Configure an existing provider adapter with `TEXT2SQL_DASHBOARD_PROVIDER` and
+`TEXT2SQL_DASHBOARD_MODEL` for the specialist. Conversational design
 defaults to the request's assistant provider/model when these are empty.
 `TEXT2SQL_DASHBOARD_MAX_TOKENS` controls task-specific completion limits.
 No credentials are added by this feature; the selected adapter must already be
@@ -17,12 +17,12 @@ configured. An unavailable provider produces the deterministic fallback.
 
 Use the design-change input for requests such as “Make the main chart larger”
 or “Remove the distribution chart”. These go through the same Top layer, not a
-second natural-language router. **Undo design** restores the preceding revision.
+second natural-language router. **Undo** restores the preceding revision.
 
 ## Evidence and validation
 
-`ai_dashboard_designer.py` profiles at most 24 columns and sends three bounded
-sample rows, role/cardinality/distribution summaries, approved definitions,
+`ai_dashboard_designer.py` profiles at most 24 columns and sends no sample rows
+or category values. It sends role/cardinality/distribution-count summaries, approved definitions,
 constraints, eligible KPI IDs and validated chart candidates. Full chart data is
 not sent to the model. An oversized prompt falls back before calling a model.
 
@@ -39,9 +39,10 @@ Sections remain filters → KPIs → charts → optional source table. Applied S
 constraints cannot be removed by hiding optional filter metadata. Global filters
 are informational, not editable cross-widget filtering.
 
-One initial design consumes at most one additional model call, including bounded
+The Phase 2 API/default specialist consumes at most one additional model call, including bounded
 provider retries through the shared request budget, with a 12-second specialist
-deadline. Failed initial designs fall back to Phase 1; failed revisions retain
+deadline. Phase 4 orchestration permits one targeted validation correction
+(two specialist calls maximum). Failed initial designs fall back; failed revisions retain
 the previous validated widgets. No current-result design can execute SQL.
 `REQUERY_REQUIRED` reports missing requirements to the Top layer. If it obtains
 new accepted data through `ask_data`, the original dashboard goal resumes against

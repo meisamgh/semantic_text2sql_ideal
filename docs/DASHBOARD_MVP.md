@@ -1,5 +1,9 @@
 # Phase 1: deterministic single-result dashboard
 
+Historical Phase 1 UI description below. Phase 4 removes manual creation/mode
+controls; use natural-language dashboard requests. The deterministic builder and
+API remain supported as a validation/fallback foundation. See AGENTIC_DASHBOARDS.md.
+
 Run a query normally, then click **Create dashboard** on its accepted response.
 Select **Include source table** first if desired. The temporary dashboard opens
 inside that response, in this fixed order:

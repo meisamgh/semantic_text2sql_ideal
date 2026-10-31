@@ -92,6 +92,7 @@ class StudioEdit(StrictModel):
     expected_version: int = Field(ge=1)
     message: str = Field(min_length=1, max_length=4000)
     preview_id: str | None = Field(default=None, max_length=100)
+    widget_id: str | None = Field(default=None, max_length=100)
 
 
 @dataclass(frozen=True)
@@ -107,6 +108,7 @@ def studio_router(
     revisions: DashboardRevisions,
     source_resolver: Callable[[str, str, str], RecentResult | None],
     edit: Callable[[SavedDashboard, str], Awaitable[ChatResponse]],
+    source_bundle: Callable[[str, str, str], dict[str, RecentResult]] | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/studio")
     previews: dict[str, _Preview] = {}
@@ -152,7 +154,20 @@ def studio_router(
             lambda: db.create(
                 principal,
                 body.name,
-                DashboardDocument(spec=spec, source=DashboardSnapshot.capture(source)),
+                DashboardDocument(
+                    spec=spec,
+                    source=DashboardSnapshot.capture(source),
+                    sources=(
+                        {
+                            key: DashboardSnapshot.capture(item)
+                            for key, item in source_bundle(
+                                body.session_id, body.db_id, body.result_id
+                            ).items()
+                        }
+                        if source_bundle and spec.schema_version == 2
+                        else {}
+                    ),
+                ),
             ),
         )
 
@@ -188,6 +203,12 @@ def studio_router(
             ):
                 raise HTTPException(409, "Design preview is unavailable or stale; reopen it.")
             current = current.model_copy(update={"document": prior.document})
+        if body.widget_id:
+            known = {w.widget_id for w in current.document.spec.widgets}
+            known.update(k.kpi_id for k in current.document.spec.kpis)
+            if body.widget_id not in known:
+                raise HTTPException(409, "That dashboard component is unavailable; reopen it.")
+            current._selected_widget = body.widget_id
         result = await edit(current, body.message)
         if result.dashboard is None:
             return {
@@ -199,12 +220,24 @@ def studio_router(
 
         document = checked(
             lambda: DashboardDocument(
-                spec=DashboardSpec.model_validate(result.dashboard), source=current.document.source
+                spec=DashboardSpec.model_validate(result.dashboard),
+                source=current.document.source,
+                sources=(
+                    {
+                        key: DashboardSnapshot.capture(value)
+                        for key, value in result._dashboard_evidence.items()
+                    }
+                    if result._dashboard_evidence
+                    and (result.dashboard or {}).get("schema_version") == 2
+                    else current.document.sources
+                ),
             )
         )
         await asyncio.to_thread(checked, document.verify)
         # Re-check authorization/version after the model awaited; no stale previews.
         latest = await asyncio.to_thread(checked, lambda: db.open(principal, identity))
+        if latest.permission == "viewer":
+            raise HTTPException(403, "You no longer have permission to edit this dashboard.")
         if latest.version != current.version:
             raise HTTPException(409, "Dashboard changed during design; reopen it.")
         preview_id = uuid4().hex

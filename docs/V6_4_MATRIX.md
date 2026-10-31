@@ -76,3 +76,21 @@ Local-only access is not counted as authenticated production ownership. ACL test
 use synthetic ASGI identities and do not verify a login system. No sharing/grant
 endpoint is enabled. NOT RUN: live-provider/PostgreSQL and real browser visual QA.
 Detailed boundaries are in DASHBOARD_STUDIO.md; older V6.4 statuses are unchanged.
+
+### Phase 4 agentic dashboard composition (2026-10-31)
+
+VERIFIED locally: conversation-first creation; independently governed source
+collection; typed per-widget lineage; same-database/complete-source validation;
+privacy-bounded design inputs; one targeted design correction with call ledger;
+selected-widget preservation/replacement; failed required-goal rejection;
+multi-source Save/restart and legacy v1 compatibility; scoped edits and unchanged
+old snapshots; automatic frontend rendering without manual creation modes.
+Evidence: test_multi_dashboard.py (11 cases), extended Studio/agent tests,
+dashboard_view.cjs and dashboard_studio.cjs. Full regression: 605 Python passed,
+2 skipped; 180 frontend/voice passed; Ruff, mypy and diff checks passed.
+
+BLOCKED: external sharing until legitimate deployment identity, session ownership
+and authorization integration exist. NOT RUN: live providers, PostgreSQL and real
+browser visual QA. No production latency gain is claimed. Scope and call-count
+measurements are recorded in V6_4_PROGRESS.md and AGENTIC_DASHBOARDS.md; older
+requirement statuses remain unchanged.

@@ -17,7 +17,7 @@ from time import time
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import Field
+from pydantic import Field, PrivateAttr
 
 from semantic_text2sql.ai_dashboard_designer import eligible_catalog
 from semantic_text2sql.dashboard_service import DashboardError, DashboardRequest, DashboardSpec
@@ -134,6 +134,15 @@ class DashboardSnapshot(StrictModel):
 class DashboardDocument(StrictModel):
     spec: DashboardSpec
     source: DashboardSnapshot
+    sources: dict[str, DashboardSnapshot] = Field(default_factory=dict, max_length=4)
+
+    def results(self) -> dict[str, DashboardSnapshot]:
+        sources = {self.source.result_id: self.source, **self.sources}
+        if sources[self.source.result_id] != self.source:
+            raise DashboardError("Conflicting source snapshots.")
+        if any(key != value.result_id for key, value in sources.items()):
+            raise DashboardError("Invalid source snapshot identity.")
+        return sources
 
     def verify(self) -> None:
         """Recheck retained evidence, not merely JSON shape, without a DB call."""
@@ -141,7 +150,18 @@ class DashboardDocument(StrictModel):
         request = DashboardRequest(
             session_id="saved", db_id=source.db_id, result_id=self.source.result_id
         )
-        base, metrics, charts = eligible_catalog(source, request)
+        if self.spec.schema_version == 2:
+            from semantic_text2sql.multi_dashboard import composition_catalog
+
+            base, metrics, charts = composition_catalog(
+                request, {key: value.result() for key, value in self.results().items()}
+            )
+            if self.spec.sources != base.sources:
+                raise DashboardError("Every widget must retain its own analytical scope.")
+        else:
+            if self.sources:
+                raise DashboardError("Legacy dashboards cannot hide extra data sources.")
+            base, metrics, charts = eligible_catalog(source, request)
         if (
             self.spec.result_id != self.source.result_id
             or self.spec.db_id != source.db_id
@@ -176,6 +196,7 @@ class DashboardDocument(StrictModel):
 
 
 class SavedDashboard(StrictModel):
+    _selected_widget: str | None = PrivateAttr(default=None)
     dashboard_id: str
     owner: str
     name: str
@@ -437,10 +458,13 @@ class DashboardStore:
                 # revision under current validators. A failed validation rolls back.
                 DashboardDocument.model_validate_json(payload).verify()
             # Same source required for Save; changed analyses need Save as New.
-            if (
-                document
-                and document.source
-                != DashboardDocument.model_validate_json(current["payload"]).source
+            previous_document = DashboardDocument.model_validate_json(current["payload"])
+            if document and (
+                document.source != previous_document.source
+                or any(
+                    document.results().get(key) != value
+                    for key, value in previous_document.results().items()
+                )
             ):
                 raise DashboardError("A different source analysis requires Save as New.")
             version, now = expected + 1, time()

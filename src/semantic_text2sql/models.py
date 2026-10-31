@@ -719,8 +719,19 @@ class GenerateRequest(StrictModel):
     schema_snapshot: VerifiedSchemaSnapshot | None = Field(default=None, exclude=True)
 
 
+class DashboardTarget(StrictModel):
+    dashboard_id: str = Field(min_length=1, max_length=100)
+    revision_id: str = Field(min_length=1, max_length=100)
+    widget_id: str | None = Field(default=None, min_length=1, max_length=100)
+
+
 class ChatRequest(StrictModel):
     _dashboard_snapshot_only: bool = PrivateAttr(default=False)
+    _dashboard_sources: dict[str, Any] = PrivateAttr(default_factory=dict)
+    _dashboard_source_ids: list[str] = PrivateAttr(default_factory=list)
+    _dashboard_widget_id: str | None = PrivateAttr(default=None)
+    _dashboard_previous_result_id: str | None = PrivateAttr(default=None)
+    dashboard_target: DashboardTarget | None = None
     model_config = ConfigDict(extra="forbid", validate_default=True)
     session_id: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
     db_id: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
@@ -1014,6 +1025,7 @@ class ChartRecommendations(StrictModel):
 
 
 class ChatResponse(StrictModel):
+    _dashboard_evidence: dict[str, Any] = PrivateAttr(default_factory=dict)
     # Validated DashboardSpec serialized at the specialist boundary; kept here
     # as a JSON envelope to avoid importing dashboard_service back into models.
     dashboard: dict[str, Any] | None = None

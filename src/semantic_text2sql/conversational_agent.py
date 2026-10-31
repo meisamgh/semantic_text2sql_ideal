@@ -80,6 +80,8 @@ class ToolInput(StrictModel):
     operation: Literal["NEW_QUERY", "REFINE", "CORRECTION", "COMPARE", "OPTIMIZE"] | None = None
     changes: list[RequestedChange] = Field(default_factory=list, max_length=10)
     source_run_id: str | None = Field(default=None, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
+    dashboard_goal: str | None = Field(default=None, max_length=4000)
+    source_result_ids: list[str] = Field(default_factory=list, max_length=4)
 
 
 class AgentDecision(StrictModel):
@@ -162,8 +164,11 @@ _DECISION_EXAMPLES: tuple[dict[str, Any], ...] = (
 _TOOL_INPUT_SCHEMA: dict[str, object] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["objective", "operation", "changes", "source_run_id"],
+    "required": ["objective", "operation", "changes", "source_run_id",
+                 "dashboard_goal", "source_result_ids"],
     "properties": {
+        "dashboard_goal": {"type": ["string", "null"], "maxLength": 4000},
+        "source_result_ids": {"type": "array", "maxItems": 4, "items": {"type": "string"}},
         "objective": {"type": "string", "minLength": 1, "maxLength": 4_000},
         "source_run_id": {"anyOf": [
             {"type":"string", "minLength":1, "maxLength":100, "pattern":"^[A-Za-z0-9_-]+$"},
@@ -365,9 +370,12 @@ def _consistency_issue_lines(decision: AgentDecision) -> list[str]:
 
 
 class AgentState(StrictModel):
+    failed_dashboard_goals: dict[str, str] = Field(default_factory=dict)
+    dashboard_goal: str | None = None
+    dashboard_results: dict[str, ChatResponse] = Field(default_factory=dict, max_length=4)
     pending_dashboard_objective: str | None = None
     turn_context: TurnContext | None = None
-    observations: list[dict[str, Any]] = Field(default_factory=list, max_length=4)
+    observations: list[dict[str, Any]] = Field(default_factory=list, max_length=8)
     decision: AgentDecision | None = None
     response: ChatResponse | None = None
     base_response: ChatResponse | None = None
@@ -608,6 +616,7 @@ class ConversationalAnalyticsAgent:
             "explain accepted results and SQL",
             "inspect schema and approved business definitions",
             "make validated charts from complete accepted results",
+            "build and edit dashboards from independently governed analytical results",
         ]
 
     def _failure(self, message: str) -> ChatResponse:
@@ -620,7 +629,7 @@ class ConversationalAnalyticsAgent:
         runner._investigation_id = uuid4().hex
         runner._budget = RequestBudget(
             timeout_seconds=float(os.environ.get("TEXT2SQL_ASSISTANT_TIMEOUT_SECONDS", "180")),
-            max_model_calls=int(os.environ.get("TEXT2SQL_ASSISTANT_MAX_MODEL_CALLS", "8")),
+            max_model_calls=int(os.environ.get("TEXT2SQL_ASSISTANT_MAX_MODEL_CALLS", "12")),
             max_database_calls=int(os.environ.get("TEXT2SQL_ASSISTANT_MAX_DATABASE_CALLS", "24")),
         )
         # Bind graph nodes to this request-local instance.
@@ -663,6 +672,12 @@ class ConversationalAnalyticsAgent:
         """Check model routing against accepted evidence without interpreting SQL."""
         assert self._request is not None
         if decision.tool in {"ai_dashboard_designer", "undo_dashboard"}:
+            return decision
+        if (decision.tool == "ask_data" and decision.tool_arguments
+                and decision.tool_arguments.operation == "NEW_QUERY"
+                and (decision.tool_arguments.dashboard_goal or state.dashboard_goal)):
+            # Independent dashboard evidence is not a refinement of another
+            # widget's grain/metric. Honor the Top layer's typed query boundary.
             return decision
         message = self._request.message
         has_result = bool(last and last.generation and last.generation.accepted)
@@ -915,7 +930,9 @@ class ConversationalAnalyticsAgent:
                 prompt if attempt == 0 or not issues else prompt + self._repair_tail(issues)
             )
             task = (
-                "decision_repair" if attempt else "final_answer" if state.observations
+                "decision_repair" if attempt else "decision"
+                if state.dashboard_goal or (self._request and self._request.dashboard_target)
+                else "final_answer" if state.observations
                 else "decision"
             )
             if native_supported:
@@ -1095,10 +1112,16 @@ class ConversationalAnalyticsAgent:
         assert self._request is not None and self._budget is not None
         if state.observations and state.observations[-1].get("status") == "DASHBOARD_READY":
             assert state.base_response is not None
+            if state.failed_dashboard_goals:
+                return state.model_copy(update={"response": state.base_response.model_copy(update={
+                    "dashboard": None, "message": "The dashboard is incomplete because required "
+                    "analytical evidence is unavailable.", "token_usage": state.usage,
+                    "call_ledger": state.ledger,
+                })})
             return state.model_copy(update={"response": state.base_response.model_copy(update={
                 "token_usage": state.usage, "call_ledger": state.ledger,
             })})
-        if (state.pending_dashboard_objective and state.observations
+        if (state.pending_dashboard_objective and not state.dashboard_goal and state.observations
                 and state.observations[-1].get("tool") == "ask_data"
                 and state.observations[-1].get("status") == "executed"):
             return state.model_copy(update={"decision": AgentDecision(
@@ -1169,7 +1192,8 @@ class ConversationalAnalyticsAgent:
                 state.base_response.generation is not None
                 and state.base_response.generation.accepted
                 and (
-                    latest.get("tool") in {"ask_data", "refresh_analysis"} and not wants_chart
+                    latest.get("tool") in {"ask_data", "refresh_analysis"}
+                    and not wants_chart and not state.dashboard_goal
                     or latest.get("tool") == "change_visualization" and chart_ready
                 )
             ):
@@ -1190,10 +1214,22 @@ class ConversationalAnalyticsAgent:
                     }),
                 })
         compact = {
+            "selected_dashboard_component": (
+                self._request.dashboard_target.model_dump() if self._request.dashboard_target
+                else {"widget_id": self._request._dashboard_widget_id}
+                if self._request._dashboard_widget_id else None
+            ),
+            "dashboard_goal": state.dashboard_goal,
+            "dashboard_evidence": [{"result_id": key, "columns": value.generation.columns,
+                "rows": value.generation.row_count,
+                "grain": value.generation.semantic_contract.output_grain
+                if value.generation.semantic_contract else []}
+                for key, value in state.dashboard_results.items() if value.generation],
             "saved_dashboard_snapshot_only": self._request._dashboard_snapshot_only,
             "current_dashboard": (
                 self.dashboard_inspector(
-                    self._request.session_id, self._request.db_id, last.result_id
+                    self._request.session_id, self._request.db_id,
+                    self._request._dashboard_previous_result_id or last.result_id
                 ) if self.dashboard_inspector and last and last.result_id else None
             ),
             "question": self._request.message,
@@ -1249,11 +1285,19 @@ class ConversationalAnalyticsAgent:
             "results, chart state, and corrections. Select the simplest valid execution "
             "path that fully satisfies the user's request.\n\n"
             "Routing rules:\n"
-            "SAVED STUDIO: When saved_dashboard_snapshot_only is true, edit the retained "
-            "dashboard with ai_dashboard_designer. No SQL refresh or metadata DB tools are "
-            "available in this scope. If new analytical data is required, explain that the "
-            "client must run a new governed analysis in Conversations, then Save as New.\n"
+            "RETAINED DASHBOARD: When saved_dashboard_snapshot_only is true, presentation "
+            "edits must reuse retained data. Never refresh or replace an old source. Only "
+            "explicit new metrics/dimensions/comparisons with typed changes may call ask_data "
+            "to add genuinely missing evidence; preserve every existing source and widget.\n"
             "DASHBOARDS: For dashboard creation or presentation-only revisions use "
+            "the dashboard workflow automatically. Never require a creation button or mode. "
+            "Ordinary analytical questions must NOT create dashboards. Set dashboard_goal "
+            "to the complete original dashboard objective on the first tool call and preserve "
+            "it. Inspect approved definitions and accepted evidence, then retrieve only missing "
+            "metrics through distinct ask_data objectives. Use NEW_QUERY for independent grains; "
+            "do not fabricate joins. Up to four results may support independently scoped widgets. "
+            "When sufficient, select relevant source_result_ids for ai_dashboard_designer. "
+            "Do not finish with a lone SQL result while a dashboard goal remains. "
             "ai_dashboard_designer with the precise design objective; undo_dashboard "
             "restores the previous design. Both reuse the current complete accepted result. "
             "If REQUERY_REQUIRED is returned, preserve the dashboard goal, use ask_data "
@@ -1473,6 +1517,8 @@ class ConversationalAnalyticsAgent:
         if decision.action != "CALL_TOOL":
             answer = decision.answer or "I could not complete that request safely."
             base = state.base_response or self._plain(answer)
+            if state.dashboard_goal and base.dashboard is None:
+                answer = "The dashboard could not be completed from the available evidence."
             failed_required = None
             completed_tools: set[str] = set()
             for item in reversed(state.observations):
@@ -1551,7 +1597,7 @@ class ConversationalAnalyticsAgent:
                     ),
                 }
             )
-        if not decision.tool or state.steps >= 5:
+        if not decision.tool or state.steps >= 8:
             return state.model_copy(
                 update={
                     "response": self._failure(
@@ -1579,9 +1625,19 @@ class ConversationalAnalyticsAgent:
         question = tool_input.objective
         started = perf_counter()
         facts: dict[str, Any]
-        if self._request._dashboard_snapshot_only and tool not in {
+        if (tool == "ask_data" and (state.dashboard_goal or tool_input.dashboard_goal)
+                and len(state.dashboard_results) >= 4):
+            return state.model_copy(update={"response": self._failure(
+                "This dashboard has reached its evidence limit. Narrow the requested scope."
+            )})
+        justified_addition = (
+            tool == "ask_data" and bool(tool_input.changes)
+            and any(change.operation in ANALYTICAL_CHANGE_OPERATIONS
+                    for change in tool_input.changes)
+        )
+        if self._request._dashboard_snapshot_only and not justified_addition and tool not in {
             "ai_dashboard_designer", "undo_dashboard", "present_result", "analyze_result",
-            "explain_existing_result",
+            "explain_existing_result", "get_available_metrics", "get_business_context",
         }:
             return state.model_copy(update={
                 "observations": [*state.observations, {"tool": tool, "status": "UNSUPPORTED",
@@ -1599,6 +1655,8 @@ class ConversationalAnalyticsAgent:
             else self.get_last_response(self._request.session_id, self._request.db_id)
         )
         previous = self.get_state(self._request.session_id)
+        if last and last.result_id and not self._request._dashboard_previous_result_id:
+            self._request._dashboard_previous_result_id = last.result_id
         if state.base_response and state.base_response.state:
             previous = state.base_response.state
         has_prior_sql = bool(
@@ -1700,8 +1758,13 @@ class ConversationalAnalyticsAgent:
                     ),
                     "evidence": investigation_evidence,
                     "assistant_operation": assistant_operation,
-                    "assistant_changes": tool_input.changes,
-                    "assistant_original_question": self._request.message,
+                    "assistant_changes": ([] if tool_input.operation == "NEW_QUERY"
+                        and (tool_input.dashboard_goal or state.dashboard_goal)
+                        else tool_input.changes),
+                    "assistant_original_question": (
+                        question if tool_input.dashboard_goal or state.dashboard_goal
+                        else self._request.message
+                    ),
                     "visualization": (
                         False
                         if tool == "ask_data" and parse_intent(self._request.message).requested
@@ -1842,6 +1905,8 @@ class ConversationalAnalyticsAgent:
             if last is None or self.dashboard_handler is None:
                 facts = {"tool": tool, "error": "Dashboard design is unavailable."}
             else:
+                self._request._dashboard_sources = dict(state.dashboard_results)
+                self._request._dashboard_source_ids = tool_input.source_result_ids
                 base = await self.dashboard_handler(
                     self._request, question, last, tool == "undo_dashboard"
                 )
@@ -1989,8 +2054,27 @@ class ConversationalAnalyticsAgent:
                     else context.pending_goal
                 ),
             })
+        dashboard_goal = tool_input.dashboard_goal or state.dashboard_goal
+        missing_goals = dict(state.failed_dashboard_goals)
+        if dashboard_goal and tool == "ask_data":
+            if facts.get("status") == "executed":
+                missing_goals.pop(question, None)
+            else:
+                missing_goals[question] = str(facts.get("failure") or "Required analysis failed.")
+        collected = dict(state.dashboard_results)
+        if (dashboard_goal and base and base.generation and base.generation.accepted
+                and base.result_id):
+            facts.pop("rows_preview", None)
+            if base.result_id not in collected and len(collected) >= 4:
+                return state.model_copy(update={"response": self._failure(
+                    "The dashboard evidence limit was reached. Narrow its scope."
+                )})
+            collected[base.result_id] = base
         return state.model_copy(
             update={
+                "dashboard_goal": dashboard_goal,
+                "failed_dashboard_goals": missing_goals,
+                "dashboard_results": collected,
                 "turn_context": context,
                 "observations": [*state.observations, facts],
                 "base_response": base,

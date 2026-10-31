@@ -94,6 +94,7 @@ from semantic_text2sql.models import (
     CheckRequest,
     CheckResponse,
     ConversationState,
+    DashboardTarget,
     DatabaseOption,
     FilterValuesResponse,
     GenerateResponse,
@@ -410,6 +411,7 @@ def create_app(
         return None
 
     dashboard_revisions = DashboardRevisions()
+    dashboard_bundles: dict[tuple[str, str, str], dict[str, RecentResult]] = {}
 
     def dashboard_source(session: str, db: str, identity: str) -> RecentResult | None:
         current = recent_results.get((session, db))
@@ -773,6 +775,8 @@ def create_app(
         response.headers["Cache-Control"] = "no-store"
         runs.drop_session(session_id)
         dashboard_revisions.clear(session_id)
+        for bundle_key in [key for key in dashboard_bundles if key[0] == session_id]:
+            dashboard_bundles.pop(bundle_key, None)
         for snapshot_key in [key for key in chart_snapshots if key[0] == session_id]:
             chart_snapshots.pop(snapshot_key, None)
         return Response(status_code=204)
@@ -783,6 +787,8 @@ def create_app(
         response.headers["Cache-Control"] = "no-store"
         conversations.reset(session_id)
         dashboard_revisions.clear(session_id)
+        for bundle_key in [key for key in dashboard_bundles if key[0] == session_id]:
+            dashboard_bundles.pop(bundle_key, None)
         await asyncio.to_thread(runs.mark_memory_reset, session_id)
         for key in [key for key in recent_results if key[0] == session_id]:
             recent_results.pop(key, None)
@@ -1165,7 +1171,9 @@ def create_app(
     async def process_chat(
         request: ChatRequest, *, persist_state: bool = True
     ) -> ChatResponse:
-        assistant_enabled = conversational_agent_enabled()
+        # Studio invokes the same Top layer even when legacy chat compatibility
+        # is enabled; never reinterpret its already-typed SQL objective.
+        assistant_enabled = conversational_agent_enabled() or studio_context.get() is not None
         if enforce_model_catalog and not supports_model(request.provider, request.model):
             raise HTTPException(
                 status_code=422,
@@ -2401,12 +2409,53 @@ def create_app(
             design_mode="ai", objective=objective,
         )
         previous = dashboard_revisions.get(request.session_id, request.db_id, retained.result_id)
+        if previous is None:
+            for prior_id in request._dashboard_source_ids:
+                candidate = dashboard_revisions.get(request.session_id, request.db_id, prior_id)
+                if candidate is not None:
+                    previous = candidate
+                    break
         saved = studio_context.get()
+        evidence: dict[str, RecentResult] = dict(dashboard_bundles.get(
+            (request.session_id, request.db_id, retained.result_id), {}
+        ))
+        if previous:
+            evidence.update(dashboard_bundles.get(
+                (request.session_id, request.db_id, previous.result_id), {}
+            ))
         if saved is not None:
-            if retained.result_id != saved.document.source.result_id:
-                raise DashboardError("A saved dashboard cannot silently switch its source result.")
+            evidence.update({key: value.result()
+                             for key, value in saved.document.results().items()})
+        for key, item in request._dashboard_sources.items():
+            evidence[key] = (item if isinstance(item, RecentResult)
+                             else RecentResult.from_response(item))
+        evidence[retained.result_id] = retained
+        if saved is not None:
+            retained = saved.document.source.result()
+            assert retained.result_id is not None
+            design_request = design_request.model_copy(update={"result_id": retained.result_id})
             previous = saved.document.spec
-        expected = previous.revision_id if previous else None
+        if request._dashboard_source_ids:
+            selected = set(request._dashboard_source_ids)
+            for identity in selected - set(evidence):
+                cached_source = dashboard_source(request.session_id, request.db_id, identity)
+                if cached_source is not None:
+                    evidence[identity] = cached_source
+            if (not selected.issubset(evidence) or retained.result_id not in selected
+                    or len(selected) != len(request._dashboard_source_ids)):
+                return ChatResponse(session_id=request.session_id, operation="VISUALIZE",
+                    resolved_question=objective,
+                    message="Some requested analysis is unavailable. Reopen the dashboard.")
+            evidence = {key: evidence[key] for key in request._dashboard_source_ids}
+        if len(evidence) > 4:
+            return ChatResponse(session_id=request.session_id, operation="VISUALIZE",
+                resolved_question=objective,
+                message="This dashboard supports up to four separate analyses. Narrow its scope.")
+        assert retained.result_id is not None
+        current_revision = dashboard_revisions.get(
+            request.session_id, request.db_id, retained.result_id
+        )
+        expected = current_revision.revision_id if current_revision else None
         usage = TokenUsage()
         ledger: list[CallLedgerEntry] = []
         try:
@@ -2429,6 +2478,9 @@ def create_app(
                     budget=active_request_budget() or RequestBudget(timeout_seconds=15),
                     previous=previous,
                     patch_only=saved is not None,
+                    sources=evidence,
+                    repair=True,
+                    target_widget_id=request._dashboard_widget_id,
                 )
                 usage, ledger = outcome.usage, list(outcome.ledger)
                 if outcome.spec is None:
@@ -2439,10 +2491,15 @@ def create_app(
                     )
                 spec = (outcome.spec if saved is not None else
                         dashboard_revisions.commit(request.session_id, outcome.spec, expected))
-            return ChatResponse(
+                if saved is None:
+                    bundle_key = (request.session_id, request.db_id, retained.result_id)
+                    dashboard_bundles[bundle_key] = evidence
+                    if len(dashboard_bundles) > 100:
+                        dashboard_bundles.pop(next(iter(dashboard_bundles)))
+            response = ChatResponse(
                 session_id=request.session_id, result_id=retained.result_id,
                 operation="VISUALIZE", resolved_question=objective,
-                generation=retained.generation, presentation=retained.presentation,
+                generation=retained.generation, presentation=None,
                 message="The dashboard is ready from the accepted result.",
                 dashboard=spec.model_dump(mode="json"), token_usage=usage, call_ledger=ledger,
                 state_commit_pending=(source.state_commit_pending
@@ -2452,6 +2509,8 @@ def create_app(
                 state=(source.state if isinstance(source, ChatResponse)
                        else accepted_state(request.session_id)),
             )
+            response._dashboard_evidence = evidence
+            return response
         except DashboardError as exc:
             return ChatResponse(
                 session_id=request.session_id, operation="VISUALIZE", resolved_question=objective,
@@ -2465,10 +2524,12 @@ def create_app(
         if spec is None:
             return None
         return {"result_id": result, "revision_id": spec.revision_id, "title": spec.title,
+                "source_result_ids": list(spec.sources) or [spec.result_id],
                 "theme": spec.theme, "kpis": [{"id": k.kpi_id, "title": k.title}
                                               for k in spec.kpis],
                 "charts": [{"id": w.widget_id, "title": w.chart_spec.title,
-                            "type": w.chart_spec.chart_type, "width": w.column_span}
+                            "type": w.chart_spec.chart_type, "width": w.column_span,
+                            "source_result_id": w.result_id}
                            for w in spec.widgets]}
 
     conversational_agent = ConversationalAnalyticsAgent(
@@ -2487,6 +2548,13 @@ def create_app(
 
     async def edit_saved_dashboard(saved: SavedDashboard, message: str) -> ChatResponse:
         source = saved.document.source.result()
+        if saved._selected_widget:
+            widget_source = next((w.result_id for w in saved.document.spec.widgets
+                                  if w.widget_id == saved._selected_widget), None)
+            widget_source = widget_source or next((k.result_id for k in saved.document.spec.kpis
+                                                  if k.kpi_id == saved._selected_widget), None)
+            if widget_source:
+                source = saved.document.results()[widget_source].result()
         session = f"studio-{saved.dashboard_id}"
         state = ConversationState(
             session_id=session, db_id=source.db_id, root_question=source.question,
@@ -2498,6 +2566,13 @@ def create_app(
         studio_token = studio_context.set(saved)
         request = ChatRequest(session_id=session, db_id=source.db_id, message=message)
         request._dashboard_snapshot_only = True
+        request._dashboard_widget_id = saved._selected_widget
+        request.dashboard_target = DashboardTarget(
+            dashboard_id=saved.dashboard_id, revision_id=str(saved.version),
+            widget_id=saved._selected_widget,
+        )
+        request._dashboard_sources = {key: value.result() for key, value
+                                     in saved.document.results().items()}
         try:
             # Same LangGraph, no HTTP recursion or intermediate accepted-state save.
             return await conversational_agent.run(request)
@@ -2505,8 +2580,15 @@ def create_app(
             studio_context.reset(studio_token)
             branch_context.reset(branch_token)
 
+    def studio_source(session: str, db: str, identity: str) -> RecentResult | None:
+        return (dashboard_bundles.get((session, db, identity), {}).get(identity)
+                or dashboard_source(session, db, identity))
+
     app.include_router(studio_router(
-        saved_dashboards, dashboard_revisions, dashboard_source, edit_saved_dashboard
+        saved_dashboards, dashboard_revisions, studio_source, edit_saved_dashboard,
+        source_bundle=lambda session, db, identity: dashboard_bundles.get(
+            (session, db, identity), {}
+        ),
     ))
 
     @app.post("/api/chat", response_model=ChatResponse)
@@ -2526,6 +2608,20 @@ def create_app(
                 ))
             anchor_token = history_anchor.set(request.parent_run_id)
             try:
+                if request.dashboard_target:
+                    current_result = accepted_result(request.session_id, request.db_id)
+                    current_design = (dashboard_revisions.get(
+                        request.session_id, request.db_id, current_result.result_id
+                    ) if current_result and current_result.result_id else None)
+                    target = request.dashboard_target
+                    if (current_design is None or current_design.dashboard_id != target.dashboard_id
+                            or current_design.revision_id != target.revision_id
+                            or (target.widget_id is not None and target.widget_id not in
+                                {w.widget_id for w in current_design.widgets}
+                                | {k.kpi_id for k in current_design.kpis})):
+                        raise HTTPException(409, "That dashboard component changed; reopen it.")
+                    request._dashboard_widget_id = target.widget_id
+                    request._dashboard_snapshot_only = True
                 response = await conversational_agent.run(request)
                 return (
                     response if response.history_saved

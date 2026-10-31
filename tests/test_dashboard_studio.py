@@ -211,7 +211,7 @@ def test_server_validated_preview_save_and_optimistic_conflict(tmp_path):
     assert undone["version"] == 3 and undone["document"]["spec"]["theme"] == "green"
 
 
-@pytest.mark.parametrize("route", ["design", "refresh"])
+@pytest.mark.parametrize("route", ["design", "refresh", "component"])
 def test_real_top_layer_edit_after_restart_never_executes_sql(
     registry, tmp_path, monkeypatch, route
 ):
@@ -233,6 +233,13 @@ def test_real_top_layer_edit_after_restart_never_executes_sql(
 
         async def complete_detailed(self, model, prompt):
             self.calls.append("top")
+            if route == "component":
+                context = json.loads(prompt.split("\nContext: ")[1])
+                assert context["selected_dashboard_component"] == {
+                    "dashboard_id": saved.dashboard_id,
+                    "revision_id": "1",
+                    "widget_id": saved.document.spec.widgets[0].widget_id,
+                }
             if route == "refresh":
                 decision = (
                     {
@@ -257,7 +264,11 @@ def test_real_top_layer_edit_after_restart_never_executes_sql(
                     "intent": "VISUALIZE",
                     "tool": "ai_dashboard_designer",
                     "tool_arguments": {
-                        "objective": "Use higher contrast without changing the data"
+                        "objective": (
+                            "Make the selected chart larger"
+                            if route == "component"
+                            else "Use higher contrast without changing the data"
+                        )
                     },
                 }
             ), TokenUsage()
@@ -266,6 +277,19 @@ def test_real_top_layer_edit_after_restart_never_executes_sql(
             if task != "dashboard":
                 return await self.complete_detailed(model, prompt)
             self.calls.append(task)
+            if route == "component":
+                return json.dumps(
+                    {
+                        "result_id": "result",
+                        "mode": "PATCH",
+                        "charts": [
+                            {
+                                "candidate_id": saved.document.spec.widgets[0].widget_id,
+                                "column_span": 12,
+                            }
+                        ],
+                    }
+                ), TokenUsage()
             return json.dumps(
                 {"result_id": "result", "mode": "PATCH", "theme": "contrast"}
             ), TokenUsage()
@@ -288,13 +312,25 @@ def test_real_top_layer_edit_after_restart_never_executes_sql(
     assert client.get(f"/api/studio/{saved.dashboard_id}").status_code == 200
     response = client.post(
         f"/api/studio/{saved.dashboard_id}/edit",
-        json={"expected_version": 1, "message": "Use higher contrast"},
+        json={
+            "expected_version": 1,
+            "message": "Make this chart larger" if route == "component" else "Use higher contrast",
+            "widget_id": saved.document.spec.widgets[0].widget_id if route == "component" else None,
+        },
     )
     assert response.status_code == 200, response.text
     if route == "design":
         assert response.json()["preview_id"]
         assert model.calls == ["top", "dashboard"]
         assert response.json()["spec"]["theme"] == "contrast"
+    elif route == "component":
+        assert response.json()["preview_id"]
+        assert model.calls == ["top", "dashboard"]
+        assert response.json()["spec"]["widgets"][0]["column_span"] == 12
+        assert response.json()["spec"]["data"] == saved.document.spec.data.model_dump(mode="json")
+        assert response.json()["spec"]["widgets"][1:] == [
+            widget.model_dump(mode="json") for widget in saved.document.spec.widgets[1:]
+        ]
     else:
         assert response.json()["preview_id"] is None
         assert model.calls == ["top", "top"]

@@ -1419,6 +1419,15 @@ body.sidebar-collapsed .sidebar { display:none; }
 .dashboard-chart-title { font-size:13px; line-height:1.4; margin:0 0 10px; overflow-wrap:anywhere; }
 .dashboard-empty,.dashboard-caption { font-size:12px; line-height:1.5; color:var(--text-muted); }
 .dashboard-kpi .dashboard-caption { overflow-wrap:anywhere; }
+.dashboard-chart-card,.dashboard-kpi { position:relative; }
+.dashboard-widget-edit { position:absolute; right:10px; top:8px; border:0;
+  border-radius:7px; background:var(--surface-muted); color:var(--text-muted);
+  padding:4px 7px; font-size:11px; cursor:pointer; }
+.dashboard-widget-edit:hover,.dashboard-widget-edit:focus-visible { color:var(--text);
+  outline:2px solid var(--primary,#168447); outline-offset:2px; }
+.dashboard-chart-title,.dashboard-kpi .kpi-card-title { padding-right:38px; }
+.dashboard-primary { box-shadow:0 4px 16px rgba(22,132,71,.07); }
+.dashboard-scope-label { margin:5px 0; font-size:13px; color:var(--text); }
 .dashboard-table { max-width:100%; overflow:auto; }
 @media(max-width:900px){ .dashboard-kpi { grid-column:span 6; } }
 @media(max-width:600px){ .dashboard-view { padding:12px; } .dashboard-chart-card { grid-column:span 12; }

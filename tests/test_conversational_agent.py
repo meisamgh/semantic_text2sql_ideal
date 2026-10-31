@@ -855,7 +855,7 @@ def test_structured_schema_enumerates_every_allowed_value() -> None:
     assert "run_arbitrary_sql" not in tool_enum
 
     assert arguments_spec["anyOf"][0]["required"] == [  # type: ignore[index]
-        "objective", "operation", "changes", "source_run_id"
+        "objective", "operation", "changes", "source_run_id", "dashboard_goal", "source_result_ids"
     ]
     assert AGENT_DECISION_SCHEMA["required"] == [
         "action", "intent", "tool", "tool_arguments", "instruction", "answer",

@@ -25,12 +25,12 @@ Failures, empty results, unexpected NULLs or correctness reviews
 - **Interactive results:** Visualization, Data and SQL views; charts reuse sufficient results.
 - **Traceability:** tool observations, validation attempts, timings and token accounting.
 
-**Temporary dashboards:** click **Create dashboard** on an accepted result to
-reuse its data for read-only filters, eligible KPIs and up to four charts—without
-new SQL or model calls. Optional **AI design** chooses verified widgets with one
-bounded specialist call, supports design revisions and undo, and never changes
-the source SQL. See [Phase 1](docs/DASHBOARD_MVP.md) and
-[AI dashboard designer](docs/AI_DASHBOARD_DESIGNER.md).
+**Conversational dashboards:** ask “Build a sales performance dashboard.” The
+existing Top-layer agent reuses accepted evidence, retrieves missing analyses
+through governed SQL, and invokes the bounded dashboard designer. Widgets keep
+their own source IDs, scopes and grain. No creation button or mode selection.
+Select a component and choose **Edit with AI**, or describe a whole-dashboard change.
+[Workflow and limits](docs/AGENTIC_DASHBOARDS.md).
 
 **Dashboard Studio:** save private drafts, collaborate on design, explicitly
 approve versions, and reopen saved snapshots from the Library after restart—no

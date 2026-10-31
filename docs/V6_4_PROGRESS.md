@@ -459,3 +459,41 @@ deployment prerequisites are in DASHBOARD_STUDIO.md. Live providers, PostgreSQL 
 real desktop/mobile browser visual QA NOT RUN. RAM previews need sticky routing
 across workers and are not durable until Save; published snapshots remain permanent.
 No commit, push, actual .env edit, new DB refresh or external infrastructure change.
+
+### Phase 4 conversation-first multi-result dashboards (2026-10-31)
+
+Implemented automatic dashboard composition through the existing Top-layer agent
+and bounded designer. Independent governed SQL objectives retain separate typed
+source identities, contracts, snapshots and provenance; no cross-result joins or
+aggregations are introduced. Ordinary SQL questions expose no dashboard-creation
+controls. Selected-component edits preserve unaffected widgets, and explicit
+analytical additions append accepted evidence without replacing old snapshots.
+Saved v1 dashboards remain readable; v2 documents reuse the existing store/CAS.
+
+Designer inputs omit raw rows and category values. One targeted correction is
+allowed for repairable invalid proposals under the shared budget. The example
+model-call ceiling is 12; the actual local .env was not changed. Dashboard scope,
+KPIs, charts and optional anchor table retain the fixed section ordering.
+
+Verification: full Python 605 passed/2 skipped (17.92s); frontend/voice 180 passed
+(537ms); Ruff, mypy (64 source modules), and git diff --check passed. New evidence
+is in test_multi_dashboard.py (11 cases), extended test_dashboard_studio.py,
+dashboard_view.cjs and dashboard_studio.cjs. Real SQLite with scripted providers
+verifies three SQL objectives followed by composition: 4 Top decisions + 3 SQL
+generation calls + 1 designer call, with no separate final-prose call. A saved
+analytical addition uses 2 Top + 1 SQL generation + 1 designer call. These are
+fixture measurements, not production latency/token or semantic-accuracy claims.
+
+Limits: four sources in one authorized database, four KPIs/four charts, complete
+bounded results only, optional data table for the anchor source. No interactive
+global filters or automatic refresh. Temporary bundles require sticky routing;
+saved snapshots survive restart. External sharing stays BLOCKED on legitimate
+deployment identity/session authorization. Live providers, PostgreSQL and browser
+visual QA NOT RUN. No commit or push; restart/reload is needed to load the UI.
+See AGENTIC_DASHBOARDS.md for source files, behavior and remaining boundaries.
+
+Publication review: rejected duplicate effective replacement targets before
+materialization, preventing silent same-widget overwrite. Regression preserves
+the original widgets on rejection. Final checks: 606 Python passed/2 skipped
+(18.12s), 180 frontend/voice passed (515ms), Ruff/mypy/diff passed. Live-provider,
+PostgreSQL and browser visual checks remain NOT RUN.

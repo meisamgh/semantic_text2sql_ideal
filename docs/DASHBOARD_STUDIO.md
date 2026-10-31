@@ -2,12 +2,12 @@
 
 ## Client workflow
 
-1. Run an analysis and create a Phase 1 or AI-designed Phase 2 dashboard.
-2. Choose **Save dashboard**, name it, and explicitly retain a private **Draft**.
+1. Ask Queryflow to build a dashboard; Phase 4 handles evidence retrieval and design.
+2. Choose **Save**, name it, and explicitly retain a private **Draft**.
 3. Open **Dashboard Library** in the sidebar. Saved dashboards reopen from their
    retained snapshot, even after a server restart, without a model or business
    database query.
-4. Request design changes using **Update preview**. The existing LangGraph Top
+4. Request design changes using **Edit with AI**. The existing LangGraph Top
    layer invokes the existing bounded AI dashboard designer. Consecutive previews
    preserve earlier unsaved design choices. No new agent or chart planner exists.
 5. **Save** retains the preview as a new draft revision; **Save as New** creates
@@ -20,12 +20,14 @@
 Applied filters/scope → KPIs → analytical plots → optional data remains fixed.
 Existing Plotly/ECharts and table components render all saved views. Library reads,
 Save, Copy, Rename, Undo, Publish, Delete and history do not invoke an LLM or execute
-the source SQL. Conversational edits use the Top layer plus at most one designer
-call for a valid design; bounded decision-format repairs retain existing budgets.
+the source SQL. A valid design normally uses one Top decision plus one designer
+call; Phase 4 permits one targeted designer correction and bounded extra Top
+decisions/governed queries for missing evidence, all under the shared budget.
 
-Saved editing is intentionally snapshot-only: database/query/metadata tools are
-blocked even if the Top layer requests them. Different analytical data requires
-an explicit new governed analysis in Conversations, followed by a new dashboard.
+Phase 4 extends saved editing: presentation changes reuse snapshots, while explicit
+typed analytical changes may add genuinely missing results through governed SQL.
+Existing source snapshots are never silently refreshed/replaced. Each widget
+retains its scope and source; see AGENTIC_DASHBOARDS.md for limits and lineage.
 No automatic refresh, editable global filters, new chart types or agents were added.
 
 ## Persistence and consistency
@@ -40,7 +42,7 @@ Two additive, transactional migrations create `saved_dashboards`,
 `dashboard_studio_migrations`, then add revision names. They are idempotent and
 leave existing query history intact. No destructive down-migration is run.
 
-Every revision retains a typed DashboardSpec and full supporting snapshot: exact
+Every revision retains a typed DashboardSpec and full supporting snapshots: exact
 rows/columns, SQL, question, result/run identity, execution timestamp, semantic
 contract, source grain, filter metadata and provenance. Snapshot data is NOT a
 20-row history preview. Models reject incomplete/truncated results; existing limits
@@ -124,7 +126,8 @@ undo, concurrent independent stores, conflicts, credential/config exclusions,
 tampered evidence, and deletion cascades. `test_dashboard_studio.py` covers
 API lifecycle, local/remote gates, synthetic authenticated identities, preview
 save, in-flight version changes, and real Top-layer editing against a reopened
-snapshot. Adversarial Top decisions requesting SQL are blocked. Scripted valid
+snapshot. Unjustified refresh decisions are blocked; explicit typed additions
+use governed SQL and retain old snapshots. Scripted valid
 edits use **one Top call + one designer call**; reopen uses **zero**. These are call
 counts, not live-provider latency measurements.
 

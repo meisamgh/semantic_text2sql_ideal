@@ -1,4 +1,4 @@
-"""Single-result dashboards. No database connection or model capability."""
+"""Typed dashboards and per-result eligibility. No database or model capability."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Any, Literal
 from pydantic import Field, model_validator
 from sqlglot import exp, parse_one
 
-from semantic_text2sql.models import ChartSpec, StrictModel
+from semantic_text2sql.models import ChartSpec, SemanticContract, StrictModel
 from semantic_text2sql.result_cache import RecentResult
 from semantic_text2sql.visualization_recommender import (
     LLMChartProposal,
@@ -61,13 +61,29 @@ class DashboardData(StrictModel):
 
 
 class DashboardFilterMetadata(StrictModel):
+    result_id: str | None = None
     field: str
     table: str | None = None
     column: str | None = None
     source: Literal["stored_result", "verified_schema"]
 
 
+class DashboardSourceRef(StrictModel):
+    result_id: str
+    db_id: str
+    run_id: str | None = None
+    question: str
+    row_count: int = Field(ge=0, le=500)
+    complete: Literal[True] = True
+    execution_timestamp: float | None = None
+    semantic_contract: SemanticContract | None = None
+    applied_constraints: list[str] = Field(default_factory=list)
+    source_sql: str | None = Field(default=None, max_length=20000)
+
+
 class DashboardSpec(StrictModel):
+    schema_version: Literal[1, 2] = 1
+    sources: dict[str, DashboardSourceRef] = Field(default_factory=dict, max_length=4)
     dashboard_id: str
     result_id: str
     run_id: str | None
@@ -99,10 +115,40 @@ class DashboardSpec(StrictModel):
 
     @model_validator(mode="after")
     def source_identity(self) -> DashboardSpec:
-        if any(k.result_id != self.result_id for k in self.kpis):
+        if self.schema_version == 2 and (
+            not self.sources
+            or self.result_id not in self.sources
+            or any(
+                key != ref.result_id or ref.db_id != self.db_id for key, ref in self.sources.items()
+            )
+        ):
+            raise ValueError("Dashboard sources must be explicit accepted results in one database")
+        allowed = self.sources if self.schema_version == 2 else {}
+        if allowed:
+            anchor = allowed[self.result_id]
+            if (
+                anchor.row_count != self.row_count
+                or anchor.run_id != self.run_id
+                or anchor.execution_timestamp != self.execution_timestamp
+            ):
+                raise ValueError("Dashboard anchor identity differs from its result reference")
+            identities = [k.kpi_id for k in self.kpis] + [w.widget_id for w in self.widgets]
+            if any(not key for key in identities) or len(set(identities)) != len(identities):
+                raise ValueError("Multi-result widgets require unique immutable identities")
+        if self.schema_version == 1 and self.sources:
+            raise ValueError("Single-result dashboards cannot declare unrelated source results")
+        if any(
+            k.result_id not in allowed if allowed else k.result_id != self.result_id
+            for k in self.kpis
+        ):
             raise ValueError("KPI source does not match dashboard result")
         if any(
-            w.result_id != self.result_id or w.chart_spec.source_row_count != self.row_count
+            (
+                w.result_id not in allowed
+                or w.chart_spec.source_row_count != allowed[w.result_id].row_count
+            )
+            if allowed
+            else (w.result_id != self.result_id or w.chart_spec.source_row_count != self.row_count)
             for w in self.widgets
         ):
             raise ValueError("Chart source does not match dashboard result")
@@ -199,8 +245,9 @@ def _proof(source: RecentResult) -> tuple[dict[str, str], list[str]]:
     return sums, grain
 
 
-def eligible_kpis(source: RecentResult, temporal_chart: ChartSpec | None = None,
-                  *, limit: int = 4) -> list[KPISpec]:
+def eligible_kpis(
+    source: RecentResult, temporal_chart: ChartSpec | None = None, *, limit: int = 4
+) -> list[KPISpec]:
     if not source.rows:
         return []
     identity = source.result_id or ""
@@ -310,8 +357,10 @@ def eligible_kpis(source: RecentResult, temporal_chart: ChartSpec | None = None,
 
 
 def build_dashboard(
-    request: DashboardRequest, resolve: Callable[[str, str, str], RecentResult | None],
-    *, chart_catalog: list[DashboardWidget] | None = None,
+    request: DashboardRequest,
+    resolve: Callable[[str, str, str], RecentResult | None],
+    *,
+    chart_catalog: list[DashboardWidget] | None = None,
 ) -> DashboardSpec:
     source = resolve(request.session_id, request.db_id, request.result_id)
     if source is None or source.result_id != request.result_id or source.db_id != request.db_id:
@@ -384,8 +433,14 @@ def build_dashboard(
             valid, question="", columns=source.columns, rows=source.rows, truncated=False
         )
         if chart_catalog is not None:
-            chart_catalog.append(DashboardWidget(widget_id=f"candidate-{len(chart_catalog)}",
-                result_id=request.result_id, row=min(len(chart_catalog)//2, 3), chart_spec=spec))
+            chart_catalog.append(
+                DashboardWidget(
+                    widget_id=f"candidate-{len(chart_catalog)}",
+                    result_id=request.result_id,
+                    row=min(len(chart_catalog) // 2, 3),
+                    chart_spec=spec,
+                )
+            )
         if family in families or len(widgets) >= 4:
             continue
         widgets.append(

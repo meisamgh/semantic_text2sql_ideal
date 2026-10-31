@@ -76,7 +76,7 @@ window.QueryflowDashboardStudio = (() => {
           node(
             "p",
             "dashboard-empty",
-            "No saved dashboards. Create a dashboard from an accepted result, then choose Save dashboard.",
+            "Ask Queryflow to build a dashboard, then choose Save.",
           ),
         );
       }
@@ -104,6 +104,7 @@ window.QueryflowDashboardStudio = (() => {
     );
     clear();
     let preview = null;
+    let selectedWidget = null;
     const expected = headVersion ?? saved.version,
       historical = saved.version !== expected;
     const editable = saved.permission !== "viewer" && !historical;
@@ -117,13 +118,13 @@ window.QueryflowDashboardStudio = (() => {
       "dashboard-caption",
       `${
         historical ? "Historical snapshot" : saved.status
-      } · Version ${saved.version} · ${saved.owner}`,
+      } · Version ${saved.version}`,
     );
     const view = node("div", "dashboard-view");
     const source = saved.document.source;
     const evidence = node("details", "studio-source");
     evidence.append(
-      node("summary", "", "Source evidence (saved, not refreshed)"),
+      node("summary", "", "Details"),
       node(
         "p",
         "dashboard-caption",
@@ -135,9 +136,34 @@ window.QueryflowDashboardStudio = (() => {
       ),
       node("pre", "", source.sql),
     );
+    for (const item of Object.values(saved.document.sources || {})) {
+      if (item.result_id === source.result_id) continue;
+      evidence.append(
+        node("h4", "", item.question || "Analysis"),
+        node(
+          "p",
+          "dashboard-caption",
+          item.result_id + " · " + item.row_count + " rows · " +
+            (item.execution_timestamp
+              ? new Date(item.execution_timestamp * 1000).toLocaleString()
+              : "Date unavailable"),
+        ),
+        node("pre", "", item.sql),
+      );
+    }
     const redraw = (spec) => {
       handle?.dispose();
-      handle = window.QueryflowDashboard.render(view, spec, dependencies);
+      handle = window.QueryflowDashboard.render(view, spec, {
+        ...dependencies,
+        onSelectWidget: editable
+          ? (id) => {
+            selectedWidget = id;
+            clearSelection.hidden = false;
+            editText.placeholder = "Describe a change to this component…";
+            editText.focus?.();
+          }
+          : undefined,
+      });
     };
     const change = (route, extra = {}) =>
       action(async () => {
@@ -165,13 +191,20 @@ window.QueryflowDashboardStudio = (() => {
     const editText = node("input", "dashboard-revision-input");
     editText.placeholder = "Describe a design change…";
     editText.setAttribute("aria-label", "Saved dashboard design change");
-    const edit = button("Update preview", () =>
+    const clearSelection = button("Whole dashboard", () => {
+      selectedWidget = null;
+      clearSelection.hidden = true;
+      editText.placeholder = "Describe a design change…";
+    });
+    clearSelection.hidden = true;
+    const edit = button("Edit with AI", () =>
       action(async () => {
         if (!editText.value.trim()) return;
         const result = await request(`/api/studio/${identity}/edit`, {
           expected_version: expected,
           message: editText.value.trim(),
           preview_id: preview?.preview_id || null,
+          widget_id: selectedWidget,
         });
         if (!result.preview_id) {
           throw new Error(
@@ -179,6 +212,15 @@ window.QueryflowDashboardStudio = (() => {
           );
         }
         preview = result;
+        if (
+          ![
+            ...(result.spec.widgets || []).map((w) => w.widget_id),
+            ...(result.spec.kpis || []).map((k) => k.kpi_id),
+          ].includes(selectedWidget)
+        ) {
+          selectedWidget = null;
+          clearSelection.hidden = true;
+        }
         redraw(result.spec);
         publish.disabled = true;
         details.textContent =
@@ -236,7 +278,7 @@ window.QueryflowDashboardStudio = (() => {
     );
     const history = node("div", "dashboard-actions");
     const edits = node("div", "dashboard-actions");
-    edits.append(editText, edit);
+    edits.append(editText, edit, clearSelection);
     for (const control of [name, save, publish, editText, edit]) {
       control.disabled = !editable;
     }
@@ -261,7 +303,7 @@ window.QueryflowDashboardStudio = (() => {
   function mountSave(host, getSpec, { api, sessionId, body }) {
     const status = node("span", "dashboard-status");
     status.setAttribute("role", "status");
-    const save = button("Save dashboard", async () => {
+    const save = button("Save", async () => {
       const spec = getSpec();
       if (!spec || save.disabled) return;
       const name = window.prompt(

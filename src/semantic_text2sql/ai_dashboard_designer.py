@@ -1,4 +1,4 @@
-"""One-call dashboard specialist: selects verified catalog entries, never SQL."""
+"""Bounded dashboard specialist: verified choices, optional targeted repair, never SQL."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from statistics import median
 from time import perf_counter
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, ValidationError
 
 from semantic_text2sql.dashboard_service import (
     DashboardError,
@@ -33,6 +33,7 @@ class KPIChoice(StrictModel):
     kpi_id: str = Field(max_length=100)
     order: int | None = Field(default=None, ge=0, le=3)
     column_span: Literal[3, 4, 6, 12] | None = None
+    replaces_widget_id: str | None = Field(default=None, max_length=100)
 
 
 class ChartChoice(StrictModel):
@@ -45,6 +46,7 @@ class ChartChoice(StrictModel):
     x: str | None = None
     y: str | None = None
     series: str | None = None
+    replaces_widget_id: str | None = Field(default=None, max_length=100)
 
 
 class DashboardProposal(StrictModel):
@@ -112,17 +114,18 @@ def design_context(
             "nulls": len(values) - len(nonnull),
             "cardinality": len({repr(v) for v in nonnull}),
         }
-        if numeric and len(numeric) == len(nonnull):
+        identifier = bool(re.search(r"(?:id$|_id$|email|phone|name|token|password)", column, re.I))
+        if numeric and len(numeric) == len(nonnull) and not identifier:
             item.update(
                 type="numeric", minimum=min(numeric), maximum=max(numeric), median=median(numeric)
             )
         else:
             item.update(
-                type="text",
-                distribution=[
-                    {"value": str(v)[:80], "count": count}
-                    for v, count in Counter(str(v) for v in nonnull).most_common(4)
-                ],
+                type="numeric" if numeric and len(numeric) == len(nonnull) else "text",
+                values_redacted=True,
+                distribution_counts=sorted(
+                    Counter(repr(v) for v in nonnull).values(), reverse=True
+                )[:5],
             )
         profiles.append(item)
     contract = source.semantic_contract
@@ -138,13 +141,42 @@ def design_context(
         )[0],
         "omitted_profile_columns": max(0, len(source.columns) - 24),
         "grain": contract.output_grain or contract.grain if contract else [],
-        "constraints": base.applied_constraints,
+        "constraints": "Retained independently per source; no literal values disclosed.",
         "approved_metrics": [m.model_dump() for m in contract.approved_metrics[:8]]
         if contract
         else [],
-        "kpi_catalog": [k.model_dump() for k in kpis.values()],
+        "kpi_catalog": [
+            k.model_dump(
+                include={
+                    "kpi_id",
+                    "metric",
+                    "result_id",
+                    "title",
+                    "calculation",
+                    "unit",
+                    "source_grain",
+                }
+            )
+            for k in kpis.values()
+        ],
         "chart_catalog": [
-            {"candidate_id": key, **w.chart_spec.model_dump(exclude={"data", "source_columns"})}
+            {
+                "candidate_id": key,
+                "result_id": w.result_id,
+                **w.chart_spec.model_dump(
+                    include={
+                        "chart_type",
+                        "x",
+                        "y",
+                        "series",
+                        "x_components",
+                        "y_measures",
+                        "title",
+                        "measure_units",
+                        "time_format",
+                    }
+                ),
+            }
             for key, w in charts.items()
         ],
         "filter_catalog": [
@@ -152,13 +184,7 @@ def design_context(
             for i, f in enumerate(base.verified_filter_metadata)
         ],
         "provenance": source.provenance[:4],
-        "sample": [
-            {
-                column: str(value)[:80] if isinstance(value, str) else value
-                for column, value in zip(source.columns[:12], row[:12], strict=True)
-            }
-            for row in source.rows[:3]
-        ],
+        "sample": [],
         "previous": (
             {
                 "revision_id": previous.revision_id,
@@ -188,6 +214,8 @@ charts; do not repeat a fixed template. Choose order, widths, readable titles/la
 Sections are always read-only global filters, KPIs, charts, optional source data in that order.
 Use REPLACE for initial design; PATCH for revisions, listing only changed/added entries and
 explicit remove_ids. Preserve all unmentioned widgets, encodings, filters, definitions and data.
+To replace a selected widget with another eligible metric/chart, use replaces_widget_id;
+the existing widget identity/order is retained while its validated source may change.
 The first chart is the primary visualization. Select at most four KPIs and four charts.
 Axes must exactly match the selected candidate; never invent an alias, metric, formula or data.
 Do not add HTML, JavaScript, Python, executable options, numerical findings or causal claims.
@@ -197,6 +225,9 @@ global filter editing/recalculation is NOT enabled. Approved themes: green, neut
 If the requested data/metric/breakdown is not in the catalogs, return REQUERY_REQUIRED and precise
 missing_requirements. Never substitute an unrelated KPI or silently request different data.
 Only the existing Top-layer assistant can decide to invoke governed Text-to-SQL.
+If selected_widget_id is present, return PATCH affecting only that exact widget;
+preserve other widgets and all global settings. repair_feedback is a deterministic
+validation error: correct that issue without inventing new data or changing scope.
 Return ONLY JSON matching this schema: {schema}
 Client objective: {objective}
 Verified context (profiles/sample are bounded, not the entire result): {context}
@@ -216,7 +247,11 @@ def _materialize(
         raise ValueError("A patch requires a previous validated dashboard")
     if previous and previous.design_mode != "deterministic" and proposal.mode != "PATCH":
         raise ValueError("Dashboard revisions must explicitly preserve unaffected widgets")
-    if proposal.mode == "PATCH" and (previous is None or previous.result_id != base.result_id):
+    if proposal.mode == "PATCH" and (
+        previous is None
+        or previous.result_id != base.result_id
+        and previous.result_id not in base.sources
+    ):
         raise ValueError("Revision requires the same accepted source result")
     annotations = [
         proposal.title,
@@ -249,10 +284,18 @@ def _materialize(
             raise ValueError("Duplicate or contradictory selection")
         if any(key not in catalog_keys for key in ids):
             raise ValueError("Unknown eligible metric or chart candidate")
+    for choices, key_name in ((proposal.kpis, "kpi_id"), (proposal.charts, "candidate_id")):
+        targets = [c.replaces_widget_id or getattr(c, key_name) for c in choices]
+        if len(targets) != len(set(targets)) or set(targets).intersection(proposal.remove_ids):
+            raise ValueError("Duplicate or contradictory widget target")
     for choice in proposal.kpis:
-        old = selected_kpis.get(choice.kpi_id)
-        selected_kpis[choice.kpi_id] = kpis[choice.kpi_id].model_copy(
+        target = choice.replaces_widget_id or choice.kpi_id
+        if choice.replaces_widget_id and (not patch or target not in selected_kpis):
+            raise ValueError("Only an existing KPI widget can be replaced")
+        old = selected_kpis.get(target)
+        selected_kpis[target] = kpis[choice.kpi_id].model_copy(
             update={
+                "kpi_id": target,
                 "column_span": choice.column_span or (old.column_span if old else 3),
             }
         )
@@ -263,8 +306,15 @@ def _materialize(
                 chart_choice, field_name
             ) != getattr(candidate.chart_spec, field_name):
                 raise ValueError("Axes must match the validated candidate")
-        old_chart = selected_charts.get(chart_choice.candidate_id)
-        spec = old_chart.chart_spec if old_chart else candidate.chart_spec
+        target = chart_choice.replaces_widget_id or chart_choice.candidate_id
+        if chart_choice.replaces_widget_id and (not patch or target not in selected_charts):
+            raise ValueError("Only an existing chart widget can be replaced")
+        old_chart = selected_charts.get(target)
+        spec = (
+            old_chart.chart_spec
+            if old_chart and not chart_choice.replaces_widget_id
+            else candidate.chart_spec
+        )
         labels = {
             name: getattr(chart_choice, name)
             for name in ("title", "x_label", "y_label")
@@ -278,8 +328,9 @@ def _materialize(
 
                 if not words(labels[label_name]).issubset(words(column) | {"axis", "value"}):
                     raise ValueError("An axis label cannot rename the verified measure")
-        selected_charts[chart_choice.candidate_id] = candidate.model_copy(
+        selected_charts[target] = candidate.model_copy(
             update={
+                "widget_id": target,
                 "column_span": chart_choice.column_span
                 or (old_chart.column_span if old_chart else 6),
                 "chart_spec": spec.model_copy(update=labels),
@@ -287,7 +338,11 @@ def _materialize(
         )
 
     def ordered(items: dict[str, Any], choices: Any, key_name: str) -> list[Any]:
-        order = {getattr(c, key_name): c.order for c in choices if c.order is not None}
+        order = {
+            c.replaces_widget_id or getattr(c, key_name): c.order
+            for c in choices
+            if c.order is not None
+        }
         original = {key: index for index, key in enumerate(items)}
         return [
             items[key]
@@ -307,8 +362,19 @@ def _materialize(
         raise ValueError("Dashboard exceeds widget limits")
     if not patch and not (kpi_list or chart_list) and (kpis or charts):
         raise ValueError("Empty selection despite eligible evidence")
+    existing_sources = (
+        (set(previous.sources) or {previous.result_id}) if patch and previous else set()
+    )
+    required_sources = set(base.sources) - existing_sources
+    represented = {item.result_id for item in [*kpi_list, *chart_list]}
+    if required_sources - represented:
+        raise ValueError("Each newly requested analysis needs a corresponding KPI or chart")
+    old_rows = {w.widget_id: w.row for w in previous.widgets} if patch and previous else {}
+    reordered = any(choice.order is not None for choice in proposal.charts)
     for i, widget in enumerate(chart_list):
-        chart_list[i] = widget.model_copy(update={"row": i})
+        chart_list[i] = widget.model_copy(
+            update={"row": old_rows.get(widget.widget_id, i) if not reordered else i}
+        )
     filters = base.verified_filter_metadata
     if proposal.filter_refs is not None:
         allowed = {f"filter-{i}": item for i, item in enumerate(filters)}
@@ -330,6 +396,11 @@ def _materialize(
             "widgets": chart_list,
             "verified_filter_metadata": filters,
             "design_mode": "ai",
+            "data": (
+                previous.data
+                if patch and previous and previous.result_id == base.result_id
+                else base.data
+            ),
             "parent_revision_id": previous.revision_id if previous else None,
         }
     )
@@ -346,9 +417,22 @@ async def design_dashboard(
     budget: RequestBudget,
     previous: DashboardSpec | None = None,
     patch_only: bool = False,
+    sources: dict[str, RecentResult] | None = None,
+    repair: bool = False,
+    repair_feedback: str = "",
+    target_widget_id: str | None = None,
 ) -> DashboardDesignOutcome:
-    base, kpis, charts = eligible_catalog(source, request)
-    if previous and previous.result_id != source.result_id:
+    if sources and len(sources) > 1:
+        from semantic_text2sql.multi_dashboard import composition_catalog
+
+        base, kpis, charts = composition_catalog(request, sources)
+    else:
+        base, kpis, charts = eligible_catalog(source, request)
+    if (
+        previous
+        and previous.result_id != source.result_id
+        and (not sources or previous.result_id not in sources)
+    ):
         raise DashboardError("A revision cannot change the source result.")
     if previous and previous.design_mode == "deterministic":
         # Phase 1 IDs predate the designer catalog. Resolve by verified identity,
@@ -359,18 +443,55 @@ async def design_dashboard(
                     k.model_copy(update={"kpi_id": key})
                     for k in previous.kpis
                     for key, candidate in kpis.items()
-                    if (k.metric, k.calculation, k.periods)
+                    if k.result_id == candidate.result_id
+                    and (k.metric, k.calculation, k.periods)
                     == (candidate.metric, candidate.calculation, candidate.periods)
                 ],
-                "widgets": [
-                    w.model_copy(update={"widget_id": key})
-                    for w in previous.widgets
-                    for key, candidate in charts.items()
-                    if w.chart_spec == candidate.chart_spec
-                ],
+                "widgets": previous.widgets,
             }
         )
+    if previous:
+        for metric in previous.kpis:
+            if metric.kpi_id and any(
+                metric.model_dump(exclude={"kpi_id", "column_span"})
+                == candidate.model_dump(exclude={"kpi_id", "column_span"})
+                for candidate in kpis.values()
+            ):
+                kpis[metric.kpi_id] = metric
+        for widget in previous.widgets:
+            if any(
+                widget.result_id == candidate.result_id
+                and widget.chart_spec.model_dump(exclude={"title", "x_label", "y_label"})
+                == candidate.chart_spec.model_dump(exclude={"title", "x_label", "y_label"})
+                for candidate in charts.values()
+            ):
+                charts[widget.widget_id] = widget
     context = design_context(source, base, kpis, charts, previous)
+    context["selected_widget_id"] = target_widget_id
+    context["repair_feedback"] = repair_feedback
+    if sources:
+        context["source_profiles"] = [
+            {
+                "result_id": identity,
+                "db_id": item.db_id,
+                "row_count": item.row_count,
+                "roles": profile_chart_result(
+                    item.columns[:24], [row[:24] for row in item.rows], sample_rows=0
+                )[0],
+                "grain": item.semantic_contract.output_grain if item.semantic_contract else [],
+                "approved_metrics": [
+                    metric.model_dump(exclude_none=True)
+                    for metric in item.semantic_contract.approved_metrics[:4]
+                ]
+                if item.semantic_contract
+                else [],
+                "active_period": item.semantic_contract.active_period
+                if item.semantic_contract
+                else None,
+                "execution_timestamp": item.execution_timestamp,
+            }
+            for identity, item in sources.items()
+        ]
     prompt = _PROMPT.format(
         schema=json.dumps(DashboardProposal.model_json_schema()),
         objective=request.objective,
@@ -380,6 +501,7 @@ async def design_dashboard(
     started = perf_counter()
     before = budget.model_calls
     failed = False
+    repairable_error = ""
     try:
         if len(prompt) > 32000:
             raise ValueError("Design context exceeds the bounded prompt limit")
@@ -403,12 +525,37 @@ async def design_dashboard(
         else:
             if patch_only and previous is not None and proposal.mode != "PATCH":
                 raise ValueError("Saved dashboard edits must preserve unaffected widgets")
+            if target_widget_id:
+                known = (
+                    {k.kpi_id for k in previous.kpis} | {w.widget_id for w in previous.widgets}
+                    if previous
+                    else set()
+                )
+                changed = (
+                    {k.replaces_widget_id or k.kpi_id for k in proposal.kpis}
+                    | {w.replaces_widget_id or w.candidate_id for w in proposal.charts}
+                    | set(proposal.remove_ids)
+                )
+                if (
+                    target_widget_id not in known
+                    or changed - {target_widget_id}
+                    or proposal.mode != "PATCH"
+                    or proposal.title
+                    or proposal.description
+                    or proposal.filter_refs is not None
+                    or proposal.theme is not None
+                ):
+                    raise ValueError("Edit only the selected widget; preserve every other setting")
             spec = _materialize(proposal, base, kpis, charts, previous)
             status, reason = "READY", "Validated AI dashboard design."
     except asyncio.CancelledError:
         raise
     except Exception as exc:
         failed = True
+        if isinstance(exc, ValidationError):
+            repairable_error = json.dumps(exc.errors(include_input=False, include_url=False))[:600]
+        elif isinstance(exc, ValueError):
+            repairable_error = str(exc)[:600]
         usage = getattr(exc, "usage", usage)
         # Invalid revisions must preserve the exact previous design, not silently
         # replace its metrics. Initial failures use the existing Phase 1 builder.
@@ -439,6 +586,36 @@ async def design_dashboard(
         if budget.model_calls > before
         else ()
     )
+    if failed and repair and repairable_error and ledger and budget.remaining() > 0:
+        corrected = await design_dashboard(
+            source=source,
+            request=request,
+            completer=completer,
+            provider=provider,
+            model=model,
+            budget=budget,
+            previous=previous,
+            patch_only=patch_only,
+            sources=sources,
+            repair=False,
+            repair_feedback=repairable_error,
+            target_widget_id=target_widget_id,
+        )
+        combined = {
+            key: (
+                None
+                if getattr(usage, key) is None and getattr(corrected.usage, key) is None
+                else (getattr(usage, key) or 0) + (getattr(corrected.usage, key) or 0)
+            )
+            for key in TokenUsage.model_fields
+        }
+        return DashboardDesignOutcome(
+            corrected.status,
+            corrected.spec,
+            corrected.reason,
+            TokenUsage.model_validate(combined),
+            (*ledger, *corrected.ledger),
+        )
     return DashboardDesignOutcome(status, spec, reason, usage, ledger)  # type: ignore[arg-type]
 
 

@@ -427,7 +427,7 @@ function updatePipeline(progress, currentStage, jobStatus, events = [], response
   });
 }
 
-async function send(message, feedbackCategory = null) {
+async function send(message, feedbackCategory = null, dashboardTarget = null) {
   if (state.busy || voiceInput?.busy || !message.trim()) return;
   if (!state.ready) {
     showError("A configured database and SQL model are required before asking a question.");
@@ -459,6 +459,7 @@ async function send(message, feedbackCategory = null) {
         // Keep the bounded full result available in server RAM for a later "Plot it".
         max_rows: 500,
         feedback_category: feedbackCategory,
+        dashboard_target: dashboardTarget,
       }),
     });
     state.jobId = created.job_id;
@@ -577,9 +578,9 @@ function isChartMode(screen) {
 
 /* Queryflow v4: contextual investigations are explicit user actions, never SQL executed
    from a table cell or a chart event. All follow-ups go through the existing API. */
-async function sendFromAnswer(runId, prompt) {
+async function sendFromAnswer(runId, prompt, dashboardTarget = null) {
   if (runId && runId !== state.activeRunId) await continueRun(runId, false);
-  await send(prompt);
+  await send(prompt, null, dashboardTarget);
 }
 let activeInsight = null;
 function dismissInsight() {
@@ -1680,7 +1681,7 @@ async function appendAssistant(body, elapsed, options = {}) {
   }
   window.QueryflowDashboard?.mountAction(article,body,{
     api,sessionId,renderChart:renderChartInto,renderTable,
-    reviseDashboard:message=>sendFromAnswer(body.run_id,message).catch(error=>showError(error.message)),
+    reviseDashboard:(message,target)=>sendFromAnswer(body.run_id,message,target).catch(error=>showError(error.message)),
   });
   if (!options.restored) updateInspector(body);
   return article;

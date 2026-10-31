@@ -159,7 +159,7 @@ test("saving sends a validated revision reference, not SQL rows or a client spec
       return saved();
     },
   });
-  await find(host, "Save dashboard").click();
+  await find(host, "Save").click();
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0], "/api/studio");
   assert.deepEqual(Object.keys(calls[0][1]).sort(), [
@@ -218,7 +218,7 @@ test("editing is an explicit unsaved preview; save and publish require separate 
     e["aria-label"] === "Saved dashboard design change"
   );
   input.value = "Higher contrast";
-  await find(env.body, "Update preview").click();
+  await find(env.body, "Edit with AI").click();
   assert.equal(record.version, 1);
   assert.equal(find(env.body, "Approve & publish").disabled, true);
   assert.equal(posts.length, 1);
@@ -258,7 +258,7 @@ test("viewer controls are read-only and the studio retains responsive layout", a
       "Undo",
       "Delete",
       "Approve & publish",
-      "Update preview",
+      "Edit with AI",
     ]
   ) assert.equal(find(env.body, label).disabled, true, label);
   const css = fs.readFileSync("web/styles.css", "utf8");
