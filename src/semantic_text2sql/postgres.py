@@ -176,7 +176,9 @@ class PostgresRegistry:
         try:
             with self.connect(db_id) as connection, connection.cursor() as cursor:
                 timeout_ms = max(1, min(round(timeout_seconds * 1_000), 5_000))
-                cursor.execute("SET LOCAL statement_timeout = %s", (timeout_ms,))
+                cursor.execute(
+                    "SELECT set_config('statement_timeout', %s, true)", (f"{timeout_ms}ms",)
+                )
                 if parameters:
                     cursor.execute(sql, parameters)
                 else:

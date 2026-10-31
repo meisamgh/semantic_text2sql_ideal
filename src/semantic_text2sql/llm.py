@@ -277,6 +277,7 @@ class GroqSQLModel:
             "final_answer": "TEXT2SQL_TOP_ANSWER_MAX_TOKENS",
             "context": "TEXT2SQL_CONTEXT_MAX_TOKENS",
             "plotting": "TEXT2SQL_PLOTTING_MAX_TOKENS",
+            "dashboard": "TEXT2SQL_DASHBOARD_MAX_TOKENS",
         }.get(task, "TEXT2SQL_MAX_COMPLETION_TOKENS")
         default = "2048" if task == "decision_repair" else "1536"
         return await self._complete_detailed(
@@ -797,6 +798,7 @@ class OpenRouterSQLModel(CodeCraftSQLModel):
             "final_answer": "TEXT2SQL_TOP_ANSWER_MAX_TOKENS",
             "context": "TEXT2SQL_CONTEXT_MAX_TOKENS",
             "plotting": "TEXT2SQL_PLOTTING_MAX_TOKENS",
+            "dashboard": "TEXT2SQL_DASHBOARD_MAX_TOKENS",
         }.get(task, "TEXT2SQL_MAX_COMPLETION_TOKENS")
         return await self._complete_detailed(
             model, prompt, max_tokens=int(os.environ.get(setting, "4096"))
@@ -1712,6 +1714,7 @@ def _task_token_limit(task: str) -> int:
         "final_answer": "TEXT2SQL_TOP_ANSWER_MAX_TOKENS",
         "context": "TEXT2SQL_CONTEXT_MAX_TOKENS",
         "plotting": "TEXT2SQL_PLOTTING_MAX_TOKENS",
+        "dashboard": "TEXT2SQL_DASHBOARD_MAX_TOKENS",
     }.get(task, "TEXT2SQL_MAX_COMPLETION_TOKENS")
     return max(1, int(os.environ.get(setting, "2048")))
 

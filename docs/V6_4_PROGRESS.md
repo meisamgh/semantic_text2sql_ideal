@@ -360,3 +360,102 @@ Verification: Python 528 passed/1 skipped; frontend 170 passed; Ruff, mypy
 Additional SQL/LLM calls are zero, tested with execution/inspection/generation
 forbidden after initial setup. Browser pixel-level mobile/desktop, PostgreSQL
 and live-provider verification remain NOT RUN. No commit or push requested.
+
+## CTE authorization and PostgreSQL timeout hardening — 2026-10-31
+
+Replaced global CTE-name exclusion with lexical scope resolution on a normalized
+AST copy, preserving actual SQL identifiers. Remote preparation independently
+checks each physical table against its allowlist in addition to existing schema
+and catalog checks. Fanout analysis uses the same physical-source classification.
+Added adversarial tests for qualified CTE shadowing, nested/forward/self scopes,
+quoted alias case, qualified identities and permissive-validator defense in depth
+across four scripted adapters; positive CTE cases remain supported.
+
+Replaced bound SET LOCAL with parameterized transaction-local set_config and
+tested clamping plus query binding. Real PostgreSQL 15.19/Psycopg 3 verification
+passed against an isolated UTF-8 database and unprivileged role: timeout settings,
+read-only mode, cancellation, recovery and no session-setting leakage. Server
+stopped afterward. Full suite: 556 passed/1 skipped; final PostgreSQL focused
+run: 8 passed/1 skipped; frontend: 170 passed; Ruff/mypy/diff checks passed.
+See `docs/SECURITY_REGRESSIONS.md`. No production DB, commit or push was changed;
+the unrelated improvement.md deletion remains untouched.
+
+## Phase 2 AI dashboard designer — 2026-10-31
+
+Added a one-call dashboard specialist under the existing Top-layer LangGraph
+assistant. Typed proposals select eligible KPI IDs and validated chart candidates
+from bounded result profiles, with deterministic materialization, lineage checks,
+unchanged data, fixed section order and safe fallback. Revisions use patches to
+preserve unaffected widgets; scoped RAM revision history supports undo and
+compare-and-set commits. Missing analytical data returns REQUERY_REQUIRED to the
+Top layer; an accepted governed requery resumes the original dashboard goal.
+
+The explicit UI now offers deterministic/AI design, inline design-change requests,
+automatic validated previews and undo. Existing Plotly/ECharts/table callbacks
+remain the only renderers. Config is documented in .env.example; no local .env
+was edited. Source modules: ai_dashboard_designer, dashboard_service, runtime,
+conversational_agent, api, models and task budgets in llm; frontend dashboard_view,
+small app integration, styles and cache-busted index. See AI_DASHBOARD_DESIGNER.md.
+
+Acceptance coverage: 15 designer tests plus existing Phase 1 tests; frontend
+dashboard coverage expanded to 12 tests. Full Python run: 570 passed/2 skipped;
+frontend: 172 passed. Ruff, mypy (61 modules) and git diff --check passed.
+30 identical four-row scripted builds measured Phase 1 p50/p95 1.266/1.662 ms
+and Phase 2 2.868/4.173 ms. These exclude live inference/network/browser time.
+Top design acceptance uses one Top call + one specialist call, no final-answer
+call or SQL; initial invalid designs do not retry. API integration forbids DB
+execution/inspection/generation after its original real SQLite query.
+
+Limitations: live-provider/PostgreSQL checks and pixel-level desktop/mobile QA
+NOT RUN for this phase; no new multi-user authentication, durable dashboard
+storage or editable global filters. Conservative annotation validation can reject
+legitimate numbered titles/aliases. Existing security fixes and unrelated
+improvement.md deletion were preserved. No commit or push was requested.
+
+## Phase 3 Permanent Dashboard Studio — 2026-10-31
+
+Verified the clean local main checkpoint (32e3426) and the existing Phase 1/2
+services/tests before extending them. Added dashboard_store.py with typed retained
+snapshots/documents and two additive migrations in the existing history SQLite
+file. Durable revisions retain source SQL, rows, semantic definitions, result/run
+identity, provenance, owner and timestamps. Evidence is revalidated before saving,
+reopening and approving, without executing source SQL. Snapshot tables cannot be
+exposed as a registered business database. Private file mode and serialized
+field selection protect credentials/configuration; this is not universal DLP or
+encrypted storage.
+
+dashboard_studio.py provides scoped Library/open/Save/Save as New/rename/delete,
+Draft/explicit owner-approved Published, history and append-only Undo. Atomic
+SQLite version checks reject stale writes and copies. Drafts are hidden from
+viewers; editors cannot approve/delete. Validated preview handles bind owner,
+dashboard and base version; consecutive unsaved edits preserve the previous
+preview. A model-time version change rejects the stale preview. Approval validates
+before committing, so corrupt/unsupported evidence cannot partially publish.
+
+The existing LangGraph Top layer and Phase 2 designer handle saved design edits
+through isolated request-local branch context. Saved editing forbids SQL/metadata
+DB tools, even on an adversarial Top decision. It cannot refresh or overwrite the
+active conversation. New analytical data requires a separate governed analysis.
+Frontend dashboard_studio.js reuses the existing dashboard/Plotly/ECharts/table
+renderers and adds a Library dialog, explicit save/approval/version controls and
+unsaved previews. Only one-line integration hooks were added to app initialization
+and dashboard mounting. No new agent/framework/chart types/global filters.
+
+Checks: full Python 593 passed/2 skipped (18.02s); frontend/voice 180 passed;
+Ruff, mypy (63 source modules), and git diff --check passed. New acceptance cases:
+14 storage cases, 9 API/orchestration cases, 4 frontend cases. Valid scripted
+saved editing uses one Top call plus one designer call; reopening uses zero model
+and zero business-DB calls. Tests cover 0/1/21/100/500 complete rows, restart,
+concurrency, ownership, ACLs, approval, invalid evidence, undo, history isolation,
+configuration-secret exclusion and source consistency. These counts are not a
+live-provider latency or accuracy benchmark.
+
+External sharing remains DISABLED/BLOCKED: no legitimate deployment login/session
+ownership mechanism exists. Local Studio is loopback-only, server-owned workspace
+access, not production authentication. Trusted ASGI stable identities and explicit
+authorized-session scope are required for remote creation. No fake login, header
+identity, automatic session claiming, or public/grant API was added. Exact missing
+deployment prerequisites are in DASHBOARD_STUDIO.md. Live providers, PostgreSQL and
+real desktop/mobile browser visual QA NOT RUN. RAM previews need sticky routing
+across workers and are not durable until Save; published snapshots remain permanent.
+No commit, push, actual .env edit, new DB refresh or external infrastructure change.

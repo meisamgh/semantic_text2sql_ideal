@@ -17,9 +17,11 @@ window.QueryflowDashboard = (() => {
       throw new Error("The dashboard does not reference one complete result.");
     container.replaceChildren();container.classList.add("dashboard-view");
     container.dataset.resultId=spec.result_id;
+    container.dataset.theme=spec.theme||"green";
     container.setAttribute("aria-label","Temporary result dashboard");
     const title=node("h3","dashboard-title",spec.title || "Result dashboard");
     container.append(title);
+    if(spec.description) container.append(node("p","dashboard-caption",spec.description));
     const handles=[];
     try {
     for(const kind of sections){
@@ -43,6 +45,7 @@ window.QueryflowDashboard = (() => {
         grid.style.setProperty("--dashboard-kpi-span",String(count===1?12:count===2?6:count===3?4:3));
         for(const metric of spec.kpis||[]){
           const card=node("article","chart-kpi-card dashboard-kpi");
+          if(spec.design_mode==="ai") card.style.setProperty("--dashboard-kpi-span",String(metric.column_span));
           card.dataset.resultId=spec.result_id;
           const exact=window.QueryflowFormat?.formatNumber(metric.value,metric.unit,undefined,{exact:true}) ?? String(metric.value);
           card.title=`Exact value: ${exact}. ${metric.definition}`;
@@ -59,7 +62,7 @@ window.QueryflowDashboard = (() => {
         const grid=node("div","dashboard-chart-grid");section.append(grid);
         for(const widget of spec.widgets){
           const card=node("article","dashboard-chart-card");
-          card.style.setProperty("--dashboard-span",String(widget.column_span===12?12:6));
+          card.style.setProperty("--dashboard-span",String([4,6,8,12].includes(widget.column_span)?widget.column_span:6));
           card.dataset.resultId=widget.result_id;
           const chart=widget.chart_spec;
           card.append(node("h5","dashboard-chart-title",window.QueryflowChartTheme?.title(chart)||chart.title));
@@ -75,6 +78,8 @@ window.QueryflowDashboard = (() => {
       }
     }
     for(const message of spec.notices||[]) container.append(node("p","dashboard-caption",message));
+    if(spec.rationale){const details=node("details","dashboard-rationale");
+      details.append(node("summary","dashboard-caption","Design rationale"),node("p","dashboard-caption",spec.rationale));container.append(details);}
     } catch(error){
       handles.forEach(handle=>handle.dispose?.());container.replaceChildren();throw error;
     }
@@ -94,14 +99,39 @@ window.QueryflowDashboard = (() => {
     checkbox.disabled=!complete;
     label.append(checkbox,document.createTextNode(" Include source table"));
     const status=node("span","dashboard-status");status.setAttribute("role","status");
+    const mode=document.createElement("select");mode.setAttribute("aria-label","Dashboard design mode");
+    for(const [value,text] of [["deterministic","Verified layout"],["ai","AI design"]]){
+      const option=document.createElement("option");option.value=value;option.textContent=text;mode.append(option);
+    }
+    mode.value="deterministic";mode.disabled=!complete;
+    const revision=node("input","dashboard-revision-input");revision.placeholder="Describe a dashboard change…";
+    revision.setAttribute("aria-label","Dashboard design change");
+    const revise=node("button","secondary-button","Update design");revise.type="button";
+    const undo=node("button","secondary-button","Undo design");undo.type="button";
+    const edits=node("div","dashboard-actions");edits.hidden=true;edits.append(revision,revise,undo);
     const view=node("div","dashboard-view");view.hidden=true;
     let spec=null,handle=null,loading=false;
     const host=article.querySelector?.(".response-card") || article;
-    toolbar.append(button,label,status);host.append(toolbar,view);
+    toolbar.append(button,label,status,mode);host.append(toolbar,view,edits);
+    window.QueryflowDashboardStudio?.mountSave(edits,()=>spec,{...dependencies,body});
+    revise.addEventListener("click",()=>{
+      if(revision.value.trim() && dependencies.reviseDashboard) dependencies.reviseDashboard(revision.value.trim());
+    });
+    undo.addEventListener("click",async()=>{
+      if(loading)return;loading=true;undo.disabled=true;
+      try{
+        const restored=await dependencies.api("/api/dashboards/undo",{method:"POST",body:JSON.stringify({
+          session_id:dependencies.sessionId,db_id:generation.db_id,result_id:body.result_id,
+        })});
+        if(restored.result_id!==body.result_id)throw new Error("Dashboard source mismatch.");
+        handle?.dispose();spec=restored;handle=render(view,spec,dependencies);
+      }catch(error){status.textContent=error.message||"Undo unavailable.";}
+      finally{loading=false;undo.disabled=false;}
+    });
     button.addEventListener("click",async()=>{
       if(loading || !complete) return;
       if(!view.hidden){
-        handle?.dispose();handle=null;view.hidden=true;
+        handle?.dispose();handle=null;view.hidden=true;edits.hidden=true;
         button.textContent="Open dashboard";button.setAttribute("aria-expanded","false");return;
       }
       loading=true;button.disabled=true;status.textContent="Preparing dashboard…";
@@ -109,10 +139,12 @@ window.QueryflowDashboard = (() => {
         if(!spec) spec=await dependencies.api("/api/dashboards",{method:"POST",body:JSON.stringify({
           session_id:dependencies.sessionId,db_id:generation.db_id,result_id:body.result_id,
           include_data:checkbox.checked,
+          design_mode:mode.value,
         })});
         if(spec.result_id!==body.result_id) throw new Error("Dashboard source does not match this result.");
         if(article.isConnected===false) return;
-        view.hidden=false;handle=render(view,spec,dependencies);checkbox.disabled=true;
+        view.hidden=false;handle=render(view,spec,dependencies);checkbox.disabled=true;mode.disabled=true;
+        edits.hidden=false;
         button.textContent="Close dashboard";button.setAttribute("aria-expanded","true");
         status.textContent="";
       } catch(error){
@@ -121,6 +153,7 @@ window.QueryflowDashboard = (() => {
       }
       finally{loading=false;button.disabled=false;}
     });
+    if(body.dashboard){spec=body.dashboard;button.click();}
   }
   return {render,mountAction,sections};
 })();

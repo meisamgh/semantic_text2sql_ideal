@@ -46,3 +46,33 @@ the integrated/malformed/chart-only cases in `test_v63_conversation.py` validate
 proposal schema, safe fallback, call counts and source identities. The historical
 refresh integration runs with and without an embedded proposal. No claim that
 all grain/unit/business semantics are provable; existing unresolved states remain.
+
+### Phase 2 dashboard specialist (2026-10-31)
+
+VERIFIED locally: typed eligible-catalog selection; exact result lineage; one-call
+specialist budget; deterministic fallback; no-SQL design/undo; patch preservation
+and revision CAS; Top → missing-data → governed SQL → resumed design; fixed
+section ordering and existing renderer reuse. Evidence: 15 tests in
+test_ai_dashboard_designer.py, existing test_dashboard.py, and 12 frontend cases
+in dashboard_view.cjs. Full checks are recorded in V6_4_PROGRESS.md.
+NOT RUN: live provider, PostgreSQL and pixel-level browser verification for this
+feature. This does not change older V6.4 requirement statuses or claim production
+tenant authentication/durable multi-worker dashboard state.
+
+### Phase 3 permanent dashboards (2026-10-31)
+
+VERIFIED locally: additive migration and restart recovery; typed complete source
+snapshots; scoped library CRUD; Draft/explicit approval; append-only saved versions
+and Undo; optimistic conflicts across independent SQLite connections; reference-only
+Save and Copy; unchanged snapshot/source evidence; existing Top-layer/designer
+integration; provisional preview continuity; blocked SQL refresh; renderer reuse.
+Evidence: test_dashboard_store.py (14 cases), test_dashboard_studio.py (9 cases),
+dashboard_studio.cjs (4 cases), full regression 593 Python passed/2 skipped,
+180 frontend/voice passed, Ruff/mypy/diff checks passed.
+
+BLOCKED for external sharing: real deployment identity and trusted conversation
+session authorization, tenant/database sharing policy and production integration.
+Local-only access is not counted as authenticated production ownership. ACL tests
+use synthetic ASGI identities and do not verify a login system. No sharing/grant
+endpoint is enabled. NOT RUN: live-provider/PostgreSQL and real browser visual QA.
+Detailed boundaries are in DASHBOARD_STUDIO.md; older V6.4 statuses are unchanged.

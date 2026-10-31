@@ -11,7 +11,7 @@
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
     />
-    <link rel="stylesheet" href="/static/styles.css?v=qf-dashboard-1" />
+    <link rel="stylesheet" href="/static/styles.css?v=qf-studio-3" />
     <script>
       // Apply the stored theme before first paint to avoid a flash.
       try {
@@ -41,6 +41,7 @@
         <div class="side-label">WORKSPACE</div>
         <nav class="side-nav" aria-label="Views">
           <a class="active" href="#composerZone" data-view="workspace"><span data-icon="message"></span><span>Conversations</span></a>
+          <button type="button" id="dashboardLibraryButton"><span data-icon="chart-bar"></span><span>Dashboard Library</span></button>
           <a href="#themeToggle" id="settingsNavigation"><span data-icon="settings"></span><span>Appearance</span></a>
         </nav>
 
@@ -322,7 +323,8 @@
     <script src="/static/kpi_cards.js?v=13"></script>
     <script src="/static/chart_change_bubble.js?v=3"></script>
     <script src="/static/formatters.js?v=2"></script>
-    <script src="/static/dashboard_view.js?v=1"></script>
-    <script src="/static/app.js?v=qf-dashboard-1"></script>
+    <script src="/static/dashboard_view.js?v=3"></script>
+    <script src="/static/dashboard_studio.js?v=1"></script>
+    <script src="/static/app.js?v=qf-studio-3"></script>
   </body>
 </html>

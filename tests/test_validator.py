@@ -1,5 +1,48 @@
+import pytest
+
 from semantic_text2sql.models import SchemaInfo
 from semantic_text2sql.validator import clean_model_sql, validate_sql
+
+
+@pytest.mark.parametrize("sql", [
+    "WITH secret AS (SELECT customer_id FROM customers) SELECT * FROM analytics.secret",
+    "WITH secret AS (SELECT * FROM secret) SELECT * FROM secret",
+    "SELECT * FROM secret WHERE EXISTS "
+    "(WITH secret AS (SELECT * FROM customers) SELECT * FROM secret)",
+    "WITH a AS (SELECT * FROM secret), secret AS (SELECT * FROM customers) SELECT * FROM a",
+    'WITH "SECRET" AS (SELECT * FROM customers) SELECT * FROM secret',
+    "WITH secret AS (SELECT * FROM customers) SELECT * FROM customers "
+    "WHERE EXISTS (SELECT 1 FROM private.secret)",
+])
+def test_cte_names_do_not_hide_physical_tables(registry, sql) -> None:  # type: ignore[no-untyped-def]
+    result = validate_sql(sql, registry.inspect("shop"), dialect="postgres",
+                          allowed_tables={"customers"})
+    assert not result.valid
+    assert result.code == "SQL_TABLE_NOT_AUTHORIZED"
+
+
+@pytest.mark.parametrize("sql", [
+    "WITH orders AS (SELECT * FROM orders) SELECT * FROM orders",
+    "WITH a AS (SELECT * FROM orders), b AS (SELECT * FROM a) SELECT * FROM b",
+    "WITH Orders AS (SELECT * FROM orders) SELECT * FROM ORDERS",
+    "WITH orders AS (SELECT * FROM orders) SELECT * FROM analytics.orders",
+    "WITH RECURSIVE n(value) AS (SELECT 1 UNION ALL SELECT value+1 FROM n WHERE value<3) "
+    "SELECT value FROM n",
+])
+def test_visible_ctes_and_authorized_physical_tables_remain_valid(registry, sql) -> None:  # type: ignore[no-untyped-def]
+    result = validate_sql(sql, registry.inspect("shop"), dialect="postgres",
+                          allowed_tables={"orders"})
+    assert result.valid, result
+    assert set(result.tables) <= {"orders"}
+
+
+def test_qualified_allowlist_does_not_authorize_another_schema(registry) -> None:  # type: ignore[no-untyped-def]
+    schema = registry.inspect("shop")
+    assert validate_sql("SELECT * FROM analytics.orders", schema,
+                        allowed_tables={"analytics.orders"}).valid
+    rejected = validate_sql("SELECT * FROM private.orders", schema,
+                            allowed_tables={"analytics.orders"})
+    assert rejected.code == "SQL_TABLE_NOT_AUTHORIZED"
 
 
 def test_validator_accepts_cte_output_alias(registry) -> None:  # type: ignore[no-untyped-def]

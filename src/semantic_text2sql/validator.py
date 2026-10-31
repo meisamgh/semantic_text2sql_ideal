@@ -7,7 +7,9 @@ from typing import Literal
 
 import sqlglot
 from sqlglot import exp
-from sqlglot.errors import ParseError, TokenError
+from sqlglot.errors import OptimizeError, ParseError, TokenError
+from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
+from sqlglot.optimizer.scope import Scope, traverse_scope
 
 from semantic_text2sql.dialects import DatabaseDialect
 from semantic_text2sql.models import (
@@ -78,15 +80,18 @@ def validate_sql(
     if any(isinstance(node, exp.Into) for node in root.walk()):
         return _failure("SQL_SELECT_INTO_BLOCKED", "SELECT INTO is blocked.", available)
 
-    cte_names = {cte.alias_or_name.casefold() for cte in root.find_all(exp.CTE)}
-    physical_tables = [
-        table.name
-        for table in root.find_all(exp.Table)
-        if table.name and table.name.casefold() not in cte_names
-    ]
+    try:
+        physical_refs = physical_table_references(root, dialect=dialect)
+    except (OptimizeError, ValueError) as exc:
+        return _failure(
+            "SQL_SCOPE_UNRESOLVED", f"SQL scopes could not be resolved: {exc}", available
+        )
+    physical_tables = [table.name for table in physical_refs if table.name]
     if allowed_tables is not None:
+        authorized = {name.casefold() for name in allowed_tables}
         unauthorized = sorted(
-            {table for table in physical_tables if table.casefold() not in allowed_tables}
+            {table.sql(dialect=dialect) for table in physical_refs
+             if not table_is_allowlisted(table, authorized)}
         )
         if unauthorized:
             return _failure(
@@ -105,15 +110,19 @@ def validate_sql(
         }
         aliases = {
             (table.alias_or_name or table.name).casefold(): table.name.casefold()
-            for table in root.find_all(exp.Table)
-            if table.name and table.name.casefold() not in cte_names
+            for table in physical_refs if table.name
+        }
+        derived_columns = {
+            id(column) for scope in traverse_scope(root) for column in scope.columns
+            if column.table and not column.db and not column.catalog
+            and isinstance(scope.sources.get(column.table), Scope)
         }
         select_aliases = {
             alias.alias.casefold() for alias in root.find_all(exp.Alias) if alias.alias
         }
         unauthorized_columns: list[str] = []
         for column in root.find_all(exp.Column):
-            if not column.name or column.table.casefold() in cte_names:
+            if not column.name or id(column) in derived_columns:
                 continue
             if column.table:
                 owner = aliases.get(column.table.casefold(), column.table.casefold())
@@ -140,6 +149,40 @@ def validate_sql(
         columns=columns,
         available_columns=available,
     )
+
+
+def physical_table_references(
+    root: exp.Expression, *, dialect: DatabaseDialect = "sqlite",
+) -> list[exp.Table]:
+    """Actual AST table nodes, excluding only lexically visible unqualified CTEs.
+
+    Resolve a copy using engine case rules (including quoted names), returning
+    original nodes without rewriting SQL. Qualified identifiers can never bind
+    a CTE. All table nodes include SEMI/ANTI joins, which selected_sources omits.
+    """
+    resolved = normalize_identifiers(root.copy(), dialect=dialect)
+    original_tables = list(root.find_all(exp.Table))
+    resolved_tables = list(resolved.find_all(exp.Table))
+    if len(original_tables) != len(resolved_tables):
+        raise ValueError("Identifier normalization changed the table-reference structure")
+    cte_references = {
+        id(table) for scope in traverse_scope(resolved) for table in scope.tables
+        if not table.db and not table.catalog
+        and isinstance(table.this, exp.Identifier)
+        and isinstance(scope.cte_sources.get(table.name), Scope)
+    }
+    return [original for original, table in zip(original_tables, resolved_tables, strict=True)
+            if id(table) not in cte_references]
+
+
+def table_is_allowlisted(table: exp.Table, allowed: set[str]) -> bool:
+    """Bare allowlist entries authorize names; qualified entries require identity.
+
+    Engine adapters must independently restrict schemas/catalogs when their
+    configuration uses bare table names.
+    """
+    full_name = ".".join(part.name.casefold() for part in table.parts)
+    return table.name.casefold() in allowed or full_name in allowed
 
 
 def validate_sql_semantics(
@@ -207,7 +250,7 @@ def validate_sql_semantics(
     findings.extend(_measure_findings(root, contract, verified_context))
     findings.extend(_approved_metric_findings(root, contract, dialect))
     findings.extend(_filter_findings(root, contract, verified_context))
-    findings.extend(_fanout_findings(root, verified_context))
+    findings.extend(_fanout_findings(root, verified_context, dialect=dialect))
     findings.extend(_ranking_findings(root, contract))
     if contract.requires_distinct and not any(root.find_all(exp.Distinct)):
         findings.append(SemanticFinding(
@@ -483,17 +526,16 @@ def _operator_name(node: exp.Expression) -> str:
 
 
 def _fanout_findings(
-    root: exp.Expression, verified_context: dict[str, object] | None
+    root: exp.Expression, verified_context: dict[str, object] | None,
+    *, dialect: DatabaseDialect = "sqlite",
 ) -> list[SemanticFinding]:
     if not verified_context or not any(root.find_all(exp.Sum, exp.Avg)):
         return []
     relationships = verified_context.get("relationships")
     if not isinstance(relationships, list):
         return []
-    cte_names = {cte.alias_or_name.casefold() for cte in root.find_all(exp.CTE)}
     physical = {
-        table.name.casefold() for table in root.find_all(exp.Table)
-        if table.name.casefold() not in cte_names
+        table.name.casefold() for table in physical_table_references(root, dialect=dialect)
     }
     for relationship in relationships:
         if not isinstance(relationship, dict):

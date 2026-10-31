@@ -68,6 +68,8 @@ ToolName = Literal[
     "inspect_result",
     "search_conversation_memory",
     "refresh_analysis",
+    "ai_dashboard_designer",
+    "undo_dashboard",
 ]
 
 
@@ -324,7 +326,9 @@ def _consistency_issue_lines(decision: AgentDecision) -> list[str]:
     intent_tools = {
         "NEW_QUERY": {"ask_data"},
         "MODIFY_QUERY": {"ask_data"},
-        "VISUALIZE": {"change_visualization", "present_result"},
+        "VISUALIZE": {
+            "change_visualization", "present_result", "ai_dashboard_designer", "undo_dashboard"
+        },
         "EXPLORE_SCHEMA": {"list_tables", "search_schema", "get_column_profile"},
         "BUSINESS_CONTEXT": {"get_available_metrics", "get_business_context"},
         "EXPLAIN": {"explain_existing_result", "present_result", "inspect_result",
@@ -361,6 +365,7 @@ def _consistency_issue_lines(decision: AgentDecision) -> list[str]:
 
 
 class AgentState(StrictModel):
+    pending_dashboard_objective: str | None = None
     turn_context: TurnContext | None = None
     observations: list[dict[str, Any]] = Field(default_factory=list, max_length=4)
     decision: AgentDecision | None = None
@@ -391,7 +396,9 @@ class _DecisionCompletion:
     message: str | None = None
 
 
-CACHED_RESULT_TOOLS: frozenset[ToolName] = frozenset({"analyze_result", "present_result"})
+CACHED_RESULT_TOOLS: frozenset[ToolName] = frozenset({
+    "analyze_result", "present_result", "ai_dashboard_designer", "undo_dashboard"
+})
 PRIOR_SQL_TOOLS: frozenset[ToolName] = frozenset(
     {"change_visualization", "check_sql_correctness"}
 )
@@ -453,6 +460,10 @@ class ConversationalAnalyticsAgent:
         reset_handler: Callable[[str], None] | None = None,
         history_inspector: Callable[[str, str, str], dict[str, Any] | None] | None = None,
         history_refresher: Callable[[ChatRequest, str], Awaitable[ChatResponse]] | None = None,
+        dashboard_handler: Callable[
+            [ChatRequest, str, RecentResult | ChatResponse, bool], Awaitable[ChatResponse]
+        ] | None = None,
+        dashboard_inspector: Callable[[str, str, str], dict[str, Any] | None] | None = None,
     ) -> None:
         self.bridge = bridge
         self.completers = completers
@@ -463,6 +474,8 @@ class ConversationalAnalyticsAgent:
         self.reset_handler = reset_handler
         self.history_inspector = history_inspector
         self.history_refresher = history_refresher
+        self.dashboard_handler = dashboard_handler
+        self.dashboard_inspector = dashboard_inspector
         graph = StateGraph(AgentState)
         graph.add_node("reason", self._reason)
         graph.add_node("act", self._act)
@@ -649,6 +662,8 @@ class ConversationalAnalyticsAgent:
     ) -> AgentDecision:
         """Check model routing against accepted evidence without interpreting SQL."""
         assert self._request is not None
+        if decision.tool in {"ai_dashboard_designer", "undo_dashboard"}:
+            return decision
         message = self._request.message
         has_result = bool(last and last.generation and last.generation.accepted)
         prior_chart = (
@@ -1078,6 +1093,18 @@ class ConversationalAnalyticsAgent:
 
     async def _reason(self, state: AgentState) -> AgentState:
         assert self._request is not None and self._budget is not None
+        if state.observations and state.observations[-1].get("status") == "DASHBOARD_READY":
+            assert state.base_response is not None
+            return state.model_copy(update={"response": state.base_response.model_copy(update={
+                "token_usage": state.usage, "call_ledger": state.ledger,
+            })})
+        if (state.pending_dashboard_objective and state.observations
+                and state.observations[-1].get("tool") == "ask_data"
+                and state.observations[-1].get("status") == "executed"):
+            return state.model_copy(update={"decision": AgentDecision(
+                action="CALL_TOOL", intent="VISUALIZE", tool="ai_dashboard_designer",
+                tool_arguments=ToolInput(objective=state.pending_dashboard_objective),
+            )})
         previous = self.get_state(self._request.session_id)
         if state.base_response and state.base_response.state:
             previous = state.base_response.state
@@ -1163,6 +1190,12 @@ class ConversationalAnalyticsAgent:
                     }),
                 })
         compact = {
+            "saved_dashboard_snapshot_only": self._request._dashboard_snapshot_only,
+            "current_dashboard": (
+                self.dashboard_inspector(
+                    self._request.session_id, self._request.db_id, last.result_id
+                ) if self.dashboard_inspector and last and last.result_id else None
+            ),
             "question": self._request.message,
             "capabilities": self._capabilities(),
             "previous_question": previous.resolved_question if previous else None,
@@ -1216,6 +1249,16 @@ class ConversationalAnalyticsAgent:
             "results, chart state, and corrections. Select the simplest valid execution "
             "path that fully satisfies the user's request.\n\n"
             "Routing rules:\n"
+            "SAVED STUDIO: When saved_dashboard_snapshot_only is true, edit the retained "
+            "dashboard with ai_dashboard_designer. No SQL refresh or metadata DB tools are "
+            "available in this scope. If new analytical data is required, explain that the "
+            "client must run a new governed analysis in Conversations, then Save as New.\n"
+            "DASHBOARDS: For dashboard creation or presentation-only revisions use "
+            "ai_dashboard_designer with the precise design objective; undo_dashboard "
+            "restores the previous design. Both reuse the current complete accepted result. "
+            "If REQUERY_REQUIRED is returned, preserve the dashboard goal, use ask_data "
+            "for missing analytical requirements, then retry ai_dashboard_designer. "
+            "Do not claim a dashboard is ready until DASHBOARD_READY is observed.\n"
             "1. DIRECT_ANSWER: Answer directly only when no new database evidence or tool "
             "action is required.\n"
             "2. REUSE EXISTING RESULT: When accepted results already contain sufficient "
@@ -1435,7 +1478,8 @@ class ConversationalAnalyticsAgent:
             for item in reversed(state.observations):
                 tool_name = str(item.get("tool") or "")
                 if tool_name not in {"ask_data", "change_visualization", "refresh_analysis",
-                                     "inspect_result", "search_conversation_memory"}:
+                                     "inspect_result", "search_conversation_memory",
+                                     "ai_dashboard_designer", "undo_dashboard"}:
                     continue
                 if tool_name in completed_tools:
                     continue
@@ -1535,6 +1579,19 @@ class ConversationalAnalyticsAgent:
         question = tool_input.objective
         started = perf_counter()
         facts: dict[str, Any]
+        if self._request._dashboard_snapshot_only and tool not in {
+            "ai_dashboard_designer", "undo_dashboard", "present_result", "analyze_result",
+            "explain_existing_result",
+        }:
+            return state.model_copy(update={
+                "observations": [*state.observations, {"tool": tool, "status": "UNSUPPORTED",
+                    "error": "Saved dashboards use retained data. Run a new governed analysis "
+                    "in Conversations for different data, then save a new dashboard."}],
+                "decision": None, "steps": state.steps + 1,
+                "ledger": [*state.ledger, CallLedgerEntry(
+                    component=f"assistant_tool:{tool}", kind="TOOL", status="FAILED"
+                )],
+            })
         last = (
             state.base_response
             if state.base_response and state.base_response.generation
@@ -1781,6 +1838,23 @@ class ConversationalAnalyticsAgent:
                 if sql or last
                 else {"tool": tool, "error": "No accepted SQL or result is available."}
             )
+        elif tool in {"ai_dashboard_designer", "undo_dashboard"}:
+            if last is None or self.dashboard_handler is None:
+                facts = {"tool": tool, "error": "Dashboard design is unavailable."}
+            else:
+                base = await self.dashboard_handler(
+                    self._request, question, last, tool == "undo_dashboard"
+                )
+                downstream_usage = base.token_usage
+                downstream_ledger = base.call_ledger
+                facts = {"tool": tool, "status": "DASHBOARD_READY" if base.dashboard
+                         else "REQUERY_REQUIRED", "message": base.message,
+                         "result_id": base.result_id}
+                if not base.dashboard:
+                    facts["reason"] = base.message
+                    # A design limitation is not a new accepted analysis. Keep
+                    # same-turn SQL/contract available for the governed requery.
+                    base = state.base_response
         elif tool == "present_result":
             facts = {"tool": tool, "result": self._cached_facts(last) if last else None}
             if last and last.generation:
@@ -1920,6 +1994,12 @@ class ConversationalAnalyticsAgent:
                 "turn_context": context,
                 "observations": [*state.observations, facts],
                 "base_response": base,
+                "pending_dashboard_objective": (
+                    question if tool == "ai_dashboard_designer"
+                    and facts.get("status") == "REQUERY_REQUIRED"
+                    else None if facts.get("status") == "DASHBOARD_READY"
+                    else state.pending_dashboard_objective
+                ),
                 "chart_proposal": (
                     state.decision.chart_proposal
                     if tool in {

@@ -720,6 +720,7 @@ class GenerateRequest(StrictModel):
 
 
 class ChatRequest(StrictModel):
+    _dashboard_snapshot_only: bool = PrivateAttr(default=False)
     model_config = ConfigDict(extra="forbid", validate_default=True)
     session_id: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
     db_id: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
@@ -1013,6 +1014,9 @@ class ChartRecommendations(StrictModel):
 
 
 class ChatResponse(StrictModel):
+    # Validated DashboardSpec serialized at the specialist boundary; kept here
+    # as a JSON envelope to avoid importing dashboard_service back into models.
+    dashboard: dict[str, Any] | None = None
     session_id: str
     run_id: str | None = None
     result_id: str | None = Field(default=None, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")

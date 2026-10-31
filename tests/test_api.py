@@ -512,7 +512,9 @@ def test_production_api_rejects_models_outside_catalog() -> None:
 
 def test_public_post_surface_contains_only_current_workflow() -> None:
     app = create_app()
-    post_paths = {route.path for route in app.routes if "POST" in getattr(route, "methods", set())}
+    # Included routers are lazy route groups in current FastAPI; inspect the
+    # complete public schema rather than omitting grouped endpoints.
+    post_paths = {path for path, methods in app.openapi()["paths"].items() if "post" in methods}
 
     assert post_paths == {
         "/api/conversations/{session_id}/reset",
@@ -522,6 +524,13 @@ def test_public_post_surface_contains_only_current_workflow() -> None:
         "/api/results/page",
         "/api/results/inspect",
         "/api/dashboards",
+        "/api/dashboards/undo",
+        "/api/studio",
+        "/api/studio/{identity}/edit",
+        "/api/studio/{identity}/save",
+        "/api/studio/{identity}/rename",
+        "/api/studio/{identity}/publish",
+        "/api/studio/{identity}/undo",
         "/api/sql/diff",
         "/api/voice/transcribe",
         "/api/history/{run_id}/continue",

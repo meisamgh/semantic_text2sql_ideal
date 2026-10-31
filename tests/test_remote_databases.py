@@ -16,7 +16,7 @@ from semantic_text2sql.agent import TextToSQLAgent
 from semantic_text2sql.api import create_app
 from semantic_text2sql.database import DatabaseError, DatabaseRegistry
 from semantic_text2sql.external_connections import ExternalConnection
-from semantic_text2sql.models import TokenUsage
+from semantic_text2sql.models import TokenUsage, ValidationResult
 from semantic_text2sql.remote_databases import RemoteDatabaseRegistry
 
 
@@ -184,6 +184,66 @@ def test_remote_adapter_contract(
         sql, parameters = drivers.connection.calls[-1]
         assert "O'Reilly" not in sql and parameters == {"p0": "O'Reilly%"}
         assert drivers.connection.rollbacks >= 2
+
+
+@pytest.mark.parametrize("engine", ["mysql", "sqlserver", "snowflake", "bigquery"])
+@pytest.mark.parametrize("permissive_validator", [False, True])
+def test_cte_shadow_cannot_bypass_remote_table_authorization(
+    engine: str, permissive_validator: bool, drivers: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from semantic_text2sql import remote_databases
+
+    scheme = {"mysql": "mysql+pymysql", "sqlserver": "mssql+pyodbc",
+              "snowflake": "snowflake", "bigquery": "bigquery"}[engine]
+    monkeypatch.setenv("WAREHOUSE_URL", f"{scheme}://example")
+    config = configuration(engine)
+    remote = RemoteDatabaseRegistry({}, {"warehouse": config})
+    remote.inspect("warehouse")
+    if permissive_validator:
+        # Defense in depth: even if the generic validator returns valid, the
+        # adapter must independently authorize each resolved physical source.
+        monkeypatch.setattr(remote_databases, "validate_sql", lambda *a, **k:
+                            ValidationResult(valid=True, code="MOCK_VALID", message="Mock"))
+    prefix = config.schema_name
+    attacks = [
+        f"WITH secret AS (SELECT name FROM orders) SELECT name FROM {prefix}.secret",
+        f"WITH orders AS (SELECT name FROM {prefix}.secret) SELECT name FROM orders",
+        "WITH secret AS (SELECT name FROM secret) SELECT name FROM secret",
+        "SELECT name FROM secret WHERE EXISTS "
+        "(WITH secret AS (SELECT name FROM orders) SELECT name FROM secret)",
+    ]
+    for sql in attacks:
+        with pytest.raises(DatabaseError) as error:
+            remote.execute("warehouse", sql, max_rows=5)
+        assert error.value.code == "SQL_TABLE_NOT_AUTHORIZED"
+    assert drivers.jobs == []
+    assert drivers.connection.calls == []
+
+
+@pytest.mark.parametrize("engine", ["mysql", "sqlserver", "snowflake", "bigquery"])
+def test_remote_valid_ctes_remain_unqualified_and_physical_sources_are_scoped(
+    engine: str, drivers: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sqlglot import parse_one
+
+    from semantic_text2sql.validator import physical_table_references
+
+    scheme = {"mysql": "mysql+pymysql", "sqlserver": "mssql+pyodbc",
+              "snowflake": "snowflake", "bigquery": "bigquery"}[engine]
+    monkeypatch.setenv("WAREHOUSE_URL", f"{scheme}://example")
+    config = configuration(engine)
+    remote = RemoteDatabaseRegistry({}, {"warehouse": config})
+    for sql in [
+        "WITH orders AS (SELECT name FROM orders) SELECT name FROM orders",
+        "WITH a AS (SELECT name FROM orders), b AS (SELECT name FROM a) SELECT name FROM b",
+        f"WITH orders AS (SELECT name FROM orders) SELECT name FROM {config.schema_name}.orders",
+    ]:
+        prepared = remote._prepare("warehouse", sql)
+        physical = physical_table_references(parse_one(prepared, read=config.dialect),
+                                             dialect=config.dialect)
+        assert physical
+        assert all(t.name.casefold() == "orders" and t.db == "analytics" for t in physical)
+    assert drivers.jobs == [] and drivers.connection.calls == []
 
 
 @pytest.mark.parametrize("engine", ["mysql", "sqlserver", "snowflake", "bigquery"])

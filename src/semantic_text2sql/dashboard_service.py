@@ -25,9 +25,15 @@ class DashboardRequest(StrictModel):
     db_id: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
     result_id: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")
     include_data: bool = False
+    design_mode: Literal["deterministic", "ai"] = "deterministic"
+    objective: str = Field(
+        default="Design a professional dashboard from this result.", max_length=4000
+    )
 
 
 class KPISpec(StrictModel):
+    kpi_id: str = ""
+    column_span: Literal[3, 4, 6, 12] = 3
     result_id: str
     metric: str
     title: str
@@ -44,7 +50,7 @@ class KPISpec(StrictModel):
 class DashboardWidget(StrictModel):
     widget_id: str
     result_id: str
-    column_span: Literal[6, 12] = 6
+    column_span: Literal[4, 6, 8, 12] = 6
     row: int = Field(ge=0, le=3)
     chart_spec: ChartSpec
 
@@ -84,6 +90,12 @@ class DashboardSpec(StrictModel):
     widgets: list[DashboardWidget] = Field(default_factory=list, max_length=4)
     data: DashboardData | None = None
     notices: list[str] = Field(default_factory=list)
+    description: str = Field(default="", max_length=600)
+    rationale: str = Field(default="", max_length=600)
+    theme: Literal["green", "neutral", "contrast"] = "green"
+    design_mode: Literal["deterministic", "ai", "fallback"] = "deterministic"
+    revision_id: str = ""
+    parent_revision_id: str | None = None
 
     @model_validator(mode="after")
     def source_identity(self) -> DashboardSpec:
@@ -187,7 +199,8 @@ def _proof(source: RecentResult) -> tuple[dict[str, str], list[str]]:
     return sums, grain
 
 
-def _kpis(source: RecentResult, temporal_chart: ChartSpec | None = None) -> list[KPISpec]:
+def eligible_kpis(source: RecentResult, temporal_chart: ChartSpec | None = None,
+                  *, limit: int = 4) -> list[KPISpec]:
     if not source.rows:
         return []
     identity = source.result_id or ""
@@ -203,7 +216,7 @@ def _kpis(source: RecentResult, temporal_chart: ChartSpec | None = None) -> list
             )
             for column in source.columns
             if (values := _numbers(source, column)) is not None
-        ][:4]
+        ][:limit]
     additive, grain = _proof(source)
     if not grain:
         return []
@@ -293,11 +306,12 @@ def _kpis(source: RecentResult, temporal_chart: ChartSpec | None = None) -> list
                                     "explicit periods with matching group populations.",
                                 ),
                             )
-    return result[:4]
+    return result[:limit]
 
 
 def build_dashboard(
-    request: DashboardRequest, resolve: Callable[[str, str, str], RecentResult | None]
+    request: DashboardRequest, resolve: Callable[[str, str, str], RecentResult | None],
+    *, chart_catalog: list[DashboardWidget] | None = None,
 ) -> DashboardSpec:
     source = resolve(request.session_id, request.db_id, request.result_id)
     if source is None or source.result_id != request.result_id or source.db_id != request.db_id:
@@ -340,7 +354,7 @@ def build_dashboard(
             if kind in {"histogram", "box"}
             else "intensity"
         )
-        if family in families:
+        if family in families and chart_catalog is None:
             continue
         if family == "composition" and candidate.y not in additive:
             continue
@@ -369,6 +383,11 @@ def build_dashboard(
         spec = materialize_recommendation(
             valid, question="", columns=source.columns, rows=source.rows, truncated=False
         )
+        if chart_catalog is not None:
+            chart_catalog.append(DashboardWidget(widget_id=f"candidate-{len(chart_catalog)}",
+                result_id=request.result_id, row=min(len(chart_catalog)//2, 3), chart_spec=spec))
+        if family in families or len(widgets) >= 4:
+            continue
         widgets.append(
             DashboardWidget(
                 widget_id=f"chart-{len(widgets)}",
@@ -378,7 +397,7 @@ def build_dashboard(
             )
         )
         families.add(family)
-        if len(widgets) == 4:
+        if len(widgets) == 4 and chart_catalog is None:
             break
     if len(widgets) % 2:
         widgets[-1] = widgets[-1].model_copy(update={"column_span": 12})
@@ -423,7 +442,7 @@ def build_dashboard(
             )
             if f.source in {"stored_result", "verified_schema"}
         ],
-        kpis=_kpis(
+        kpis=eligible_kpis(
             source,
             next(
                 (

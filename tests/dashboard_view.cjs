@@ -9,6 +9,7 @@ class Element{
   replaceChildren(...items){this.children=[...items];}
   setAttribute(name,value){this.attributes[name]=value;}
   addEventListener(name,callback){this.listeners[name]=callback;}
+  click(){return this.listeners.click?.();}
 }
 function setup(){
   const context=vm.createContext({window:{},document:{createElement:tag=>new Element(tag),
@@ -40,6 +41,32 @@ test('section order, backend KPI values and exact source data use existing callb
   assert.equal(charts,1);assert.equal(tables,1);
   assert.equal(JSON.stringify(data),before);
   handle.dispose();assert.equal(disposals,1);assert.equal(container.children.length,0);
+});
+test('AI design, scoped undo and collaborative changes reuse existing actions',async()=>{
+  const article=new Element('article'),calls=[],messages=[];
+  const data=spec(false);data.design_mode='ai';data.revision_id='revision-a';
+  const body={result_id:'result',generation:{accepted:true,execution_status:'ACCEPTED',
+    db_id:'sales',rows:[[1],[2]],row_count:2,truncated:false}};
+  setup().mountAction(article,body,{
+    sessionId:'owner',api:async(path,request)=>{calls.push([path,JSON.parse(request.body)]);return data;},
+    reviseDashboard:message=>messages.push(message),renderChart(){},renderTable(){},
+  });
+  const [toolbar,view,edits]=article.children;
+  toolbar.children[3].value='ai';
+  await toolbar.children[0].click();
+  assert.equal(calls[0][0],'/api/dashboards');assert.equal(calls[0][1].design_mode,'ai');
+  assert.equal(view.dataset.theme,'green');assert.equal(edits.hidden,false);
+  edits.children[0].value='Make the primary chart wider';edits.children[1].click();
+  assert.deepEqual(messages,['Make the primary chart wider']);
+  await edits.children[2].click();assert.equal(calls[1][0],'/api/dashboards/undo');
+  assert.equal(calls.length,2);
+});
+test('a validated dashboard response opens without another API, SQL or model call',async()=>{
+  const article=new Element('article'),data=spec(false);
+  setup().mountAction(article,{result_id:'result',dashboard:data,
+    generation:{accepted:true,execution_status:'ACCEPTED',rows:[[1],[2]],row_count:2}},
+    {api(){throw Error('No request expected');},renderChart(){},renderTable(){}});
+  assert.equal(article.children[1].hidden,false);
 });
 test('empty state has no invented KPI, chart, data table or filter controls',()=>{
   const data=spec(false);data.kpis=[];data.widgets=[];data.applied_constraints=[];
@@ -139,6 +166,6 @@ test('dashboard opens inside the existing response card, aligned with its answer
   setup().mountAction(article,{result_id:'result',generation:{db_id:'sales',accepted:true,
     execution_status:'ACCEPTED',rows:[[1]],row_count:1,truncated:false}},{});
   assert.equal(article.children.length,0);
-  assert.equal(card.children.length,2);
+  assert.equal(card.children.length,3);
   assert.equal(card.children[1].hidden,true);
 });

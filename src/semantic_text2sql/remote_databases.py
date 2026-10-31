@@ -26,7 +26,7 @@ from semantic_text2sql.models import (
 )
 from semantic_text2sql.postgres import PostgresRegistry
 from semantic_text2sql.runtime import RequestBudgetExceeded, active_request_budget
-from semantic_text2sql.validator import validate_sql
+from semantic_text2sql.validator import physical_table_references, validate_sql
 
 
 class RemoteDatabaseRegistry(PostgresRegistry):
@@ -220,14 +220,16 @@ class RemoteDatabaseRegistry(PostgresRegistry):
         # Do not expose remote I/O, UDFs, stored procedures or table functions.
         if any(isinstance(node, exp.Anonymous) for node in root.walk()):
             raise DatabaseError("UNAPPROVED_FUNCTION", "Unapproved database function.")
-        ctes = {cte.alias_or_name.casefold() for cte in root.find_all(exp.CTE)}
         parts = config.schema_name.split(".")
-        for table in root.find_all(exp.Table):
-            if table.name.casefold() in ctes and not table.db and not table.catalog:
-                continue
+        allowed = {name.casefold() for name in config.allowed_tables}
+        for table in physical_table_references(root, dialect=schema.dialect):
             if not isinstance(table.this, exp.Identifier):
                 raise DatabaseError(
                     "REMOTE_SOURCE_BLOCKED", "Only allowlisted tables are supported."
+                )
+            if table.name.casefold() not in allowed:
+                raise DatabaseError(
+                    "SQL_TABLE_NOT_AUTHORIZED", "Query references a non-allowlisted physical table."
                 )
             expected = parts[-1]
             if (
